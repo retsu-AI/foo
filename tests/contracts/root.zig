@@ -201,6 +201,200 @@ test "transport streams within limits and preserves possible delivery on error" 
     try std.testing.expectEqual(foo.io.Delivery.possibly_sent, delivery);
 }
 
+const Upload = struct {
+    bytes: []const u8,
+    chunk_size: usize = 3,
+    offset: usize = 0,
+    failure_after: ?usize = null,
+    cancellation: ?*foo.io.Cancellation = null,
+
+    fn interface(self: *Upload) foo.io.ByteSource {
+        return .{ .context = self, .read_fn = read };
+    }
+
+    fn read(context: *anyopaque, op: foo.io.Context, buffer: []u8) foo.io.Error!usize {
+        const self: *Upload = @ptrCast(@alignCast(context));
+        try op.check();
+        if (self.failure_after) |offset| {
+            if (self.offset >= offset) {
+                if (self.cancellation) |cancel| {
+                    cancel.request();
+                    return error.Cancelled;
+                }
+                return error.Disconnected;
+            }
+        }
+        const count = @min(buffer.len, self.chunk_size, self.bytes.len - self.offset);
+        @memcpy(buffer[0..count], self.bytes[self.offset..][0..count]);
+        self.offset += count;
+        return count;
+    }
+};
+
+const HttpResponse = struct {
+    heads: usize = 0,
+    bytes: support.Bytes = .{ .buffer = &.{} },
+    head_failure: ?foo.io.Error = null,
+
+    fn interface(self: *HttpResponse) foo.io.HttpSink {
+        return .{ .context = self, .head_fn = head, .body = self.bytes.interface() };
+    }
+
+    fn head(context: *anyopaque, op: foo.io.Context, _: foo.io.HttpHead) foo.io.Error!void {
+        const self: *HttpResponse = @ptrCast(@alignCast(context));
+        try op.check();
+        self.heads += 1;
+        if (self.head_failure) |failure| return failure;
+    }
+};
+
+test "byte and chunked known or unknown uploads preserve the same body" {
+    var payload: [8197]u8 = undefined;
+    for (&payload, 0..) |*byte, i| byte.* = @intCast(i % 251);
+    for ([_]enum { bytes, known, unknown }{ .bytes, .known, .unknown }) |kind| {
+        var source: Upload = .{ .bytes = &payload };
+        var captured: [payload.len]u8 = undefined;
+        var http: support.Http = .{ .chunks = &.{"ok"}, .upload = .{ .buffer = &captured } };
+        var response_storage: [2]u8 = undefined;
+        var response: HttpResponse = .{ .bytes = .{ .buffer = &response_storage } };
+        var cancel: foo.io.Cancellation = .{};
+        var clock: support.Clock = .{};
+        const adapter = http.interface();
+        var delivery: foo.io.Delivery = .unsent;
+        try adapter.exchange_fn(adapter.context, operation(&cancel, &clock), .{
+            .method = .post,
+            .url = "https://example.invalid",
+            .body = if (kind == .bytes) .{ .bytes = &payload } else .{ .stream = .{
+                .source = source.interface(),
+                .content_length = if (kind == .known) payload.len else null,
+            } },
+            .max_response_bytes = 2,
+        }, response.interface(), &delivery);
+        try std.testing.expectEqualSlices(u8, &payload, captured[0..http.upload.used]);
+        try std.testing.expectEqualStrings("ok", response_storage[0..response.bytes.used]);
+        try std.testing.expectEqual(@as(usize, 1), response.heads);
+        try std.testing.expectEqual(foo.io.Delivery.possibly_sent, delivery);
+    }
+}
+
+test "declared upload length leaves later bytes unread including zero length" {
+    for ([_]u64{ 0, 1, 4, 6 }) |length| {
+        var source: Upload = .{ .bytes = "abcdefextra", .failure_after = @intCast(length) };
+        var captured: [6]u8 = undefined;
+        var http: support.Http = .{ .chunks = &.{}, .upload = .{ .buffer = &captured } };
+        var response: HttpResponse = .{};
+        var cancel: foo.io.Cancellation = .{};
+        var clock: support.Clock = .{};
+        const adapter = http.interface();
+        var delivery: foo.io.Delivery = .unsent;
+        try adapter.exchange_fn(adapter.context, operation(&cancel, &clock), .{
+            .method = .post,
+            .url = "https://example.invalid",
+            .body = .{ .stream = .{ .source = source.interface(), .content_length = length } },
+            .max_response_bytes = 0,
+        }, response.interface(), &delivery);
+        try std.testing.expectEqualStrings("abcdef"[0..@intCast(length)], captured[0..http.upload.used]);
+        try std.testing.expectEqual(@as(usize, @intCast(length)), source.offset);
+    }
+}
+
+test "premature upload EOF fails before a scripted response" {
+    var source: Upload = .{ .bytes = "abc" };
+    var captured: [6]u8 = undefined;
+    var http: support.Http = .{ .chunks = &.{}, .upload = .{ .buffer = &captured } };
+    var response: HttpResponse = .{};
+    var cancel: foo.io.Cancellation = .{};
+    var clock: support.Clock = .{};
+    const adapter = http.interface();
+    var delivery: foo.io.Delivery = .unsent;
+    try std.testing.expectError(error.IoFailure, adapter.exchange_fn(adapter.context, operation(&cancel, &clock), .{
+        .method = .post,
+        .url = "https://example.invalid",
+        .body = .{ .stream = .{ .source = source.interface(), .content_length = 4 } },
+        .max_response_bytes = 0,
+    }, response.interface(), &delivery));
+    try std.testing.expectEqualStrings("abc", captured[0..http.upload.used]);
+    try std.testing.expectEqual(@as(usize, 0), response.heads);
+    try std.testing.expectEqual(foo.io.Delivery.possibly_sent, delivery);
+}
+
+test "upload source errors and cancellation preserve the consumed prefix" {
+    for ([_]bool{ false, true }) |cancel_during_read| {
+        var cancel: foo.io.Cancellation = .{};
+        var source: Upload = .{
+            .bytes = "abcdef",
+            .failure_after = 3,
+            .cancellation = if (cancel_during_read) &cancel else null,
+        };
+        var captured: [6]u8 = undefined;
+        var http: support.Http = .{ .chunks = &.{}, .upload = .{ .buffer = &captured } };
+        var response: HttpResponse = .{};
+        var clock: support.Clock = .{};
+        const adapter = http.interface();
+        var delivery: foo.io.Delivery = .unsent;
+        try std.testing.expectError(if (cancel_during_read) error.Cancelled else error.Disconnected, adapter.exchange_fn(adapter.context, operation(&cancel, &clock), .{
+            .method = .post,
+            .url = "https://example.invalid",
+            .body = .{ .stream = .{ .source = source.interface() } },
+            .max_response_bytes = 0,
+        }, response.interface(), &delivery));
+        try std.testing.expectEqualStrings("abc", captured[0..http.upload.used]);
+        try std.testing.expectEqual(@as(usize, 3), source.offset);
+        try std.testing.expectEqual(@as(usize, 0), response.heads);
+        try std.testing.expectEqual(foo.io.Delivery.possibly_sent, delivery);
+    }
+}
+
+test "pre-cancelled exchange does not consume an upload" {
+    var source: Upload = .{ .bytes = "abc" };
+    var http: support.Http = .{ .chunks = &.{} };
+    var response: HttpResponse = .{};
+    var cancel: foo.io.Cancellation = .{};
+    cancel.request();
+    var clock: support.Clock = .{};
+    const adapter = http.interface();
+    var delivery: foo.io.Delivery = .unsent;
+    try std.testing.expectError(error.Cancelled, adapter.exchange_fn(adapter.context, operation(&cancel, &clock), .{
+        .method = .post,
+        .url = "https://example.invalid",
+        .body = .{ .stream = .{ .source = source.interface() } },
+        .max_response_bytes = 0,
+    }, response.interface(), &delivery));
+    try std.testing.expectEqual(@as(usize, 0), source.offset);
+    try std.testing.expectEqual(@as(usize, 0), http.calls);
+    try std.testing.expectEqual(foo.io.Delivery.unsent, delivery);
+}
+
+test "HTTP fake propagates bounded capture and response sink failures" {
+    for ([_]enum { capture, head, body }{ .capture, .head, .body }) |failure| {
+        var captured: [2]u8 = undefined;
+        var http: support.Http = .{
+            .chunks = &.{"ok"},
+            .upload = .{ .buffer = if (failure == .capture) captured[0..1] else &captured },
+        };
+        var response: HttpResponse = .{
+            .head_failure = if (failure == .head) error.InvalidInput else null,
+            .bytes = .{ .buffer = &.{}, .reject = true },
+        };
+        var cancel: foo.io.Cancellation = .{};
+        var clock: support.Clock = .{};
+        const adapter = http.interface();
+        var delivery: foo.io.Delivery = .unsent;
+        try std.testing.expectError(switch (failure) {
+            .capture => error.LimitExceeded,
+            .head => error.InvalidInput,
+            .body => error.Unavailable,
+        }, adapter.exchange_fn(adapter.context, operation(&cancel, &clock), .{
+            .method = .post,
+            .url = "https://example.invalid",
+            .body = .{ .bytes = "hi" },
+            .max_response_bytes = 2,
+        }, response.interface(), &delivery));
+        try std.testing.expectEqual(@as(usize, if (failure == .capture) 0 else 1), response.heads);
+        try std.testing.expectEqual(foo.io.Delivery.possibly_sent, delivery);
+    }
+}
+
 test "editor permissions remain tied to operation and cancellation" {
     var editor: support.Editor = .{};
     var cancel: foo.io.Cancellation = .{};

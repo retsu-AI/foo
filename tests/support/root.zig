@@ -142,6 +142,7 @@ pub const Http = struct {
     chunks: []const []const u8,
     calls: usize = 0,
     failure: ?foo.io.Error = null,
+    upload: Bytes = .{ .buffer = &.{} },
 
     pub fn interface(self: *Http) foo.io.HttpTransport {
         return .{ .context = self, .exchange_fn = exchange };
@@ -152,12 +153,34 @@ pub const Http = struct {
         try operation.check();
         self.calls += 1;
         delivery.* = .possibly_sent;
+        switch (request.body) {
+            .bytes => |bytes| try self.upload.interface().write(operation, bytes),
+            .stream => |stream| {
+                var buffer: [4096]u8 = undefined;
+                var remaining = stream.content_length;
+                while (remaining == null or remaining.? != 0) {
+                    try operation.check();
+                    const capacity: usize = @intCast(@min(buffer.len, remaining orelse buffer.len));
+                    const count = try stream.source.read_fn(stream.source.context, operation, buffer[0..capacity]);
+                    if (count > capacity) return error.InvalidInput;
+                    try operation.check();
+                    if (count == 0) {
+                        if (remaining != null) return error.IoFailure;
+                        break;
+                    }
+                    try self.upload.interface().write(operation, buffer[0..count]);
+                    if (remaining) |*length| length.* -= count;
+                }
+            },
+        }
+        try operation.check();
         try sink.head_fn(sink.context, operation, .{ .status = self.status, .headers = &.{} });
         var budget: foo.io.Budget = .{ .limit = request.max_response_bytes };
         for (self.chunks) |chunk| {
             try budget.take(chunk.len);
             try sink.body.write(operation, chunk);
         }
+        try operation.check();
         if (self.failure) |failure| return failure;
     }
 };
