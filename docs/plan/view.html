@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="The complete implementation plan for foo, a configurable Zig agent harness with CLI, TUI, MCP, and ACP.">
+<meta name="color-scheme" content="light dark">
+<title>foo · Harness implementation plan</title>
+<style>
+:root{color-scheme:light;--bg:#f7f8f5;--paper:#fff;--text:#202a25;--muted:#5b6861;--line:#dce3dc;--accent:#245f47;--wash:#eaf2eb;--code:#eef1ed;--nav:248px;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px;line-height:1.65}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:var(--bg);color:var(--text)}a{color:var(--accent);text-underline-offset:3px}a:hover{text-decoration-thickness:2px}button,input,select{font:inherit}button,a,input,select,summary{touch-action:manipulation}button{cursor:pointer}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:4px}button{background:var(--paper);color:var(--text);border:1px solid var(--line);padding:8px 13px;border-radius:5px}button:hover{background:var(--wash)}[hidden]{display:none!important}.skip{position:fixed;top:-70px;left:12px;z-index:10;background:var(--paper);padding:12px}.skip:focus{top:12px}
+.sidebar{width:var(--nav);position:fixed;inset:0 auto 0 0;background:var(--paper);border-right:1px solid var(--line);padding:35px 24px;overflow:auto;display:flex;flex-direction:column;gap:30px}.brand{display:block;text-decoration:none;color:var(--text);font-weight:750;font-size:42px;line-height:1;letter-spacing:-3px}.brand span{color:var(--accent)}.brand-note{display:block;color:var(--muted);font-size:12px;letter-spacing:.09em;text-transform:uppercase;margin-top:14px}.nav-label,.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.12em;font-weight:700;color:var(--muted)}nav ul{padding:0;margin:10px 0 0;list-style:none}nav li{margin:3px 0}nav a{display:block;text-decoration:none;font-size:14px;color:var(--muted);padding:8px 10px;border-radius:4px}nav a:hover,nav a.active{background:var(--wash);color:var(--accent)}.sidebar-foot{margin-top:auto;font-size:12px;color:var(--muted)}.planned{display:inline-flex;align-items:center;gap:8px;font-weight:600;color:var(--accent)}.planned::before{content:"";width:7px;height:7px;background:var(--accent);border-radius:50%}.sidebar-foot p{margin:8px 0}
+main{margin-left:var(--nav);max-width:1500px;padding:55px clamp(25px,5vw,80px) 80px}.topline{display:flex;justify-content:space-between;gap:16px;align-items:center}.topline .eyebrow{color:var(--accent)}.hero{padding-bottom:35px;border-bottom:1px solid var(--line)}h1,h2,h3,h4{line-height:1.22;letter-spacing:-.025em;scroll-margin-top:25px}h1{font-size:clamp(36px,4.3vw,66px);font-weight:650;max-width:850px;margin:24px 0}h2{font-size:29px;font-weight:650;margin:0 0 14px}h3{font-size:21px;font-weight:650;margin:30px 0 12px}h4{font-size:16px;margin:22px 0 9px}.intro{font-size:19px;max-width:800px;color:var(--muted);line-height:1.65}.facts{display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin-top:35px}.fact{border-left:2px solid var(--line);padding-left:16px}.fact strong{display:block;font-size:23px;line-height:1.35;font-weight:650}.fact small{display:block;color:var(--muted);font-size:12px;margin-top:5px}.section{padding:42px 0;border-bottom:1px solid var(--line)}.section-intro{color:var(--muted);max-width:850px;margin:0 0 25px}.section-top{display:flex;justify-content:space-between;align-items:start;gap:18px}.section-number{display:block;color:var(--accent);font:12px ui-monospace,monospace;letter-spacing:.08em;margin-bottom:12px}
+.architecture{display:grid;grid-template-columns:1fr auto 1.2fr auto 1fr;gap:18px;align-items:center;margin:30px 0}.arch-stack{display:flex;flex-direction:column;gap:10px}.arch-item{padding:11px 15px;background:var(--paper);border:1px solid var(--line);border-radius:5px;font-size:14px}.arch-item small{display:block;color:var(--muted);font-size:12px}.arch-engine{background:var(--accent);color:white;padding:30px 22px;border-radius:6px}.arch-engine strong{font-size:24px;display:block}.arch-engine span{font-size:13px;display:block;margin-top:8px}.arrow{font-size:24px;color:var(--muted)}.scope-note{border-left:3px solid var(--accent);padding:4px 0 4px 18px;max-width:850px;color:var(--muted);font-size:14px}.scope-note strong{color:var(--text)}
+.graph{display:grid;grid-template-columns:repeat(5,minmax(135px,1fr));gap:12px;overflow-x:auto;padding:5px 3px 12px}.graph-column h3{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 15px}.graph-node{display:block;border-top:2px solid var(--line);padding:12px 8px 13px;text-decoration:none;color:var(--text);font-size:13px;line-height:1.4}.graph-node:hover,.graph-node.selected{background:var(--wash);border-color:var(--accent)}.graph-node b{font:12px ui-monospace,monospace;color:var(--accent);display:block;margin-bottom:6px}.graph-node span{font-weight:600;display:block}.graph-node small{display:block;font-size:10px;color:var(--muted);margin-top:7px}.legend{font-size:13px;color:var(--muted)}
+.filters{display:flex;align-items:end;gap:12px;margin:22px 0}.filters label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600}.filters label:first-child{flex:1}.filters input,.filters select{background:var(--paper);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:10px 12px;width:100%;min-height:45px}.result-count{font-size:12px;color:var(--muted);margin:10px 0}.task{border-top:1px solid var(--line);background:transparent;scroll-margin-top:20px}.task:last-child{border-bottom:1px solid var(--line)}.task summary{display:grid;grid-template-columns:47px 1fr auto;align-items:center;gap:12px;padding:19px 5px;cursor:pointer;list-style:none}.task summary::-webkit-details-marker{display:none}.task summary::after{content:"+";font-size:20px;grid-column:4;color:var(--muted)}.task[open] summary::after{content:"−"}.task[open] summary{color:var(--accent)}.task-id{font:12px ui-monospace,monospace;color:var(--accent)}.task-title{font-weight:600;line-height:1.4}.task-title small{display:block;font-size:12px;font-weight:400;color:var(--muted);margin-top:4px}.status{font-size:11px;font-weight:500;color:var(--muted);background:var(--code);border-radius:20px;padding:4px 10px;white-space:nowrap}.status.ready{background:var(--wash);color:var(--accent)}.task-body{padding:0 5px 22px 64px;font-size:14px}.task-body>p{margin:4px 0}.task-body a{display:inline-block;margin-right:5px;font-family:ui-monospace,monospace}.task-columns{display:grid;grid-template-columns:1fr 1fr;gap:25px}.task-columns ul{padding-left:18px;margin:5px 0}.task-columns li{margin:5px 0;overflow-wrap:anywhere}.empty{padding:30px;background:var(--wash)}
+.reading-toolbar{display:flex;gap:15px;align-items:center;margin:36px 0 12px}.reading-toolbar label{font-size:13px;font-weight:600}.reading-toolbar input{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--text)}.document{padding:42px 0;border-bottom:1px solid var(--line);font-size:15px;overflow-wrap:anywhere}.document-meta{display:flex;justify-content:space-between;gap:15px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:24px}.document h1{font-size:36px;max-width:none;margin:18px 0 25px}.document h2{font-size:25px;margin:34px 0 15px}.document h3{font-size:20px;margin:26px 0 12px}.document h4{font-size:17px}.document p{max-width:95ch;margin:14px 0}.document li{margin:6px 0}.document ul,.document ol{padding-left:24px}.document table{border-collapse:collapse;width:100%;margin:23px 0;display:block;overflow:auto;font-size:13px}.document thead{border-top:1px solid var(--line)}.document th{text-align:left;color:var(--muted);font-size:12px;background:var(--code);font-weight:650}.document th,.document td{padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top;min-width:110px}.document code{font-family:ui-monospace,"SFMono-Regular",Consolas,monospace;font-size:.87em;background:var(--code);padding:2px 5px;border-radius:3px}.document pre{overflow:auto;background:var(--code);padding:18px 20px;border-radius:5px;line-height:1.6;font-size:13px}.document pre code{padding:0;white-space:pre;background:none;font-size:inherit}.document blockquote{border-left:3px solid var(--line);padding-left:18px;color:var(--muted);margin-left:0}.document mark{background:#e6e6a4;color:#222}.footer{padding-top:32px;font-size:12px;color:var(--muted)}.footer code{font-size:10px;overflow-wrap:anywhere}.mobile-title{display:none}.noscript{padding:12px 16px;background:var(--wash);font-size:14px}.anchor-flash{animation:flash 1.4s ease-out}@keyframes flash{from{background:var(--wash)}to{background:transparent}}
+@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#171d19;--paper:#1c241f;--text:#e6ece6;--muted:#a1afa4;--line:#334239;--accent:#99d4b2;--wash:#263b2e;--code:#232d26}.arch-engine{background:#2d5a40;color:#fff}.document mark{background:#666938;color:#fff}}
+@media(min-width:1700px){main{margin-right:auto}.graph{grid-template-columns:repeat(5,minmax(160px,1fr))}}
+@media(max-width:1100px){:root{--nav:210px}.sidebar{padding:30px 18px}main{padding:35px 28px 60px}.architecture{gap:10px}.arch-item{padding:10px}.graph{grid-template-columns:repeat(5,150px)}.facts{gap:12px}.task summary{grid-template-columns:40px 1fr auto}.task-body{padding-left:57px}}
+@media(max-width:760px){.sidebar{position:static;width:auto;border-right:0;border-bottom:1px solid var(--line);padding:20px;display:block}.brand{font-size:32px}.brand-note{font-size:10px;margin-top:8px}.sidebar nav{margin-top:20px}.nav-label,.sidebar-foot{display:none}nav ul{display:flex;flex-wrap:wrap;gap:3px;margin:0}nav a{padding:6px 9px;font-size:12px}.sidebar nav li{margin:0}main{margin:0;padding:26px 20px 50px}.topline{align-items:start}.topline .eyebrow{max-width:220px}h1{font-size:39px}.intro{font-size:17px}.facts{grid-template-columns:1fr 1fr;gap:20px}.fact strong{font-size:21px}.section{padding:32px 0}h2{font-size:26px}.architecture{grid-template-columns:1fr;gap:12px}.arch-stack{display:grid;grid-template-columns:1fr 1fr}.arch-engine{padding:20px}.arrow{transform:rotate(90deg);text-align:center;height:25px;line-height:25px}.graph{grid-template-columns:repeat(5,155px)}.task summary{grid-template-columns:34px 1fr 20px;gap:9px}.task summary::after{grid-column:3;grid-row:1}.status{grid-column:2;grid-row:2;width:fit-content}.task-body{padding-left:5px}.task-columns{grid-template-columns:1fr;gap:0}.filters{flex-wrap:wrap}.filters label:first-child{flex-basis:100%}.filters label:nth-child(2){flex:1}.document-meta{font-size:10px}.document h1{font-size:30px}.document h2{font-size:23px}.document th,.document td{padding:9px;min-width:110px}.reading-toolbar{flex-wrap:wrap}.reading-toolbar label{width:100%}.section-top{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.anchor-flash{animation:none}}
+@media print{:root{color-scheme:light;--bg:white;--paper:white;--text:black;--muted:#444;--line:#ccc;--accent:#164d32;--code:#eee}.sidebar,.topline button,.filters,.reading-toolbar,.result-count,.graph,.section-number,.document-meta a{display:none!important}main{margin:0;padding:0;max-width:none}.task[hidden],.document[hidden]{display:block!important}.task-body{display:block!important}.document{break-before:page}.task{break-inside:avoid}a{color:inherit}.document table{display:table;font-size:10px}.document th,.document td{min-width:0;padding:6px}.hero h1{font-size:36px}.footer{font-size:9px}}
+</style>
+</head>
+<body>
+<a href="#main" class="skip">Skip to plan</a>
+<aside class="sidebar" aria-label="Plan navigation">
+  <div><a class="brand" href="#main">foo<span>.</span></a><span class="brand-note">Agent harness / Zig</span></div>
+  <nav aria-label="Sections"><div class="nav-label">Implementation plan</div><ul>
+    <li><a href="#main">Overview</a></li><li><a href="#architecture">Architecture</a></li>
+    <li><a href="#dependencies">Dependency map</a></li><li><a href="#packages">Work packages</a></li>
+    <li><a href="#doc-design">Design</a></li><li><a href="#doc-protocols">MCP and ACP</a></li>
+    <li><a href="#doc-execution">Parallel implementation</a></li><li><a href="#doc-testing">Testing and release</a></li>
+    <li><a href="#doc-evidence">Project evidence</a></li>
+  </ul></nav>
+  <div class="sidebar-foot"><span class="planned">Implementation planned</span><p>16 November 2026</p><p>One core. Three platforms.<br>Several builders.</p><p><a href="{{PROJECT_URL}}">Open foo in Linear ↗</a></p><a href="README.md">Open the source documents ↗</a></div>
+</aside>
+<main id="main">
+<header class="hero">
+  <div class="topline"><span class="eyebrow">Engineering plan · v1 scope</span><button type="button" id="print-page">Print / save PDF</button></div>
+  <h1>foo implementation plan</h1>
+  <p class="intro">foo runs a configurable model and tool loop. A CLI, a simple TUI, MCP connections, and an ACP editor interface share that engine. Applications around foo own orchestration.</p>
+  <div class="facts" aria-label="Plan scope"><div class="fact"><strong>3 platforms</strong><small>Linux · macOS · Windows</small></div><div class="fact"><strong>3 API families</strong><small>Responses · Chat · Messages</small></div><div class="fact"><strong>MCP + ACP</strong><small>Required in the first release</small></div><div class="fact"><strong>{{PACKAGE_COUNT}} work packages</strong><small>Explicit owners and dependencies</small></div></div>
+</header>
+<noscript><p class="noscript">All documents and task details are available below. Browser find works throughout; interactive filtering requires JavaScript.</p></noscript>
+<section id="architecture" class="section" aria-labelledby="architecture-title">
+  <span class="section-number">01 / SYSTEM</span><h2 id="architecture-title">One engine, four ways in</h2>
+  <p class="section-intro">Protocol adapters translate messages and host capabilities. They do not own a second execution loop. Tool execution, limits, cancellation, and session records retain one meaning across interfaces.</p>
+  <div class="architecture" role="img" aria-label="CLI, TUI, JSONL process interface, and ACP editor interface call one engine. The engine uses provider adapters, configured tools including MCP, and an optional session journal.">
+    <div class="arch-stack"><div class="arch-item">CLI + TUI<small>Local interactive use</small></div><div class="arch-item">JSONL + ACP<small>Applications and editors</small></div></div><div class="arrow" aria-hidden="true">→</div>
+    <div class="arch-engine"><strong>foo engine</strong><span>One active conversation loop<br>Explicit inputs, effects, and outcomes</span></div><div class="arrow" aria-hidden="true">→</div>
+    <div class="arch-stack"><div class="arch-item">Provider adapters<small>OpenAI · Anthropic · xAI · compatible APIs</small></div><div class="arch-item">Configured tools + MCP<small>Local, executable, or remote tools</small></div><div class="arch-item">Optional journal<small>Completed records and uncertain effects</small></div></div>
+  </div>
+  <p class="scope-note"><strong>Keep workflow policy outside.</strong> Goals, agent teams, scheduling, worktree management, and task verification belong to the calling application. Parallel engineering work on foo is a development workflow.</p>
+</section>
+<section id="dependencies" class="section" aria-labelledby="dependencies-title">
+  <span class="section-number">02 / SEQUENCE</span><h2 id="dependencies-title">Contracts first. Independent modules next.</h2>
+  <p class="section-intro">These groups show the earliest start permitted by dependencies, not elapsed time or a fixed staffing schedule. Select a package to inspect its scope. F13 can author tests early, but final qualification waits for F12.</p>
+  <div class="graph" aria-label="Dependency groups">{{GRAPH}}</div>
+  <p class="legend">F00 establishes shared contracts. Module owners then work against fakes in isolated worktrees. The integrator alone changes shared build and composition files. <a href="#doc-execution">Read the four-agent schedule →</a></p>
+</section>
+<section id="packages" class="section" aria-labelledby="packages-title">
+  <div class="section-top"><div><span class="section-number">03 / WORK</span><h2 id="packages-title">Work packages</h2></div><button type="button" id="expand-all">Expand all</button></div>
+  <p class="section-intro">Every package has exclusive write paths, prerequisites, acceptance criteria, a handoff, and a linked Linear issue. This is a planning snapshot; <a href="{{PROJECT_URL}}">Linear holds live assignments and status</a>. No runtime features or checks are claimed as shipped.</p>
+  <div class="filters"><label>Search packages<input id="task-search" type="search" placeholder="Find MCP, cancellation, Windows, a path…" autocomplete="off"></label><label>Availability<select id="task-filter"><option value="all">All packages</option><option value="ready">Ready to start</option><option value="blocked">Needs prerequisites</option></select></label><button type="button" id="clear-filters">Clear</button></div>
+  <p id="task-count" class="result-count" aria-live="polite">{{PACKAGE_COUNT}} packages</p>
+  <div id="task-list">{{TASKS}}</div><p id="no-tasks" class="empty" hidden>No matching packages. Clear the filters to see the complete plan.</p>
+</section>
+<div class="reading-toolbar"><label for="doc-search">Search full documents</label><input id="doc-search" type="search" placeholder="Filter documents by a word or phrase…" autocomplete="off"><button type="button" id="clear-doc-search">Clear</button></div>
+<p id="doc-count" class="result-count" aria-live="polite">6 complete documents</p>
+<div id="documents">{{DOCUMENTS}}</div>
+<footer class="footer"><p>Generated from the Markdown documents and work-packages.json. Read source evidence in context; performance budgets and acceptance criteria are proposed requirements.</p><p>Source fingerprint <code>{{SOURCE_HASH}}</code></p></footer>
+</main>
+<script id="package-data" type="application/json">{{PACKAGE_DATA}}</script>
+<script>
+(() => {
+  const tasks = [...document.querySelectorAll('[data-task]')];
+  const docs = [...document.querySelectorAll('[data-search-section]')];
+  const taskSearch = document.getElementById('task-search');
+  const taskFilter = document.getElementById('task-filter');
+  const docSearch = document.getElementById('doc-search');
+  const expand = document.getElementById('expand-all');
+  function filterTasks() {
+    const q = taskSearch.value.trim().toLowerCase();
+    const state = taskFilter.value;
+    let visible = 0;
+    tasks.forEach(task => {
+      const ready = task.dataset.ready === 'true';
+      const matches = (!q || task.dataset.search.includes(q) || task.textContent.toLowerCase().includes(q)) && (state === 'all' || (state === 'ready' ? ready : !ready));
+      task.hidden = !matches;
+      visible += Number(matches);
+    });
+    document.getElementById('task-count').textContent = `${visible} of ${tasks.length} packages shown`;
+    document.getElementById('no-tasks').hidden = visible !== 0;
+  }
+  taskSearch.addEventListener('input', filterTasks);
+  taskFilter.addEventListener('change', filterTasks);
+  document.getElementById('clear-filters').addEventListener('click', () => { taskSearch.value = ''; taskFilter.value = 'all'; filterTasks(); });
+  expand.addEventListener('click', () => {
+    const visible = tasks.filter(t => !t.hidden);
+    const open = visible.some(t => !t.open);
+    visible.forEach(t => { t.open = open; });
+    expand.textContent = open ? 'Collapse all' : 'Expand all';
+  });
+  function filterDocs() {
+    const q = docSearch.value.trim().toLowerCase();
+    let shown = 0;
+    docs.forEach(doc => { doc.hidden = Boolean(q && !doc.textContent.toLowerCase().includes(q)); shown += Number(!doc.hidden); });
+    document.getElementById('doc-count').textContent = `${shown} of ${docs.length} complete documents shown`;
+  }
+  docSearch.addEventListener('input', filterDocs);
+  document.getElementById('clear-doc-search').addEventListener('click', () => { docSearch.value = ''; filterDocs(); });
+  document.addEventListener('click', event => {
+    const link = event.target.closest('a[href^="#"]');
+    if (!link) return;
+    const id = decodeURIComponent(link.hash.slice(1));
+    const target = document.getElementById(id);
+    if (!target) return;
+    if (link.dataset.package) {
+      taskSearch.value = ''; taskFilter.value = 'all'; filterTasks();
+      target.open = true;
+      document.querySelectorAll('.graph-node').forEach(n => n.classList.toggle('selected', n.dataset.package === link.dataset.package));
+    }
+    if (target.closest('[data-search-section]')) { docSearch.value = ''; filterDocs(); }
+    target.classList.remove('anchor-flash');
+    requestAnimationFrame(() => target.classList.add('anchor-flash'));
+  });
+  function revealHash() {
+    const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (!target) return;
+    if (target.matches('[data-task]')) { taskSearch.value = ''; taskFilter.value = 'all'; filterTasks(); target.open = true; }
+    if (target.closest('[data-search-section]')) { docSearch.value = ''; filterDocs(); }
+  }
+  window.addEventListener('hashchange', revealHash); revealHash();
+  document.getElementById('print-page').addEventListener('click', () => window.print());
+  let priorOpen = [];
+  window.addEventListener('beforeprint', () => { priorOpen = tasks.map(t => t.open); tasks.forEach(t => { t.open = true; }); });
+  window.addEventListener('afterprint', () => { tasks.forEach((t, i) => { t.open = priorOpen[i]; }); });
+  if ('IntersectionObserver' in window) {
+    const navLinks = [...document.querySelectorAll('nav a')];
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        const href = '#' + entry.target.id;
+        navLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === href));
+      });
+    }, {rootMargin: '-5% 0px -75% 0px'});
+    document.querySelectorAll('main > header, main > section, .document').forEach(el => observer.observe(el));
+  }
+  filterTasks();
+})();
+</script>
+</body>
+</html>
