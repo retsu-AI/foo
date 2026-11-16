@@ -2,7 +2,7 @@
 
 ## Current implementation
 
-The reviewed F00 contract baseline is `55bd327`. It supplies shared Zig contracts, scripted test adapters, a minimal executable, and build gates. Only the `contracts` module has an implemented test suite. F01 transport work is in progress, starting with an integrator-owned upload contract prerequisite. No production transport exists yet. The agent loop, providers, tools, sessions, MCP, ACP, CLI, and TUI remain planned.
+The reviewed F00 contract baseline is `55bd327`. It supplies shared Zig contracts, scripted test adapters, a minimal executable, and build gates. Only the `contracts` module has an implemented test suite. F01 transport work is in progress. Its one-shot streamed-upload contract landed at `23e40cd` with 19 tests verified by Linux checks. No production transport exists yet. The agent loop, providers, tools, sessions, MCP, ACP, CLI, and TUI remain planned.
 
 The [successful native Nightly run](https://github.com/retsu-AI/foo/actions/runs/43960887714) qualified the F00 bootstrap at `5c53fde07c0923ce914f9139dc21f43d3e5779da`. Its 13 contract tests and bootstrap behavior passed in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64. The Linux Nix checks also passed. This evidence completes F00; it does not qualify the planned runtime modules or the first release. Later contract changes require their own affected checks.
 
