@@ -106,6 +106,6 @@ Retain one state owner, injected provider/tool seams, exact stop reasons, tool-c
 | QQ historical failures involve tool/process behavior | Small schemas, accurate edits and owned commands | Invalid args, stale edits, long output and cancellation fixtures |
 | All three have useful but broader product behavior | Finite first-release scope | MCP/ACP are adapters; additional orchestration stays external |
 
-MCP and ACP support is an explicit user requirement, not a conclusion inferred from source-line counts. Current protocol research, chosen versions and compatibility claims are recorded in [Protocols](protocols.md). The design decision is to implement each as an adapter over the same contracts, preserving a small core.
+MCP and ACP support is an explicit user requirement, not a conclusion inferred from source-line counts. Current protocol research, chosen versions and compatibility claims are recorded in [Protocols](../protocols.md). The design decision is to implement each as an adapter over the same contracts, preserving a small core.
 
 The central conclusion is scope-related: a Zig rewrite can reduce deployment/runtime requirements, but it will not automatically remove product policy, protocol edge cases or process lifecycle work. foo's plan earns simplicity by excluding entire responsibilities while retaining the small set of correctness guarantees that every useful harness needs.

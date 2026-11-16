@@ -2,17 +2,17 @@
 
 foo is ready for its first release when its CLI, TUI, MCP client, and ACP agent use the same engine and meet their contracts on Linux, macOS, and Windows. Compilation, a scripted provider, a live model response, and task success are different kinds of evidence. Record each separately.
 
-F00 provides common fake implementations and test commands. Each module owner adds behavior tests under its assigned directory. F13 may write end-to-end scenarios against those fakes in parallel, but final qualification depends on the integrated F12 release candidate. All requirements below are planned.
+This is a proposed qualification specification. F00 supplies common test fakes, build registration, and 13 contract tests. See [the shared contracts](../src/contracts/README.md) for implemented commands and their limits. Runtime modules and their acceptance fixtures remain planned. Native macOS and Windows bootstrap qualification is pending. F13 may author fixtures after its start dependencies pass, but final qualification depends on the integrated F12 release candidate.
 
 ## Build and test commands
 
-| Planned command | Purpose and owner |
+| Command | Purpose and current status |
 | --- | --- |
-| `zig build test -Dmodule=core` | Narrow behavior tests; F00 adds module selection and every owner supplies its tests |
-| `zig build check` | Formatting, compilation, and deterministic test suite; integrator owns aggregate registration |
-| `zig build acceptance` | Native offline CLI, process, journal, MCP, ACP, and terminal scenarios against fakes |
-| `zig build acceptance-live` | Explicit provider/server/editor interoperability checks using an allowlist, credentials, and a spend ceiling |
-| `zig build bench` | Separate reproducible performance measurements, not wall-clock assertions in unit tests |
+| `zig build test -Dmodule=core` | Unavailable until F03 supplies core behavior tests; F00 has registered module selection |
+| `zig build check` | Implemented formatting, executable compilation, and the contracts suite; integrator registers later suites |
+| `zig build acceptance` | Unavailable; planned native offline CLI, process, journal, MCP, ACP, and terminal scenarios |
+| `zig build acceptance-live` | Unavailable; planned provider/server/editor interoperability with an allowlist and spend ceiling |
+| `zig build bench` | Unavailable; planned reproducible measurements separate from unit-test assertions |
 
 Module selector names are `contracts`, `transport`, `wire`, `core`, `providers`, `tools`, `platform-process`, `mcp`, `session`, `acp`, `config`, `cli`, `tui`, `platform-terminal`, and `integration`. A missing module implementation is reported as missing; a placeholder or empty test target must not count as acceptance. Build registration changes belong to the integrator so agents do not edit the same build files.
 

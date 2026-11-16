@@ -1,8 +1,8 @@
 # MCP and ACP
 
-foo v1 includes an MCP client and an ACP agent. They adapt external protocols to the same execution core used by the CLI and TUI. They do not introduce an orchestrator, a daemon, a second agent loop, or a second permission system.
+The proposed foo v1 requires an MCP client and an ACP agent. They adapt external protocols to the same execution core used by the CLI and TUI. They do not introduce an orchestrator, a daemon, a second agent loop, or a second permission system.
 
-This is an implementation plan, not a claim that these features exist. Protocol sources were checked on **2026-11-16**. Pin the selected upstream schemas and their checksums when F00 establishes the contracts; do not build against a moving `latest` document.
+This is a proposed protocol specification, not a claim that these features exist. Protocol sources were checked on **2026-11-16**. F00 records immutable schema sources and checksums in [the protocol pins](../tests/contracts/protocol-pins.json). The adapters and conformance tests remain planned. See [the shared contracts](../src/contracts/README.md) for current interfaces; do not build against a moving `latest` document.
 
 ## 1. Supported roles and revisions
 
@@ -12,7 +12,7 @@ This is an implementation plan, not a claim that these features exist. Protocol 
 | MCP Streamable HTTP | Client connecting to a configured endpoint | JSON and SSE responses, revision-correct metadata, errors, cancellation, catalog updates | Deprecated standalone HTTP+SSE transport; an HTTP listener in foo |
 | ACP stdio | Agent launched by an editor/client as `foo acp` | Initialization, new sessions, prompt turns, updates, cancellation, permission requests, supported client filesystem/terminal methods | Editor UI, remote ACP transport, agent delegation, planning modes |
 
-The MCP preferred revision is **2026-07-28**, the revision reached by the official `latest` URL at the research date. It uses self-contained requests and per-request capabilities. Support **2025-11-25** as one explicit compatibility profile because its initialization and transport semantics differ. These are two tested profiles, not a promise of every previous revision. [MCP specification](https://modelcontextprotocol.io/specification/2026-07-28), [versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning).
+The MCP preferred revision is **2026-07-28**, the revision reached by the official `latest` URL at the research date. It uses self-contained requests and per-request capabilities. Support **2025-11-25** as one explicit compatibility profile because its initialization and transport semantics differ. These are two required profiles, not a promise of every previous revision. [MCP specification](https://modelcontextprotocol.io/specification/2026-07-28), [versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning).
 
 Use **ACP `protocolVersion: 1`** for foo v1. The official documentation labels v1 “Latest” and v2 “Draft.” v2 changes the prompt lifecycle and removes the v1 client filesystem and terminal interfaces; it must be a separately qualified adapter if added later. Do not mix v2 payloads into a v1 connection. [ACP initialization](https://agentclientprotocol.com/protocol/v1/initialization), [v2 migration status](https://agentclientprotocol.com/protocol/v2/migration).
 

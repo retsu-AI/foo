@@ -35,7 +35,7 @@
         "Contract examples, fake adapter entrypoints, module test commands, dependency inventory.",
         "Reviewed path ownership and protocol-profile contract decisions."
       ],
-      "status": "planned",
+      "status": "review",
       "linear": {
         "id": "ENG-1473",
         "uuid": "f8eaf12b-9e50-4e70-99ce-e2125b4ff4eb",
@@ -261,7 +261,7 @@
         "src/contracts/events.zig"
       ],
       "deliverables": [
-        "Explicit MCP 2026-07-28 and legacy 2025-11-25 client profiles as specified in protocols.md.",
+        "Explicit MCP 2026-07-28 and legacy 2025-11-25 client profiles as specified in docs/protocols.md.",
         "Required stdio and Streamable HTTP transports, discovery/initialization, tools/list and tools/call, resources/list, resources/templates/list, resources/read, prompts/list and prompts/get through ContextSource in the tool contract.",
         "Profile-specific auth/session/subscription/cancellation behavior integrated into the common tool registry."
       ],

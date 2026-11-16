@@ -30,17 +30,18 @@ main{margin-left:var(--nav);max-width:1500px;padding:55px clamp(25px,5vw,80px) 8
   <nav aria-label="Sections"><div class="nav-label">Implementation plan</div><ul>
     <li><a href="#main">Overview</a></li><li><a href="#architecture">Architecture</a></li>
     <li><a href="#dependencies">Dependency map</a></li><li><a href="#packages">Work packages</a></li>
-    <li><a href="#doc-design">Design</a></li><li><a href="#doc-protocols">MCP and ACP</a></li>
+    <li><a href="#doc-docs">Documentation index</a></li>
+    <li><a href="#doc-design">Architecture</a></li><li><a href="#doc-protocols">MCP and ACP</a></li>
     <li><a href="#doc-execution">Parallel implementation</a></li><li><a href="#doc-testing">Testing and release</a></li>
-    <li><a href="#doc-evidence">Project evidence</a></li>
+    <li><a href="#doc-evidence">Project evidence</a></li><li><a href="#doc-decisions">Architecture decisions</a></li>
   </ul></nav>
-  <div class="sidebar-foot"><span class="planned">Implementation planned</span><p>16 November 2026</p><p>One core. Three platforms.<br>Several builders.</p><p><a href="{{PROJECT_URL}}">Open foo in Linear ↗</a></p><a href="README.md">Open the source documents ↗</a></div>
+  <div class="sidebar-foot"><span class="planned">Bootstrap in review</span><p>16 November 2026</p><p>One core. Three platforms.<br>Several builders.</p><p><a href="{{PROJECT_URL}}">Open foo in Linear ↗</a></p><a href="../README.md">Open the documentation index ↗</a></div>
 </aside>
 <main id="main">
 <header class="hero">
   <div class="topline"><span class="eyebrow">Engineering plan · v1 scope</span><button type="button" id="print-page">Print / save PDF</button></div>
   <h1>foo implementation plan</h1>
-  <p class="intro">foo runs a configurable model and tool loop. A CLI, a simple TUI, MCP connections, and an ACP editor interface share that engine. Applications around foo own orchestration.</p>
+  <p class="intro">The v1 target is one configurable model and tool loop shared by a CLI, a simple TUI, MCP connections, and an ACP editor interface. The bootstrap supplies contracts and tests. Runtime implementation and native qualification remain planned.</p>
   <div class="facts" aria-label="Plan scope"><div class="fact"><strong>3 platforms</strong><small>Linux · macOS · Windows</small></div><div class="fact"><strong>3 API families</strong><small>Responses · Chat · Messages</small></div><div class="fact"><strong>MCP + ACP</strong><small>Required in the first release</small></div><div class="fact"><strong>{{PACKAGE_COUNT}} work packages</strong><small>Explicit owners and dependencies</small></div></div>
 </header>
 <noscript><p class="noscript">All documents and task details are available below. Browser find works throughout; interactive filtering requires JavaScript.</p></noscript>
@@ -62,13 +63,13 @@ main{margin-left:var(--nav);max-width:1500px;padding:55px clamp(25px,5vw,80px) 8
 </section>
 <section id="packages" class="section" aria-labelledby="packages-title">
   <div class="section-top"><div><span class="section-number">03 / WORK</span><h2 id="packages-title">Work packages</h2></div><button type="button" id="expand-all">Expand all</button></div>
-  <p class="section-intro">Every package has exclusive write paths, prerequisites, acceptance criteria, a handoff, and a linked Linear issue. This is a planning snapshot; <a href="{{PROJECT_URL}}">Linear holds live assignments and status</a>. No runtime features or checks are claimed as shipped.</p>
+  <p class="section-intro">Every package has exclusive write paths, prerequisites, acceptance criteria, a handoff, and a linked Linear issue. This dated snapshot puts F00 in review and all other packages in planned status. The bootstrap supplies contracts and 13 tests; native macOS and Windows qualification is pending. <a href="{{PROJECT_URL}}">Linear holds live assignments and status</a>.</p>
   <div class="filters"><label>Search packages<input id="task-search" type="search" placeholder="Find MCP, cancellation, Windows, a path…" autocomplete="off"></label><label>Availability<select id="task-filter"><option value="all">All packages</option><option value="ready">Ready to start</option><option value="blocked">Needs prerequisites</option></select></label><button type="button" id="clear-filters">Clear</button></div>
   <p id="task-count" class="result-count" aria-live="polite">{{PACKAGE_COUNT}} packages</p>
   <div id="task-list">{{TASKS}}</div><p id="no-tasks" class="empty" hidden>No matching packages. Clear the filters to see the complete plan.</p>
 </section>
 <div class="reading-toolbar"><label for="doc-search">Search full documents</label><input id="doc-search" type="search" placeholder="Filter documents by a word or phrase…" autocomplete="off"><button type="button" id="clear-doc-search">Clear</button></div>
-<p id="doc-count" class="result-count" aria-live="polite">6 complete documents</p>
+<p id="doc-count" class="result-count" aria-live="polite">{{DOCUMENT_COUNT}} complete documents</p>
 <div id="documents">{{DOCUMENTS}}</div>
 <footer class="footer"><p>Generated from the Markdown documents and work-packages.json. Read source evidence in context; performance budgets and acceptance criteria are proposed requirements.</p><p>Source fingerprint <code>{{SOURCE_HASH}}</code></p></footer>
 </main>

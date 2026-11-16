@@ -9,22 +9,28 @@ import argparse
 import hashlib
 import html
 import json
+import os
 from pathlib import Path
 import re
 from html.parser import HTMLParser
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 import markdown
 
 ROOT = Path(__file__).resolve().parent
 DOCS = [
+    ("../README.md", "docs", "Documentation index"),
     ("README.md", "overview", "Plan overview"),
-    ("design.md", "design", "Design"),
-    ("protocols.md", "protocols", "MCP and ACP"),
+    ("../architecture.md", "design", "Architecture"),
+    ("../protocols.md", "protocols", "MCP and ACP"),
     ("execution.md", "execution", "Parallel implementation"),
-    ("testing.md", "testing", "Testing and release"),
+    ("../testing.md", "testing", "Testing and release"),
     ("evidence.md", "evidence", "Project evidence"),
+    ("../adr/README.md", "decisions", "Architecture decisions"),
+    ("../adr/0001-external-orchestration.md", "adr-0001", "External orchestration"),
+    ("../adr/0002-journal-effect-uncertainty.md", "adr-0002", "Journal effect uncertainty"),
 ]
-DOC_IDS = {name: key for name, key, _ in DOCS}
+DOC_IDS = {(ROOT / name).resolve(): key for name, key, _ in DOCS}
 
 
 def escape(value):
@@ -90,8 +96,9 @@ def validate(data):
 
 
 class RewriteLinks(HTMLParser):
-    def __init__(self, key):
+    def __init__(self, source, key):
         super().__init__(convert_charrefs=False)
+        self.source = source
         self.key = key
         self.parts = []
 
@@ -101,15 +108,20 @@ class RewriteLinks(HTMLParser):
             if name == "id":
                 value = f"doc-{self.key}--{value}"
             elif name == "href" and value:
-                if value.startswith("#"):
-                    value = f"#doc-{self.key}--{value[1:]}"
-                else:
-                    file, _, anchor = value.partition("#")
-                    if file in DOC_IDS:
-                        value = f"#doc-{DOC_IDS[file]}" + (f"--{anchor}" if anchor else "")
-                    elif value.startswith("/"):
-                        source = re.sub(r":\d+(?:-\d+)?$", "", value)
-                        value = Path(source).as_uri()
+                link = urlsplit(value)
+                if not link.scheme and not link.netloc:
+                    if not link.path:
+                        value = f"#doc-{self.key}--{link.fragment}"
+                    elif link.path.startswith("/"):
+                        source = re.sub(r":\d+(?:-\d+)?$", "", unquote(link.path))
+                        value = Path(source).as_uri() + (f"#{link.fragment}" if link.fragment else "")
+                    else:
+                        target = (self.source.parent / unquote(link.path)).resolve()
+                        if target in DOC_IDS:
+                            value = f"#doc-{DOC_IDS[target]}" + (f"--{link.fragment}" if link.fragment else "")
+                        else:
+                            path = Path(os.path.relpath(target, ROOT)).as_posix()
+                            value = urlunsplit(("", "", path, link.query, link.fragment))
             new.append(name if value is None else f'{name}="{escape(value)}"')
         attrs_text = " " + " ".join(new) if new else ""
         self.parts.append(f"<{tag}{attrs_text}>")
@@ -131,9 +143,10 @@ class RewriteLinks(HTMLParser):
 
 
 def render_document(name, key, title):
-    source = (ROOT / name).read_text()
+    path = (ROOT / name).resolve()
+    source = path.read_text()
     rendered = markdown.markdown(source, extensions=["tables", "fenced_code", "sane_lists", "toc"])
-    parser = RewriteLinks(key)
+    parser = RewriteLinks(path, key)
     parser.feed(rendered)
     return (f'<section class="document" id="doc-{key}" data-search-section>'
             f'<div class="document-meta"><span>Reference / {escape(title)}</span>'
@@ -220,6 +233,7 @@ def build():
         "{{TASKS}}": render_tasks(packages),
         "{{GRAPH}}": render_graph(packages),
         "{{PACKAGE_COUNT}}": str(len(packages)),
+        "{{DOCUMENT_COUNT}}": str(len(DOCS)),
         "{{SOURCE_HASH}}": digest.hexdigest(),
         "{{PACKAGE_DATA}}": json.dumps(data, ensure_ascii=False).replace("<", "\\u003c"),
         "{{PROJECT_URL}}": escape(data.get("linear_project", {}).get("url", "#packages")),
@@ -239,7 +253,7 @@ if __name__ == "__main__":
     output = ROOT / "index.html"
     if args.check:
         if not output.exists() or output.read_text() != expected:
-            raise SystemExit("index.html is stale; run uv run docs/plan/build.py")
+            raise SystemExit("index.html is stale; run nix develop .#ci -c python docs/plan/build.py")
         print("Plan validated: dependency graph, exclusive paths, and generated HTML are current.")
     else:
         output.write_text(expected)

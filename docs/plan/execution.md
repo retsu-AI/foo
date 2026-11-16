@@ -2,38 +2,35 @@
 
 This is a plan for building foo with parallel development agents. It does not add agents, scheduling, delegation, or orchestration to the foo runtime. Foo executes one configured conversation; a separate application may later coordinate multiple foo processes.
 
-The machine-readable task inventory is [work-packages.json](work-packages.json). All packages start as `planned`. These documents do not claim that contracts, build targets, implementations, tests, or release artifacts already exist.
+The machine-readable task inventory is [work-packages.json](work-packages.json). This dated local snapshot records F00 as `review` and F01 through F13 as `planned`. The F00 bootstrap is committed at `55bd327`, with shared contracts, a minimal executable, scripted adapters, build gates, and 13 contract tests. The runtime and remaining packages are planned. Native macOS and Windows qualification is pending.
 
 All packages have issues in the [foo Linear project](https://linear.app/retsu-ai/project/foo-86eb1e09a2a5), ENG-1473 through ENG-1486. `dependencies` map to Linear blockers. `completion_dependencies` map to related issues and prominent completion criteria, preserving early authoring. The manifest carries the exact ID/URL mapping; Linear is authoritative for current assignment and workflow status. At creation every issue is unassigned in Backlog.
 
 ## Bootstrap constraints
 
-At inspection, foo has an unborn `main` branch, staged `flake.nix` and `flake.lock`, and existing untracked README/environment files. There is no commit from which to create implementation worktrees, and no verified `origin/main`. Preserve this work. The planning task does not create an initial commit or change those files.
+The initial repository commit is `d40a049`. The reviewed F00 contract baseline is `55bd327`. Preserve unrelated local work and select an exact reviewed commit for each implementation worktree.
 
-When implementation is authorized, the owner/integrator first reviews the initial repository contents, establishes the intended scope of the existing Nix files, and creates an initial commit from explicitly selected paths. Never use `git add .` to absorb unrelated work. F00 then establishes the reviewed contract/build baseline. Only after that commit exists may implementation agents create worktrees from its exact commit ID.
+The bootstrap establishes shared interfaces without implementing the agent loop. Its [contract reference](../../src/contracts/README.md) records the API, test registry, and current limits. Its native CI matrix is configured, but macOS and Windows results remain pending. Follow-on packages start only after F00 satisfies its full acceptance gate.
 
 ```sh
-# Preconditions: the reviewed initial commit and F00 contract commit exist.
 git rev-parse --verify HEAD
 git status --short
-
-# Replace CONTRACT_COMMIT with the actual reviewed F00 commit ID.
-git worktree add ../foo-F01 -b impl/F01 CONTRACT_COMMIT
+git worktree add ../foo-F01 -b impl/F01 55bd327
 ```
 
 Each active implementation agent gets one worktree and one assigned package. A worktree is not a claim of ownership: the package's path list is. Agents must not edit another package's files, inspect credentials, run live paid-provider tests without authorization, or broaden release scope because their local task has spare time.
 
 ## Non-negotiable first-release scope
 
-The candidate must support CLI, simple TUI, MCP client over stdio and Streamable HTTP, and ACP agent over stdio on Linux, macOS, and Windows. These are implementation requirements, not stretch goals after a Linux release. The precise MCP revision profiles, ACP capabilities, and conformance fixtures are specified in [protocols.md](protocols.md). The intended profiles are MCP 2026-07-28 and explicit legacy 2025-11-25; ACP uses stable protocol version 1, without adopting draft v2.
+The candidate must support CLI, simple TUI, MCP client over stdio and Streamable HTTP, and ACP agent over stdio on Linux, macOS, and Windows. These are implementation requirements, not stretch goals after a Linux release. The precise MCP revision profiles, ACP capabilities, and conformance fixtures are specified in [protocols.md](../protocols.md). The intended profiles are MCP 2026-07-28 and explicit legacy 2025-11-25; ACP uses stable protocol version 1, without adopting draft v2.
 
 F00 records the concrete CPU/OS build matrix and native test hosts before implementation begins. The minimum is a native qualification host for each of the three operating systems. Additional architectures are declared separately; cross-compiling does not establish native process, terminal, TLS, or protocol support. If a required host or external test service is unavailable, the affected qualification remains incomplete rather than being silently removed.
 
 ## Shared interfaces and ownership
 
-F00 should implement the following small shared contracts, with names finalized during bootstrap. These names describe proposed files rather than existing interfaces.
+F00 implements the following shared contracts. The table summarizes their intended consumers; the [source contract reference](../../src/contracts/README.md) defines the current API and lifetimes.
 
-| Contract | Proposed file | What callers must know |
+| Contract | File | What callers must know |
 | --- | --- | --- |
 | Events | `src/contracts/events.zig` | IDs, byte deltas, owned final records, ordered committed events, explicit stop/error/cancel/limit outcomes |
 | Provider | `src/contracts/provider.zig` | Caller-owned request preparation/context, capability validation, borrowed delta lifetimes, owned final records, usage, provider-specific opaque replay data |
@@ -69,23 +66,23 @@ finishable(package) = every(package.dependencies, status == complete)
 
 Use `in_progress` only after assignment and worktree creation; `review` means a concrete patch and handoff are ready; `complete` means the reviewed package was integrated and its package acceptance passed. `blocked` must name the missing prerequisite. A queued task, authored test, green fake test, merged module, cross-compiled binary, live protocol test, and qualified release are different evidence states.
 
-The initial ready set contains **F00 only**. F13 may report its fixture-authoring milestone separately, but remains incomplete until native and live qualification is done. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
+No package is ready to start in the current snapshot. F00 is in review, and all later packages depend on its completion. Linear holds current assignments and workflow state. F13 may report its fixture-authoring milestone separately after its start dependencies pass, but remains incomplete until native and live qualification is done. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
 
-## Planned commands
+## Build commands and remaining targets
 
-F00 establishes the command interfaces below and documents the exact pinned Zig invocation. They do not exist in the inspected repository. An empty or unavailable suite must fail with a clear explanation, never pass with zero exercised cases.
+Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` and the `contracts` suite work in the bootstrap. Remaining module suites and qualification targets fail as unavailable until their owners supply real behavior. An empty suite must never count as acceptance.
 
-| Planned command | Owner and purpose |
+| Command | Owner and current status |
 | --- | --- |
-| `zig build check` | Integrator: aggregate deterministic checks for available modules, including format and compile checks |
-| `zig build test -Dmodule=contracts` | F00: validate shared contracts and scripted fake behavior |
-| `zig build test -Dmodule=<module>` | Module owner: deterministic public-interface tests; names registered by F00 |
-| `zig build acceptance` | F13: integrated native offline fixtures, fake providers, and loopback protocol peers |
-| `zig build acceptance-live` | F13: explicitly opted-in interoperability checks with endpoint allowlist, credentials, spend cap, and cleanup |
-| `zig build bench` | F13: repeatable measurements with documented release optimization, fixtures, and raw results |
-| `zig build release -Dtarget=<declared-target>` | F12: candidate archive and manifest for one declared target |
+| `zig build check` | Integrator. Implemented formatting, executable compilation, and contract tests |
+| `zig build test -Dmodule=contracts` | F00. Implemented shared-contract and scripted-fake tests |
+| `zig build test -Dmodule=<module>` | Module owner. Names registered; all suites except `contracts` unavailable |
+| `zig build acceptance` | F13. Unavailable; planned native offline fixtures and loopback peers |
+| `zig build acceptance-live` | F13. Unavailable; planned opted-in interoperability with allowlist and spend cap |
+| `zig build bench` | F13. Unavailable; planned repeatable measurements and raw results |
+| `zig build release -Dtarget=<declared-target>` | F12. Unavailable; planned candidate archive and manifest |
 
-F00 reserves these target interfaces and makes unimplemented suites unavailable. Its module allowlist includes `contracts`, `transport`, `wire`, `core`, `providers`, `tools`, `platform-process`, `mcp`, `session`, `acp`, `config`, `cli`, `tui`, `platform-terminal`, and `integration`. The owning packages add their actual test roots; F12 completes packaging and CI. A module handoff runs its narrow suite. The integrator runs affected dependent suites after a merge and the full deterministic gate once per candidate. Live tests and benchmarks are opt-in lanes; ordinary edits must not depend on remote credentials or provider spending.
+F00 registers these target interfaces and makes unimplemented suites unavailable. Its module allowlist includes `contracts`, `transport`, `wire`, `core`, `providers`, `tools`, `platform-process`, `mcp`, `session`, `acp`, `config`, `cli`, `tui`, `platform-terminal`, and `integration`. The owning packages add their actual test roots; F12 completes packaging and CI. A module handoff runs its narrow suite. The integrator runs affected dependent suites after a merge and the full deterministic gate once per candidate. Live tests and benchmarks are opt-in lanes; ordinary edits must not depend on remote credentials or provider spending.
 
 ## Work packages
 
@@ -141,7 +138,7 @@ Accept fixtures for binary/UTF-8 files, line endings, stale file observations, i
 
 **Owner:** MCP agent. **Start dependencies:** F01, F02. **Completion dependency:** F05. **Paths:** `src/mcp/**`, `tests/mcp/**`. **Consumes:** tool, I/O, configuration, JSON-RPC, and events contracts; F05 process ownership through the shared I/O contract.
 
-Implement both required transports and both explicitly configured revision profiles in [protocols.md](protocols.md). Own discovery/initialization, capability negotiation, tool listing/calling, resources/list, resources/templates/list, resources/read, prompts/list and prompts/get, content conversion, notifications, pagination, authentication handling, cancellation, and profile-specific session/subscription behavior. Use `ContextSource` in the tool contract for explicit resource/template/prompt access. Pin advertised schemas per run; detected removals/changes block affected calls with `catalog_changed`, and replacements become visible next run. Map MCP tools into the same tool registry as local tools; avoid a second execution loop or a general plugin manager.
+Implement both required transports and both explicitly configured revision profiles in [protocols.md](../protocols.md). Own discovery/initialization, capability negotiation, tool listing/calling, resources/list, resources/templates/list, resources/read, prompts/list and prompts/get, content conversion, notifications, pagination, authentication handling, cancellation, and profile-specific session/subscription behavior. Use `ContextSource` in the tool contract for explicit resource/template/prompt access. Pin advertised schemas per run; detected removals/changes block affected calls with `catalog_changed`, and replacements become visible next run. Map MCP tools into the same tool registry as local tools; avoid a second execution loop or a general plugin manager.
 
 Accept an independent fake server matrix covering modern and legacy stdio/HTTP, malformed peers, interleaved messages, slow output, pagination, server death, auth failures, cancellation, reconnect rules, and duplicate-effect prevention. Test against the core/tool contract with fakes before the complete application exists. After F05, exercise real stdio child shutdown/reaping on all declared operating systems before completing F06. Handoff records the exact support matrix, unsupported optional features, transport assumptions, and live interoperability cases reserved for F13.
 
@@ -157,7 +154,7 @@ Accept fault injection for short/failed writes, disk full, incomplete final reco
 
 **Owner:** ACP agent. **Dependencies:** F02. **Paths:** `src/acp/**`, `tests/acp/**`. **Consumes:** JSON-RPC, events, core/provider/tool contracts, and host contract.
 
-Implement stable ACP v1 over stdio as specified in [protocols.md](protocols.md), including initialize/capabilities, sessions, prompt/update/stop mapping, cancellation, client permission requests, and negotiated client filesystem/terminal operations. Use mocked runtime and host adapters so protocol work does not wait for provider engines. Advertise capabilities only after their complete lifecycle works. No ACP-specific planner or session engine.
+Implement stable ACP v1 over stdio as specified in [protocols.md](../protocols.md), including initialize/capabilities, sessions, prompt/update/stop mapping, cancellation, client permission requests, and negotiated client filesystem/terminal operations. Use mocked runtime and host adapters so protocol work does not wait for provider engines. Advertise capabilities only after their complete lifecycle works. No ACP-specific planner or session engine.
 
 Accept independent mock-client traces covering requests in flight, cancellation races, client refusal/unavailable capabilities, filesystem/terminal delegation, transport shutdown, correlated errors, and resumed sessions where advertised. Keep stdout exclusively framed protocol messages. Handoff gives the supported-method matrix, wire transcripts, exact stop-reason mapping, native pipe behavior, and target-client interoperability checks for F13.
 

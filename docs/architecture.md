@@ -1,10 +1,10 @@
-# foo design
+# foo architecture
 
-Status: proposed implementation plan, 2026-11-16. The harness described here has not been implemented or qualified. Existing repository files are not evidence that these capabilities exist.
+Status: proposed v1 architecture, 2026-11-16. The F00 bootstrap supplies shared contracts and test adapters. The runtime described here is not implemented or qualified. See [the shared contracts](../src/contracts/README.md) for the current API.
 
 foo is a small Zig library and executable for running one configurable agent conversation. Its job is to send a request to a model, stream the response, execute declared tools, append their results, and repeat until the model finishes or the caller stops it. CLI, a simple TUI, an MCP client, and an ACP agent use that same implementation.
 
-This document is the canonical design narrative, including provider and process-interface semantics. [Evidence](evidence.md) explains the reference analysis. [Protocols](protocols.md) defines MCP and ACP contracts. [Execution](execution.md) assigns independent implementation packages and integration order. [Testing](testing.md) defines qualification and performance measurement. MCP/ACP revisions and capability tables belong in the protocol document.
+This document is the canonical design narrative, including provider and process-interface semantics. [Evidence](plan/evidence.md) explains the reference analysis. [Protocols](protocols.md) defines MCP and ACP contracts. [Execution](plan/execution.md) assigns independent implementation packages and integration order. [Testing](testing.md) defines qualification and performance measurement. MCP/ACP revisions and capability tables belong in the protocol document.
 
 ## Product contract
 
@@ -17,6 +17,8 @@ The priorities are predictable behavior, low local overhead, bounded resource us
 The first release does not contain subagents, goals, a planner, worktree management, a task scheduler, an audit model, automatic verification, automatic commits, a daemon, an HTTP server for local UI, an extension package manager, embedded JavaScript/WASM, a browser UI, a desktop framework, enterprise configuration management, or a sandbox implementation. An outer project may launch several foo processes and own these features. Their absence is an intentional product limit, not a backlog for this repository.
 
 ## System shape
+
+[ADR 0001](adr/0001-external-orchestration.md) records why orchestration stays outside foo.
 
 ```mermaid
 flowchart TD
@@ -39,13 +41,13 @@ flowchart TD
   EVENTS --> ACP
 ```
 
-The shipped executable permits one active run per process, including ACP mode. A process may hold bounded idle-session metadata and remain open for several sequential prompts. Each library instance owns one active run; an embedding application may create independent instances and owns any coordination between them. foo supplies no scheduler. Multiple ACP session identifiers do not enable concurrent active prompts.
+The target executable permits one active run per process, including ACP mode. A process may hold bounded idle-session metadata and remain open for several sequential prompts. Each library instance owns one active run; an embedding application may create independent instances and owns any coordination between them. foo supplies no scheduler. Multiple ACP session identifiers do not enable concurrent active prompts.
 
 Local CLI and TUI operation calls the library directly. JSONL process input/output is the stable integration mechanism for external orchestration. ACP is an editor-facing protocol adapter. MCP supplies tools from external servers. Neither protocol changes who owns the agent loop.
 
 ## Module ownership
 
-Use one Zig package and one executable. Directories organize ownership; they do not imply separately published packages or a dynamic plugin system. Each implementation package owns its focused tests under the corresponding owner directory described in [Execution](execution.md).
+Use one Zig package and one executable. Directories organize ownership; they do not imply separately published packages or a dynamic plugin system. Each implementation package owns its focused tests under the corresponding owner directory described in [Execution](plan/execution.md).
 
 | Owner | Paths | Owns | Must not own |
 | --- | --- | --- | --- |
@@ -176,6 +178,8 @@ System prompt replacement means replacement, including an empty prompt. Appended
 
 ## Sessions, journals and effect uncertainty
 
+[ADR 0002](adr/0002-journal-effect-uncertainty.md) records the effect-boundary and uncertainty decision.
+
 Persistence is optional. With persistence disabled, foo keeps only the bounded in-memory context and configured output artifacts for the current run. With persistence enabled, use a linear append-only JSONL journal plus bounded artifact files. Do not import QQ's database schema or PI's tree/branch navigation model.
 
 Journal records are semantic: session header/version, configuration identity without secrets, input messages, completed assistant messages including necessary provider replay state, tool dispatch intent, tool result/effect state, and terminal outcome. Token deltas are not individually durable. Keep transient display events separate from committed-record events.
@@ -231,4 +235,4 @@ Do not promise an end-to-end speedup merely because foo uses Zig. The expected r
 
 The release is qualified only when the implementation and native tests demonstrate the contracts in [Testing](testing.md), including all three OSes, named provider families, MCP client operation, ACP agent operation, CLI/TUI parity, cancellation, uncertain-effect recovery and bounded output. Compilation, fake-provider tests and live-provider tests are distinct evidence and are reported separately.
 
-The implementation packages in [Execution](execution.md) are designed for parallel work after F00. Each package delivers its module, focused tests, interface conformance and documentation updates; integration demonstrates one shared loop across all surfaces. The project is complete at the agreed first-release capability set. Additional orchestration belongs in another project, even if it could be implemented as one more option here.
+The implementation packages in [Execution](plan/execution.md) are designed for parallel work after F00. Each package delivers its module, focused tests, interface conformance and documentation updates; integration demonstrates one shared loop across all surfaces. The project is complete at the agreed first-release capability set. Additional orchestration belongs in another project, even if it could be implemented as one more option here.
