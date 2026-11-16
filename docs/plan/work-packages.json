@@ -35,7 +35,7 @@
         "Contract examples, fake adapter entrypoints, module test commands, dependency inventory.",
         "Reviewed path ownership and protocol-profile contract decisions."
       ],
-      "status": "review",
+      "status": "complete",
       "linear": {
         "id": "ENG-1473",
         "uuid": "f8eaf12b-9e50-4e70-99ce-e2125b4ff4eb",
@@ -72,7 +72,7 @@
         "Dependency footprint, proxy/CA support matrix, exact commands and native results.",
         "Fixture corpus for provider and MCP consumers."
       ],
-      "status": "planned",
+      "status": "in_progress",
       "linear": {
         "id": "ENG-1474",
         "uuid": "7aeef6b7-7d63-459a-93c1-b77aa02162bc",

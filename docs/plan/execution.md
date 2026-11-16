@@ -2,7 +2,7 @@
 
 This is a plan for building foo with parallel development agents. It does not add agents, scheduling, delegation, or orchestration to the foo runtime. Foo executes one configured conversation; a separate application may later coordinate multiple foo processes.
 
-The machine-readable task inventory is [work-packages.json](work-packages.json). This dated local snapshot records F00 as `review` and F01 through F13 as `planned`. The F00 bootstrap is committed at `55bd327`, with shared contracts, a minimal executable, scripted adapters, build gates, and 13 contract tests. The runtime and remaining packages are planned. Native macOS and Windows qualification is pending.
+The machine-readable task inventory is [work-packages.json](work-packages.json). This dated local snapshot records F00 as `complete`, F01 as `in_progress`, and F02 through F13 as `planned`. The reviewed F00 contracts are at `55bd327`. The [native Nightly run](https://github.com/retsu-AI/foo/actions/runs/43960887714) qualified bootstrap commit `5c53fde07c0923ce914f9139dc21f43d3e5779da`, including its 13 contract tests and bootstrap behavior in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64, plus Linux Nix checks. F01 starts with an integrator-owned upload contract prerequisite. No production transport exists yet; the remaining runtime packages are planned.
 
 All packages have issues in the [foo Linear project](https://linear.app/retsu-ai/project/foo-86eb1e09a2a5), ENG-1473 through ENG-1486. `dependencies` map to Linear blockers. `completion_dependencies` map to related issues and prominent completion criteria, preserving early authoring. The manifest carries the exact ID/URL mapping; Linear is authoritative for current assignment and workflow status. At creation every issue is unassigned in Backlog.
 
@@ -10,12 +10,12 @@ All packages have issues in the [foo Linear project](https://linear.app/retsu-ai
 
 The initial repository commit is `d40a049`. The reviewed F00 contract baseline is `55bd327`. Preserve unrelated local work and select an exact reviewed commit for each implementation worktree.
 
-The bootstrap establishes shared interfaces without implementing the agent loop. Its [contract reference](../../src/contracts/README.md) records the API, test registry, and current limits. Its native CI matrix is configured, but macOS and Windows results remain pending. Follow-on packages start only after F00 satisfies its full acceptance gate.
+The bootstrap establishes shared interfaces without implementing the agent loop. Its [contract reference](../../src/contracts/README.md) records the API, test registry, and current limits. F00's native acceptance passed at `5c53fde`; follow-on work adopts that qualified baseline or a later reviewed prerequisite commit with its own affected checks.
 
 ```sh
 git rev-parse --verify HEAD
 git status --short
-git worktree add ../foo-F01 -b impl/F01 55bd327
+git worktree add ../foo-F02 -b impl/F02 5c53fde07c0923ce914f9139dc21f43d3e5779da
 ```
 
 Each active implementation agent gets one worktree and one assigned package. A worktree is not a claim of ownership: the package's path list is. Agents must not edit another package's files, inspect credentials, run live paid-provider tests without authorization, or broaden release scope because their local task has spare time.
@@ -51,13 +51,16 @@ Ownership is exclusive while work is active. Shared-file overlap is allowed only
 
 ## Task states and dependency rules
 
-The JSON `dependencies` array controls when a package may start. A package is ready only when it is `planned` and every dependency is `complete`. Recompute readiness after every accepted merge; do not infer it from a previous wave diagram.
+The JSON `dependencies` array controls when a package may start. A package is ready only when it is `planned` and every dependency is `complete`. The board's Needs prerequisites filter includes only planned packages with an incomplete start dependency. Completed, active, and review packages are outside both availability filters. Recompute readiness after every accepted merge; do not infer it from a previous wave diagram.
 
 `completion_dependencies`, when present, adds prerequisites for finishing a package. It does not prevent early fixture development. F06 can develop MCP against fake process I/O, but needs F05's real process ownership before its stdio completion gate. F13's test work may start after F00, but its final qualification cannot complete until F12's integrated candidate exists.
 
 ```text
 ready(package) = package.status == planned
                  and every(package.dependencies, status == complete)
+
+needs_prerequisites(package) = package.status == planned
+                               and any(package.dependencies, status != complete)
 
 finishable(package) = every(package.dependencies, status == complete)
                       and every(package.completion_dependencies, status == complete)
@@ -66,7 +69,7 @@ finishable(package) = every(package.dependencies, status == complete)
 
 Use `in_progress` only after assignment and worktree creation; `review` means a concrete patch and handoff are ready; `complete` means the reviewed package was integrated and its package acceptance passed. `blocked` must name the missing prerequisite. A queued task, authored test, green fake test, merged module, cross-compiled binary, live protocol test, and qualified release are different evidence states.
 
-No package is ready to start in the current snapshot. F00 is in review, and all later packages depend on its completion. Linear holds current assignments and workflow state. F13 may report its fixture-authoring milestone separately after its start dependencies pass, but remains incomplete until native and live qualification is done. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
+F02, F03, F05, F07, F09, and F13 are ready to start in the current snapshot. F01 is already in progress. F04, F06, F08, F10, F11, and F12 still need start prerequisites. Linear holds current assignments and workflow state. F13 may author fixtures now, but remains incomplete until native and live qualification is done against F12's candidate. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
 
 ## Build commands and remaining targets
 

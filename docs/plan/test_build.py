@@ -15,6 +15,7 @@ class Page(HTMLParser):
         self.links = []
         self.assets = []
         self.documents = {}
+        self.tasks = {}
         self.current = None
         self.text = []
         self.feed(source)
@@ -23,6 +24,8 @@ class Page(HTMLParser):
         attrs = dict(attrs)
         if "id" in attrs:
             self.ids.add(attrs["id"])
+        if "data-task" in attrs:
+            self.tasks[attrs["data-task"]] = attrs
         if tag == "a" and "href" in attrs:
             self.links.append(attrs["href"])
         if tag in {"script", "img", "link"} and ("src" in attrs or "href" in attrs):
@@ -96,6 +99,29 @@ class PlanTests(unittest.TestCase):
     def test_build_is_deterministic_and_committed_output_is_current(self):
         self.assertEqual(self.output, build.build())
         self.assertEqual(self.output, (build.ROOT / "index.html").read_text())
+
+    def test_availability_uses_start_dependencies_only_for_planned_packages(self):
+        packages = []
+        for package_id, status, dependencies, completion in (
+            ("complete", "complete", ["unfinished"], []),
+            ("active", "in_progress", ["unfinished"], []),
+            ("review", "review", ["unfinished"], []),
+            ("ready", "planned", ["complete"], ["unfinished"]),
+            ("blocked", "planned", ["unfinished"], []),
+            ("unfinished", "planned", [], []),
+        ):
+            packages.append({
+                "id": package_id, "status": status, "dependencies": dependencies,
+                "completion_dependencies": completion, "title": package_id,
+                "owner": "owner", "paths": [], "deliverables": [],
+                "acceptance": [], "handoff": [],
+            })
+        page = Page(build.render_tasks(packages))
+        for attribute, expected in (("data-ready", {"ready", "unfinished"}),
+                                    ("data-blocked", {"blocked"})):
+            with self.subTest(attribute=attribute):
+                self.assertEqual({key for key, attrs in page.tasks.items()
+                                  if attrs.get(attribute) == "true"}, expected)
 
 
 if __name__ == "__main__":
