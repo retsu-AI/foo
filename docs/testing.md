@@ -2,7 +2,9 @@
 
 foo is ready for its first release when its CLI, TUI, MCP client, and ACP agent use the same engine and meet their contracts on Linux, macOS, and Windows. Compilation, a scripted provider, a live model response, and task success are different kinds of evidence. Record each separately.
 
-This is a proposed qualification specification. F00 supplies common test fakes, build registration, and 13 contract tests. See [the shared contracts](../src/contracts/README.md) for implemented commands and their limits. Runtime modules and their acceptance fixtures remain planned. Native macOS and Windows bootstrap qualification is pending. F13 may author fixtures after its start dependencies pass, but final qualification depends on the integrated F12 release candidate.
+This is a proposed qualification specification for the runtime. F00 supplies common test fakes and build registration. Its [native Nightly run](https://github.com/retsu-AI/foo/actions/runs/43960887714) qualified bootstrap commit `5c53fde07c0923ce914f9139dc21f43d3e5779da` with 13 contract tests and bootstrap behavior in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64. Linux Nix checks also passed. This completes F00, not first-release qualification. The test count belongs to that baseline; later contract changes need their own affected checks.
+
+See [the shared contracts](../src/contracts/README.md) for implemented commands and their limits. F01 transport work is in progress, beginning with an integrator-owned upload contract prerequisite. No production transport exists yet. Remaining runtime modules and their acceptance fixtures remain planned. F13 may author fixtures now, but final qualification depends on the integrated F12 release candidate.
 
 ## Build and test commands
 

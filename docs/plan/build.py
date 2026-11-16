@@ -169,6 +169,7 @@ def render_tasks(packages):
     output = []
     for p in packages:
         ready = p["status"] == "planned" and set(p["dependencies"]) <= completed
+        blocked = p["status"] == "planned" and not set(p["dependencies"]) <= completed
         state = "Ready to start" if ready else ("Planned · prerequisites" if p["status"] == "planned" else p["status"])
         issue = p.get("linear")
         issue_id = issue["id"] if issue else ""
@@ -180,7 +181,7 @@ def render_tasks(packages):
         owner_label = p["owner"] + (f" · {issue_id}" if issue_id else "")
         output.append(
             f'<details class="task" id="task-{escape(p["id"])}" data-task="{escape(p["id"])}" '
-            f'data-search="{search}" data-ready="{str(ready).lower()}">'
+            f'data-search="{search}" data-ready="{str(ready).lower()}" data-blocked="{str(blocked).lower()}">'
             f'<summary><span class="task-id">{escape(p["id"])}</span>'
             f'<span class="task-title">{escape(p["title"])}<small>{escape(owner_label)}</small></span>'
             f'<span class="status {"ready" if ready else ""}">{escape(state)}</span></summary>'
