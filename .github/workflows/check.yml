@@ -1,0 +1,28 @@
+name: Check
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    name: Native contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned Zig
+        run: python .github/scripts/install-zig.py
+      - name: Check contracts and executable
+        run: zig build check
+      - name: Build executable
+        run: zig build
+      - name: Check executable and unavailable targets
+        run: python tests/contracts/bootstrap.py

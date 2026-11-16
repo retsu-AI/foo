@@ -1,0 +1,31 @@
+const std = @import("std");
+const io = @import("io.zig");
+const events = @import("events.zig");
+const provider = @import("provider.zig");
+const tool = @import("tool.zig");
+
+pub const format_version: u32 = 1;
+pub const Record = union(enum) {
+    header: struct { version: u32 = format_version, config_identity: []const u8 },
+    message: provider.Message,
+    dispatch_intent: tool.Invocation,
+    tool_result: tool.Result,
+    finished: events.Outcome,
+};
+pub const Error = io.Error || error{ CommitFailed, CorruptHistory, UnsupportedVersion, WriterBusy };
+pub const Recovery = struct {
+    messages: []const provider.Message,
+    /// Intent without a committed result is uncertain and never auto-replayed.
+    uncertain_call_ids: []const []const u8,
+    last_sequence: u64,
+    interrupted: bool,
+};
+pub const Store = struct {
+    context: *anyopaque,
+    /// Success means the record and referenced artifacts passed the platform's
+    /// sync operation; only then may the caller publish or start the next effect.
+    /// Failure after an effect stops execution with an uncertain durable outcome.
+    commit_fn: *const fn (*anyopaque, io.Context, Record) Error!u64,
+    /// Copies a validated completed prefix and uncertainty report into the arena.
+    load_fn: *const fn (*anyopaque, std.mem.Allocator, io.Context) Error!Recovery,
+};

@@ -1,0 +1,19 @@
+{
+  "mcp": [
+    {
+      "revision": "2026-07-28",
+      "url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/de3550c9fea3c5269e42ac95204eef44a2b2cb92/schema/2026-07-28/schema.ts",
+      "sha256": "b4cb5cb38f3dc5b6dc9b6bd1d2b7992786dd3adee6ccf794b7ca6c07621f0820"
+    },
+    {
+      "revision": "2025-11-25",
+      "url": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/de3550c9fea3c5269e42ac95204eef44a2b2cb92/schema/2025-11-25/schema.ts",
+      "sha256": "e74b56e73b2e37bdb595f74ba22e428ad7f07aa3519355ba661d681298ed38ac"
+    }
+  ],
+  "acp": {
+    "version": 1,
+    "url": "https://raw.githubusercontent.com/agentclientprotocol/agent-client-protocol/4aab69b4e6bcb53965ff5b1141d2f04a62a25c6c/schema/v1/schema.json",
+    "sha256": "e747a7bec3c02708b70885bf3cccac5c72fa421390dd7e85758fd61e33b1ae21"
+  }
+}
