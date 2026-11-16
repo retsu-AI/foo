@@ -24,7 +24,7 @@ nix develop .#ci -c zig build check
 nix develop .#ci -c python docs/plan/build.py --check
 ```
 
-The default shell includes Zig 0.17.1, ZLS 0.17.0, Git, ripgrep, jq, Nix formatting/lint tools, Python with Markdown, GitHub CLI, uv, and hyperfine. The CI shell omits editor and interactive tools. No provider credentials, network policy, terminal settings, or library search paths are changed.
+The default shell includes Zig 0.17.1, ZLS 0.17.0, Git, ripgrep, jq, Nix formatting/lint tools, Python with Markdown, Node.js, Bun, GitHub CLI, uv, and hyperfine. Node.js and Bun support the bundled [pstack scripts](../docs/pstack.md). The CI shell omits editor and interactive tools. No provider credentials, network policy, terminal settings, or library search paths are changed.
 
 Zig's global cache is shared across worktrees and defaults to `$XDG_CACHE_HOME/zig` or `$HOME/.cache/zig`. The local cache defaults to `.zig-cache` under the directory where the shell is entered. Explicit cache settings are preserved. Build products remain workspace-local.
 

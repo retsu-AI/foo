@@ -12,6 +12,8 @@
   ];
   docs = pkgs.python3.withPackages (python: [ python.markdown ]);
   interactive = with pkgs; [
+    nodejs
+    bun
     gh
     uv
     hyperfine

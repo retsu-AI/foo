@@ -1,0 +1,5 @@
+# pstack's fan-out workflows use native Codex subagents.
+model_reasoning_effort = "xhigh"
+
+[features]
+multi_agent = true
