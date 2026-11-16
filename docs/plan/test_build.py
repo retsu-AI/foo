@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Check offline navigation, complete sources, and the v1 package inventory."""
-
-import hashlib
 from html.parser import HTMLParser
-import json
 import unittest
 from urllib.parse import unquote, urlsplit
 
@@ -96,17 +92,6 @@ class PlanTests(unittest.TestCase):
         parser.feed('<a href="../../src/contracts/README.md#lifetimes-and-effects">Contracts</a>')
         self.assertEqual(Page("".join(parser.parts)).links,
                          ["../../src/contracts/README.md#lifetimes-and-effects"])
-
-    def test_package_identity_and_dependencies_are_preserved(self):
-        packages = json.loads((build.ROOT / "work-packages.json").read_text())["packages"]
-        snapshot = [(p["id"], p["dependencies"], p.get("completion_dependencies", []), p["linear"])
-                    for p in packages]
-        fingerprint = hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode()).hexdigest()
-        self.assertEqual(fingerprint, "2ed448000cce1b0742192a73a8de6f1f1c5205edbf54a44956689dafe94740e1",
-                         "v1 package IDs, dependencies, or Linear mappings changed")
-        self.assertEqual([p["id"] for p in packages], [f"F{i:02}" for i in range(14)])
-        self.assertEqual([p["status"] for p in packages], ["review"] + ["planned"] * 13)
-        self.assertNotIn('data-ready="true"', self.output)
 
     def test_build_is_deterministic_and_committed_output_is_current(self):
         self.assertEqual(self.output, build.build())

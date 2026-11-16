@@ -20,6 +20,7 @@ nix develop .#ci -c zig version
 nix fmt
 nix flake check -L
 nix flake check --no-build --all-systems
+nix develop .#ci -c zig build check
 nix develop .#ci -c python docs/plan/build.py --check
 ```
 
@@ -33,8 +34,8 @@ The existing `.envrc` watches `nix/*.nix` and uses the default flake shell. Appr
 
 Shells, formatter, and checks are declared for x86_64/aarch64 Linux and aarch64 macOS. The locked nixpkgs has dropped x86_64 macOS support; it is not advertised as a working Nix environment. Intel macOS would need a separately qualified package source/toolchain. Nix evaluation on another system is not native build/runtime qualification. Windows harness development and tests use the native Zig toolchain; a WSL Nix shell is a Linux environment and cannot qualify Windows console or process behavior.
 
-`nix flake check` validates the environment only. ENG-1473 will add the harness build and contract tests. Native harness, MCP/ACP, terminal, process, and live-provider acceptance remain the work packages described in `docs/plan`.
+`nix flake check` validates the environment. `zig build check` validates the implemented bootstrap contracts and executable. The engine, providers, MCP, ACP, and TUI remain planned in [the implementation plan](../docs/plan/README.md). Native macOS and Windows contract execution remains pending.
 
-Until the initial repository commit exists, Git-backed flakes omit untracked `nix/` files. Use `nix develop path:.`, `nix run path:.#formatter.x86_64-linux`, and `nix flake check path:. -L` to validate the working directory without staging unrelated files. Substitute `aarch64-linux` or `aarch64-darwin` for the formatter system when appropriate. After adding these files to the intended initial commit, the ordinary commands above work. `nix fmt` forwards positional arguments to the formatter; a positional `path:.` does not select a flake.
+The flake and `nix/` files are tracked, so the commands above work from a clean checkout. Git-backed flakes omit newly added untracked files. To check such files before staging them, use `nix develop path:.`, `nix run path:.#formatter.x86_64-linux`, or `nix flake check path:. -L`. Substitute the formatter's system on other hosts. `nix fmt` forwards positional arguments to the formatter; a positional `path:.` does not select a flake.
 
 To upgrade the compiler, update the nixpkgs lock and explicit versions in `toolchain.nix` together, then rerun the checks on the declared native systems. Do not silently filter unavailable tools out of a shell: an unsupported package or compiler version must fail visibly.
