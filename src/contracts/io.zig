@@ -78,7 +78,8 @@ pub const ByteSink = struct {
 
 pub const ByteSource = struct {
     context: *anyopaque,
-    /// Returns zero only at EOF. Uses caller storage; retains no buffer pointer.
+    /// Writes at most buffer.len bytes and returns zero only at EOF. The buffer
+    /// is nonempty caller storage, borrowed for this callback only.
     read_fn: *const fn (*anyopaque, Context, []u8) Error!usize,
 };
 pub const ProcessExit = union(enum) { exited: i32, signalled: u32 };
@@ -108,11 +109,18 @@ pub const Spawner = struct {
 
 pub const Header = struct { name: []const u8, value: []const u8 };
 pub const Delivery = enum { unsent, possibly_sent };
+pub const HttpBody = union(enum) {
+    bytes: []const u8,
+    stream: struct {
+        source: ByteSource,
+        content_length: ?u64 = null,
+    },
+};
 pub const HttpRequest = struct {
     method: enum { get, post, delete },
     url: []const u8,
     headers: []const Header = &.{},
-    body: []const u8 = "",
+    body: HttpBody = .{ .bytes = "" },
     max_response_bytes: usize,
 };
 pub const HttpHead = struct { status: u16, headers: []const Header };
@@ -124,6 +132,7 @@ pub const HttpSink = struct {
 pub const HttpTransport = struct {
     context: *anyopaque,
     /// Set delivery before bytes can reach the peer, including on error.
-    /// Borrow head/body only in callbacks; return only after I/O is quiescent.
+    /// The request and its source live until return; callback buffers are borrowed
+    /// only in callbacks. Never rewind or replay the body. Return after I/O is quiescent.
     exchange_fn: *const fn (*anyopaque, Context, HttpRequest, HttpSink, *Delivery) Error!void,
 };

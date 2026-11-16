@@ -18,6 +18,16 @@ Tool declarations are pinned for a run; a detected removal/schema change rejects
 
 Cleanup uses a separate bounded I/O context so cancelling a run does not cancel its cleanup. Remote terminal cleanup after disconnection can be unconfirmed. The host owns that distinction.
 
+## HTTP request bodies
+
+`io.HttpRequest.body` is an `io.HttpBody`. `.bytes` borrows the complete byte slice and has an implicit length equal to the slice length. The default body is an empty byte slice. `.stream` borrows a `ByteSource` and has an optional `content_length` in bytes. The request, source context, and source-owned state remain alive until `HttpTransport.exchange_fn` returns.
+
+The transport calls `ByteSource.read_fn` with nonempty caller storage. The source writes at most the supplied slice length and returns the number of bytes written. Zero means EOF, including when the stream is empty. The source must not retain the buffer or access it after the callback returns. The transport consumes or copies each chunk before reusing that storage.
+
+A declared `content_length` is the exact wire body length. The transport never asks for more than the remaining length, stops without another source call when that length is reached, and leaves any later source bytes unread. A zero length makes no source calls. EOF before the declared length returns `error.IoFailure`. With no declared length, the transport reads until EOF. Source errors pass through unchanged. The transport does not materialize the entire stream or retain unbounded upload data.
+
+An exchange consumes the source once. The transport never rewinds it or automatically replays a request, including byte bodies. The caller cannot reuse a partially consumed source without explicitly preparing a new operation. Cancellation and deadline checks apply to source reads and response callbacks. Source and sink callbacks must honor the supplied context and propagate failures. A failed or cancelled exchange can have consumed a prefix and can have reached the peer; `Delivery` records that uncertainty. After any exchange return, no source or sink callbacks or borrowed-buffer accesses remain active.
+
 ## Modules and fakes
 
 | Export | Consumers | Meaning |
@@ -32,6 +42,8 @@ Cleanup uses a separate bounded I/O context so cancelling a run does not cancel 
 | `host` | ACP, tools, core/frontends | Exact-operation permissions, file/terminal adapters, runner and request preparation |
 
 `tests/support/root.zig` exports scripted `Clock`, `Bytes`, `Provider`, `Tools`, `Journal`, `Http`, `Process`, and `Editor` adapters. Templates and journal intent IDs are borrowed from the fixture and must outlive it. These are deterministic test collaborators, not production adapters. Their inputs must be bounded test fixtures; they are not schema validators or models of real process/network behavior.
+
+`Http.upload` captures request bytes into caller-supplied `Bytes.buffer` storage and fails with `error.LimitExceeded` when that storage is full. Its default empty storage accepts only empty uploads. Stream reads use a fixed-size scratch buffer. The fake propagates upload source, capture, response head, and response body failures. It does not simulate networking, TLS, framing, or peer delivery.
 
 The core is still absent. `host.RunInput.services` explicitly injects the provider, optional store, host capabilities, and request preparation. The runner receives a result allocator. `io.Spawner` supplies owned independent stdin/stdout/stderr for MCP and executable tools; `host.Processes` models client terminal operations. MCP discovery, ACP negotiation, persistence files, configuration parsing, provider codecs, and process execution land in their assigned implementation modules.
 
