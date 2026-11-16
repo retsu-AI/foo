@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["Markdown==3.10.3"]
+# dependencies = ["Markdown==3.11"]
 # ///
 """Render the foo plan as one offline HTML file; no foo runtime dependencies."""
 

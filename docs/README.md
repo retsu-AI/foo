@@ -11,8 +11,9 @@ Native macOS and Windows qualification is pending. The configured CI matrix and 
 | [Project README](../README.md) | Project entry point |
 | [Shared contracts](../src/contracts/README.md) | Implemented interfaces, lifetimes, effect ordering, test commands, and current limits |
 | [Nix environment](../nix/README.md) | Development shells, toolchain versions, and environment checks |
+| [Continuous integration](ci.md) | Fast pull-request checks, nightly native coverage, and toolchain caches |
 
-Contributor workflow guidance belongs in `docs/pstack.md` when that document is present in the checkout.
+See [the agent workflow guide](pstack.md) for installation, usage, and maintenance of the shared pstack skills.
 
 ## Target design and decisions
 

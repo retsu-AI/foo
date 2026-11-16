@@ -1,0 +1,31 @@
+name: Set up pinned Zig
+description: Restore and validate the native Zig toolchain from the manifest.
+outputs:
+  global-cache-key:
+    description: Key for the compiled Zig cache seeded by main.
+    value: ${{ steps.global-cache.outputs.cache-primary-key }}
+  global-cache-hit:
+    description: Whether the exact compiled Zig cache key was restored.
+    value: ${{ steps.global-cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/foo-zig
+        key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/zig.json', '.github/scripts/install-zig.py') }}
+    - name: Install pinned Zig
+      shell: bash
+      run: python .github/scripts/install-zig.py
+    - name: Set Zig global cache directory
+      shell: bash
+      run: echo "ZIG_GLOBAL_CACHE_DIR=${RUNNER_TEMP}/foo-zig-global" >> "$GITHUB_ENV"
+    - uses: actions/cache/restore@v4
+      id: global-cache
+      with:
+        path: ${{ runner.temp }}/foo-zig-global
+        key: zig-global-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/zig.json') }}-${{ github.sha }}
+        restore-keys: zig-global-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/zig.json') }}-
