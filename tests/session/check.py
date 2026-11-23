@@ -25,9 +25,9 @@ def modules(root, optimize):
     ]
 
 
-def crash_check(probe, phase, directory):
+def crash_check(probe, phase, directory, scope):
     with subprocess.Popen(
-        [probe, "hold", phase, directory], stdin=subprocess.PIPE
+        [probe, "hold", phase, directory, scope], stdin=subprocess.PIPE
     ) as writer:
         try:
             deadline = time.monotonic() + 10
@@ -35,7 +35,7 @@ def crash_check(probe, phase, directory):
                 if writer.poll() is not None or time.monotonic() >= deadline:
                     raise RuntimeError(f"Writer failed to reach {phase}")
                 time.sleep(0.01)
-            subprocess.run([probe, "busy", phase, directory], check=True, timeout=10)
+            subprocess.run([probe, "busy", phase, directory, scope], check=True, timeout=10)
         finally:
             if writer.poll() is None:
                 writer.kill()
@@ -56,10 +56,10 @@ def crash_check(probe, phase, directory):
     )
     if effect() != expected:
         raise RuntimeError(f"Wrong external effect before {phase} recovery")
-    subprocess.run([probe, "recover", phase, directory], check=True, timeout=10)
+    subprocess.run([probe, "recover", phase, directory, scope], check=True, timeout=10)
     if effect() != expected:
         raise RuntimeError(f"Recovery changed the external effect at {phase}")
-    print(f"PASS crash recovery and writer exclusion at {phase}", flush=True)
+    print(f"PASS {scope} crash recovery and writer exclusion at {phase}", flush=True)
 
 
 def main():
@@ -71,10 +71,11 @@ def main():
         directory = pathlib.Path(temp)
         probe = directory / "session-crash.exe"
         run(["zig", "build-exe", f"-femit-bin={probe}", *modules("crash.zig", args.optimize)])
-        for phase in ("before_intent", "after_intent", "after_effect", "after_result", "after_finish"):
-            target = directory / phase
-            target.mkdir(mode=0o700)
-            crash_check(probe, phase, target)
+        for scope in ("top", "nested"):
+            for phase in ("before_intent", "after_intent", "after_effect", "after_result", "after_finish"):
+                target = directory / f"{scope}-{phase}"
+                target.mkdir(mode=0o700)
+                crash_check(probe, phase, target, scope)
 
 
 if __name__ == "__main__":

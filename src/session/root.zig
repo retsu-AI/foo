@@ -118,11 +118,9 @@ pub const Store = struct {
         const sequence = self.sequence + 1;
         const frame = try format.encode(self.frame, .{ .sequence = sequence, .record = record });
         if (frame.len > self.limits.max_journal_bytes - self.journal_bytes) return error.LimitExceeded;
-        if (record == .tool_result) {
-            if (record.tool_result.artifact) |artifact| {
-                try self.checkArtifact(artifact, true);
-                try operation.check();
-            }
+        if (resultArtifact(record)) |artifact| {
+            try self.checkArtifact(artifact, true);
+            try operation.check();
         }
         try self.history.accept(self.allocator, self.limits.max_context_bytes, record);
         switch (self.storage) {
@@ -255,17 +253,26 @@ pub const Store = struct {
             if (record.header.version != session.format_version) return error.UnsupportedVersion;
             if (!std.mem.eql(u8, identity, record.header.config_identity)) return error.IdentityMismatch;
         } else {
-            if (record == .tool_result) {
-                if (record.tool_result.artifact) |artifact| {
-                    self.validateArtifact(artifact) catch |err| return corruptRecord(err);
-                    local.checkArtifact(artifact, false) catch |err| return corruptRecord(err);
-                }
+            if (resultArtifact(record)) |artifact| {
+                self.validateArtifact(artifact) catch |err| return corruptRecord(err);
+                local.checkArtifact(artifact, false) catch |err| return corruptRecord(err);
             }
             self.history.accept(self.allocator, self.limits.max_context_bytes, record) catch |err| return corruptRecord(err);
         }
         self.sequence = payload.sequence;
     }
 };
+
+fn resultArtifact(record: session.Record) ?foo.tool.Artifact {
+    return switch (record) {
+        .tool_result => |result| result.artifact,
+        .nested_tool => |nested| switch (nested.data) {
+            .tool_result => |result| result.artifact,
+            .dispatch_intent => null,
+        },
+        else => null,
+    };
+}
 
 fn corruptRecord(err: Error) Error {
     return switch (err) {

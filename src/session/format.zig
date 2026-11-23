@@ -18,6 +18,7 @@ const WirePayload = struct {
         message: foo.provider.Message,
         dispatch_intent: foo.tool.Invocation,
         tool_result: foo.tool.Result,
+        nested_tool: session.NestedTool,
         finished: foo.events.Outcome,
     },
 };
