@@ -304,9 +304,11 @@ class Transport(unittest.TestCase):
                     self.assert_no_accept(server)
 
     def test_refused_connection_is_unsent(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as refused, listen() as recovery:
-            refused.bind(("127.0.0.1", 0))
-            with self.probe("refused", url(refused), url(recovery)):
+        with listen() as recovery:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as refused:
+                refused.bind(("127.0.0.1", 0))
+                target = url(refused)
+            with self.probe("refused", target, url(recovery)):
                 self.recover(recovery)
 
     def test_first_byte_deadline(self):
