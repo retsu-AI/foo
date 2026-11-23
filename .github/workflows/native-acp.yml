@@ -1,0 +1,32 @@
+name: Native ACP
+on:
+  pull_request:
+    paths:
+      - 'src/acp/**'
+      - 'src/contracts/**'
+      - 'src/wire/**'
+      - 'tests/acp/**'
+      - '.zig-version'
+      - '.github/zig.json'
+      - '.github/workflows/native-acp.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-acp-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    name: ACP pipes (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-zig
+      - name: ACP pipe fixtures
+        shell: bash
+        run: python tests/acp/run.py
