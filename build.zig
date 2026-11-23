@@ -54,7 +54,20 @@ pub fn build(b: *std.Build) void {
     if (transport_prefix) |prefix| {
         if (builtin.os.tag == .windows) addTransportPath(b, run_tests, prefix);
     }
-    const selected = b.option([]const u8, "module", "Test module (contracts or transport)") orelse "contracts";
+    const wire_root = b.createModule(.{
+        .root_source_file = b.path("tests/wire/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    wire_root.addImport("foo", foo);
+    wire_root.addImport("support", support);
+    const wire_tests = b.addTest(.{ .root_module = wire_root });
+    const run_wire_tests = b.addRunArtifact(wire_tests);
+    if (transport_prefix) |prefix| {
+        if (builtin.os.tag == .windows) addTransportPath(b, run_wire_tests, prefix);
+    }
+
+    const selected = b.option([]const u8, "module", "Test module (contracts, transport, or wire)") orelse "contracts";
     const module_names = [_][]const u8{
         "contracts",   "transport", "wire", "core",   "providers", "tools", "platform-process",
         "mcp",         "session",   "acp",  "config", "cli",       "tui",   "platform-terminal",
@@ -69,12 +82,16 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addFail(b.fmt("Unknown test module: {s}", .{selected})).step);
     } else if (std.mem.eql(u8, selected, "transport")) {
         test_step.dependOn(transport_test);
+    } else if (std.mem.eql(u8, selected, "wire")) {
+        test_step.dependOn(&run_wire_tests.step);
     } else if (!std.mem.eql(u8, selected, "contracts")) {
         test_step.dependOn(&b.addFail(b.fmt("Module '{s}' is unavailable: its implementation and test root have not landed", .{selected})).step);
     } else {
         test_step.dependOn(&run_tests.step);
     }
-    b.step("test-compile", "Compile contract tests without claiming native execution").dependOn(&tests.step);
+    const test_compile = b.step("test-compile", "Compile contract and wire tests without claiming native execution");
+    test_compile.dependOn(&tests.step);
+    test_compile.dependOn(&wire_tests.step);
     const fmt = b.addFmt(.{
         .paths = &.{ b.path("build.zig"), b.path("build.zig.zon"), b.path("src"), b.path("tests") },
         .check = true,
@@ -86,6 +103,7 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Check formatting, compile the executable, and run implemented suites");
     check.dependOn(bootstrap);
     check.dependOn(transport_test);
+    check.dependOn(&run_wire_tests.step);
     for ([_][]const u8{ "acceptance", "acceptance-live", "bench", "release" }) |name| {
         b.step(name, "Reserved; unavailable until the owning work package lands").dependOn(
             &b.addFail(b.fmt("'{s}' is unavailable in the contracts bootstrap", .{name})).step,
