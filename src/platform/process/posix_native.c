@@ -5,62 +5,35 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
+static int make_pipe(int fds[2], int owner_end) {
 #ifdef __APPLE__
-static int make_pipe(const char *path, int fds[2]) {
-    if (mkfifo(path, S_IRUSR | S_IWUSR) == -1) return -1;
-    int flags = O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW;
-    fds[0] = open(path, O_RDONLY | flags);
-    if (fds[0] != -1) fds[1] = open(path, O_WRONLY | flags);
-    int saved = errno;
-    if (unlink(path) == -1) return -1;
-    errno = saved;
-    return fds[1] == -1 ? -1 : 0;
-}
+    // Darwin poll() can miss hangup on a named FIFO with no unread bytes.
+    if (pipe(fds) == -1 ||
+        fcntl(fds[0], F_SETFD, FD_CLOEXEC) == -1 ||
+        fcntl(fds[1], F_SETFD, FD_CLOEXEC) == -1 ||
+        fcntl(fds[owner_end], F_SETFL, O_NONBLOCK) == -1) return -1;
+    if (owner_end == 1) return fcntl(fds[owner_end], F_SETNOSIGPIPE, 1);
+    return 0;
+#else
+    if (pipe2(fds, O_CLOEXEC | O_NONBLOCK) == -1) return -1;
+    return fcntl(fds[1 - owner_end], F_SETFL, 0);
 #endif
+}
 
 int foo_process_pipes(int (*pipes)[2]) {
     for (size_t i = 0; i < FOO_PROCESS_PIPE_COUNT; ++i) {
         pipes[i][0] = pipes[i][1] = -1;
     }
-#ifdef __APPLE__
-    // Older Darwin versions lack pipe2. Open both ends with O_CLOEXEC before
-    // unlinking the FIFO so an unrelated concurrent exec cannot inherit either end.
-    char dir[] = "/tmp/foo-process.XXXXXX";
-    if (mkdtemp(dir) == NULL) return errno;
-    char path[sizeof(dir) + 2];
-    memcpy(path, dir, sizeof(dir) - 1);
-    path[sizeof(dir) - 1] = '/';
-    path[sizeof(dir) + 1] = '\0';
-#endif
+    // The owner's endpoints are nonblocking so I/O can check cancellation.
     int failure = 0;
     for (size_t i = 0; i < FOO_PROCESS_PIPE_COUNT; ++i) {
-#ifdef __APPLE__
-        path[sizeof(dir)] = (char)('0' + i);
-        if (make_pipe(path, pipes[i]) == -1) {
-#else
-        if (pipe2(pipes[i], O_CLOEXEC | O_NONBLOCK) == -1) {
-#endif
+        int owner_end = i == FOO_PROCESS_STDIN || i == FOO_PROCESS_LEASE ? 1 : 0;
+        if (make_pipe(pipes[i], owner_end) == -1) {
             failure = errno;
             break;
         }
-    }
-#ifdef __APPLE__
-    if (rmdir(dir) == -1 && failure == 0) failure = errno;
-    for (size_t i = 0; i < FOO_PROCESS_PIPE_COUNT && failure == 0; ++i) {
-        if ((i == FOO_PROCESS_STDIN || i == FOO_PROCESS_LEASE) && fcntl(pipes[i][1], F_SETNOSIGPIPE, 1) == -1)
-            failure = errno;
-    }
-#endif
-    // Keep the command's stdio and the guardian's lease reader blocking. All
-    // endpoints used by the owner remain nonblocking for cancellation checks.
-    for (size_t i = 0; i < FOO_PROCESS_PIPE_COUNT && failure == 0; ++i) {
-        int child_fd = pipes[i][i == FOO_PROCESS_STDIN || i == FOO_PROCESS_LEASE ? 0 : 1];
-        if (fcntl(child_fd, F_SETFL, 0) == -1) failure = errno;
     }
     if (failure != 0) {
         for (size_t i = 0; i < FOO_PROCESS_PIPE_COUNT; ++i) {

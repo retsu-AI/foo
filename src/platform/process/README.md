@@ -17,6 +17,11 @@ descendants. The adapter reports a failure if it cannot confirm group cleanup.
 A descendant that deliberately moves to another group can escape this ownership
 mechanism.
 
+On macOS, an embedding host must use explicit descriptor inheritance for
+concurrent launches. Foo sets close-on-exec immediately after creating each
+pipe and uses `POSIX_SPAWN_CLOEXEC_DEFAULT` for its launches. A concurrent host
+launch with broad inheritance can retain a pipe during that setup window.
+
 On Windows, a kill-on-close Job Object owns each command tree from creation.
 Windows 10 or newer supplies the creation-time Job attribute. The backend resolves
 executables from the configured directory and effective child `PATH`. Use an
