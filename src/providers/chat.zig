@@ -20,7 +20,7 @@ pub const Reducer = struct {
             if (s.stop == null or self.usage_seen) return error.Protocol;
             const usage = try c.required(value, "usage");
             if (usage == .null) return error.Protocol;
-            try c.usage(usage, &s.usage, .openai_chat);
+            try c.openAiUsage(usage, &s.usage, .chat);
             self.usage_seen = true;
             return;
         }
@@ -57,7 +57,7 @@ pub const Reducer = struct {
             const reason = try c.string(finish);
             if (c.eq(reason, "stop")) s.stop = if (self.refusal) .refusal else .end_turn else if (c.eq(reason, "tool_calls")) s.stop = .tool_use else if (c.eq(reason, "length")) s.stop = .output_limit else if (c.eq(reason, "content_filter")) s.stop = .refusal else return error.Rejected;
         };
-        if (c.field(value, "usage")) |usage| if (usage != .null) try c.usage(usage, &s.usage, .openai_chat);
+        if (c.field(value, "usage")) |usage| if (usage != .null) try c.openAiUsage(usage, &s.usage, .chat);
     }
 
     fn call(self: *Reducer, s: *c.State, value: c.Value) c.Error!void {

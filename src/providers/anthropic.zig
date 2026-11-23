@@ -1,6 +1,30 @@
 const std = @import("std");
 const c = @import("common.zig");
 
+const Usage = struct {
+    fresh_input: ?u64 = null,
+    cache_creation: u64 = 0,
+    cache_read: ?u64 = null,
+    output: ?u64 = null,
+
+    fn update(self: *Usage, value: c.Value) c.Error!void {
+        if (value == .null) return;
+        if (value != .object) return error.Protocol;
+        if (try c.optionalCount(value, "input_tokens")) |count| self.fresh_input = count;
+        if (try c.optionalCount(value, "cache_creation_input_tokens")) |count| self.cache_creation = count;
+        if (try c.optionalCount(value, "cache_read_input_tokens")) |count| self.cache_read = count;
+        if (try c.optionalCount(value, "output_tokens")) |count| self.output = count;
+    }
+
+    fn total(self: Usage) c.Error!c.p.Usage {
+        const input = if (self.fresh_input) |fresh| sum: {
+            const cached = std.math.add(u64, self.cache_creation, self.cache_read orelse 0) catch return error.Protocol;
+            break :sum std.math.add(u64, cached, fresh) catch return error.Protocol;
+        } else null;
+        return .{ .input_tokens = input, .output_tokens = self.output, .cache_read_tokens = self.cache_read };
+    }
+};
+
 pub const Reducer = struct {
     const Kind = enum { text, thinking, redacted_thinking, tool_use };
     const Content = struct {
@@ -13,6 +37,7 @@ pub const Reducer = struct {
         initial_empty: bool = true,
         redacted: []const u8 = "",
     };
+    usage: Usage = .{},
     started: bool = false,
     next_index: usize = 0,
     active: ?Content = null,
@@ -27,7 +52,7 @@ pub const Reducer = struct {
             const message = try c.required(value, "message");
             if (!c.eq(try c.str(message, "role"), "assistant")) return error.Protocol;
             if ((try c.array(try c.required(message, "content"))).len != 0) return error.Protocol;
-            if (c.field(message, "usage")) |usage| try c.usage(usage, &s.usage, .anthropic_messages);
+            if (c.field(message, "usage")) |usage| try self.usage.update(usage);
             self.started = true;
             return;
         }
@@ -40,11 +65,12 @@ pub const Reducer = struct {
                 const reason = try c.string(reason_value);
                 if (c.eq(reason, "end_turn") or c.eq(reason, "stop_sequence")) s.stop = .end_turn else if (c.eq(reason, "tool_use")) s.stop = .tool_use else if (c.eq(reason, "max_tokens") or c.eq(reason, "model_context_window_exceeded")) s.stop = .output_limit else if (c.eq(reason, "refusal")) s.stop = .refusal else return error.Rejected;
             };
-            if (c.field(value, "usage")) |usage| try c.usage(usage, &s.usage, .anthropic_messages);
+            if (c.field(value, "usage")) |usage| try self.usage.update(usage);
             return;
         }
         if (c.eq(kind, "message_stop")) {
             if (self.active != null or s.stop == null) return error.Protocol;
+            s.usage = try self.usage.total();
             s.terminal = true;
             return;
         }

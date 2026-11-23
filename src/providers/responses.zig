@@ -21,7 +21,7 @@ pub const Reducer = struct {
             const items = try c.required(response, "output");
             try self.output(s, items);
             if (s.stop == null) s.stop = if (s.calls != 0) .tool_use else .end_turn;
-            if (c.field(response, "usage")) |v| try c.usage(v, &s.usage, .openai_responses);
+            if (c.field(response, "usage")) |v| try c.openAiUsage(v, &s.usage, .responses);
             s.terminal = true;
             return;
         }

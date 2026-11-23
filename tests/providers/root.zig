@@ -244,9 +244,9 @@ fn verifyProfile(comptime profile: @TypeOf(profiles[0])) !void {
     try equal(io.Delivery.possibly_sent, run.delivery);
     try equal(provider.Stop.tool_use, response.stop);
     try equal(provider.Role.assistant, response.message.role);
-    try equal(@as(?u64, 12), response.usage.input_tokens);
+    try equal(@as(?u64, if (profile.family == .anthropic_messages) 19 else 12), response.usage.input_tokens);
     try equal(@as(?u64, 7), response.usage.output_tokens);
-    try equal(@as(?u64, 2), response.usage.cache_read_tokens);
+    try equal(@as(?u64, if (profile.family == .anthropic_messages) 4 else 2), response.usage.cache_read_tokens);
     try same("Café ☕", run.recorded_text.items);
     if (profile.family != .openai_chat) try same("Check the source.", run.recorded_reasoning.items);
     try same("{\"key\":\"one\"}", run.args_one.items);

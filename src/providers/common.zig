@@ -171,33 +171,25 @@ pub const State = struct {
     }
 };
 
-pub fn usage(value: Value, current: *p.Usage, family: foo.config.Family) Error!void {
+pub fn optionalCount(value: Value, name: []const u8) Error!?u64 {
+    const entry = field(value, name) orelse return null;
+    if (entry == .null) return null;
+    return try number(entry);
+}
+
+pub fn openAiUsage(value: Value, current: *p.Usage, shape: enum { chat, responses }) Error!void {
     if (value == .null) return;
     if (value != .object) return error.Protocol;
-    const input = if (family == .openai_chat) "prompt_tokens" else "input_tokens";
-    const output = if (family == .openai_chat) "completion_tokens" else "output_tokens";
-    if (field(value, input)) |v| if (v != .null) {
-        current.input_tokens = try number(v);
-    };
-    if (field(value, output)) |v| if (v != .null) {
-        current.output_tokens = try number(v);
-    };
-    if (family == .openai_chat) {
-        if (field(value, "prompt_cache_hit_tokens")) |v| if (v != .null) {
-            current.cache_read_tokens = try number(v);
-        };
+    const is_chat = shape == .chat;
+    if (try optionalCount(value, if (is_chat) "prompt_tokens" else "input_tokens")) |count| current.input_tokens = count;
+    if (try optionalCount(value, if (is_chat) "completion_tokens" else "output_tokens")) |count| current.output_tokens = count;
+    if (is_chat) {
+        if (try optionalCount(value, "prompt_cache_hit_tokens")) |count| current.cache_read_tokens = count;
     }
-    if (family == .anthropic_messages) {
-        if (field(value, "cache_read_input_tokens")) |v| if (v != .null) {
-            current.cache_read_tokens = try number(v);
-        };
-    } else if (field(value, if (family == .openai_chat) "prompt_tokens_details" else "input_tokens_details")) |details| {
-        if (details != .null) {
-            if (details != .object) return error.Protocol;
-            if (field(details, "cached_tokens")) |v| if (v != .null) {
-                current.cache_read_tokens = try number(v);
-            };
-        }
+    if (field(value, if (is_chat) "prompt_tokens_details" else "input_tokens_details")) |details| {
+        if (details == .null) return;
+        if (details != .object) return error.Protocol;
+        if (try optionalCount(details, "cached_tokens")) |count| current.cache_read_tokens = count;
     }
 }
 
