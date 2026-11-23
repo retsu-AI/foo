@@ -33,7 +33,7 @@ source must supply the declared bytes. An unknown-length source ends at EOF.
 Call `Client.deinit` after the exchange returns. To stop an active exchange,
 request cancellation and wait for it to return before shutting down the client.
 The event loop checks cancellation and the absolute deadline between network
-operations, at callbacks, and at least once per 20 ms poll interval. The caller
+operations and at callbacks. Each network poll has a 20 ms timeout. The caller
 must also honor the context during blocking callbacks. Exchange cleanup removes
 the easy handle before freeing callback state. Client shutdown closes the pool.
 
@@ -82,6 +82,21 @@ Outside Nix, use the same dependency pins and the native profile builder.
 The Nightly workflow provisions the compiler and runs the suite on native Linux
 x86_64, macOS arm64, and Windows x86_64. The bootstrap-only gate is
 `zig build check-bootstrap`. [Native CI workflow](../../.github/workflows/nightly.yml).
+
+Each native job passed all 14 transport fixtures in Debug and ReleaseSafe.
+The suite covers fixed-length and chunked uploads, TLS trust and hostname
+checks, proxy scoping, lost replies, stalled TLS and body reads, deadlines,
+and bounded buffering.
+
+| Target | Tested revision | Evidence |
+| --- | --- | --- |
+| Linux x86_64 | `26caf4f8886bed6629253540dac5a8c35d5aa774` | [Native Linux job](https://github.com/retsu-AI/foo/actions/runs/45228122873/job/137880050699) |
+| macOS arm64 | `26caf4f8886bed6629253540dac5a8c35d5aa774` | [Native macOS job](https://github.com/retsu-AI/foo/actions/runs/45228122873/job/137880051290) |
+| Windows x86_64 | `f92d89ee27520b4bb49f24eda862f3f2db6b08ee` | [Native Windows job](https://github.com/retsu-AI/foo/actions/runs/45224884469/job/137868793238) |
+
+The revisions have identical transport source and build settings. The later
+revision closes the ephemeral socket before testing connection refusal.
+[Fixture diff](https://github.com/retsu-AI/foo/compare/f92d89e...26caf4f).
 
 The native library profile pins libcurl 8.23.0 (curl license), c-ares 1.34.9
 (MIT), and OpenSSL 3.5.9 (Apache-2.0). Update the pins together with the focused

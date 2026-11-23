@@ -72,7 +72,7 @@
         "Dependency footprint, proxy/CA support matrix, exact commands and native results.",
         "Fixture corpus for provider and MCP consumers."
       ],
-      "status": "review",
+      "status": "complete",
       "linear": {
         "id": "ENG-1474",
         "uuid": "7aeef6b7-7d63-459a-93c1-b77aa02162bc",
