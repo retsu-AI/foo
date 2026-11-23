@@ -192,7 +192,7 @@ fn execute(allocator: Allocator, operation: foo.io.Context, call_id: []const u8,
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const scratch = arena.allocator();
-    const diagnostic_bytes = ((options.output_bytes -| report_reserve) / 8) * 3;
+    const diagnostic_bytes = (options.output_bytes -| report_reserve) / 4;
     const stdout_bytes = if (mode == .tool) options.output_bytes else diagnostic_bytes;
     var stdout: Capture = .{ .bytes = try scratch.alloc(u8, stdout_bytes) };
     var stderr: Capture = .{ .bytes = try scratch.alloc(u8, diagnostic_bytes) };
@@ -279,6 +279,10 @@ fn execute(allocator: Allocator, operation: foo.io.Context, call_id: []const u8,
     }
     const exited = observation.exit != null and observation.exit.? == .exited;
     const signalled = observation.exit != null and observation.exit.? == .signalled;
+    const stdout_excerpt = if (mode == .command) stdout.bytes[0..stdout.used] else "";
+    const stderr_excerpt = stderr.bytes[0..stderr.used];
+    const stdout_text = isText(stdout_excerpt);
+    const stderr_text = isText(stderr_excerpt);
     var result: foo.tool.Result = .{
         .call_id = result_id,
         .status = if (cancelled) .cancelled else if (mode == .command and process_ok) .success else .failure,
@@ -299,8 +303,10 @@ fn execute(allocator: Allocator, operation: foo.io.Context, call_id: []const u8,
         else
             "ProcessFailed",
         .cleanup_confirmed = released,
-        .stdout_base64 = if (mode == .command) base64(scratch, stdout.bytes[0..stdout.used]) catch "" else null,
-        .stderr_base64 = base64(scratch, stderr.bytes[0..stderr.used]) catch "",
+        .stdout = if (stdout_text) stdout_excerpt else null,
+        .stdout_base64 = if (!stdout_text) base64(scratch, stdout_excerpt) catch "" else null,
+        .stderr = if (stderr_text) stderr_excerpt else null,
+        .stderr_base64 = if (!stderr_text) base64(scratch, stderr_excerpt) catch "" else null,
         .stdout_bytes = stdout.total,
         .stderr_bytes = stderr.total,
         .spool_truncated = spool.truncated,
@@ -317,6 +323,13 @@ fn execute(allocator: Allocator, operation: foo.io.Context, call_id: []const u8,
         result.truncated = truncated;
     }
     return result;
+}
+
+fn isText(bytes: []const u8) bool {
+    for (bytes) |byte| {
+        if (byte < 0x20 and byte != '\n' and byte != '\r' and byte != '\t') return false;
+    }
+    return std.unicode.utf8ValidateSlice(bytes);
 }
 
 fn base64(allocator: Allocator, bytes: []const u8) error{OutOfMemory}![]const u8 {

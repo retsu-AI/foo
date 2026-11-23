@@ -181,7 +181,7 @@ fn checkExec(init: std.process.Init, op: foo.io.Context, spawner: foo.io.Spawner
     const closed = try exec.run(allocator, op, "closed", .{ .argv = &.{ executable, "closed-stdin" }, .input = payload }, options);
     try expectEqual(.failure, closed.status);
     try expect(std.mem.indexOf(u8, closed.content, "\"exit_code\":31") != null);
-    try expect(std.mem.indexOf(u8, closed.content, "cmVqZWN0ZWQ=") != null);
+    try expect(std.mem.indexOf(u8, closed.content, "\"stderr\":\"rejected\"") != null);
     var invalid_options = options;
     invalid_options.spool.?.max_bytes = 4;
     const rejected = try exec.runCommand(allocator, op, "d", &.{ executable, "large" }, invalid_options);

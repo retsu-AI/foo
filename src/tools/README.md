@@ -97,7 +97,7 @@ oversized reply produces a typed failure with process diagnostics. Cancellation
 after possible launch and unconfirmed cleanup produce an uncertain effect.
 
 The adapter drains stdout and stderr independently and caps retained bytes.
-`exec` reports byte counts and Base64 excerpts. If a host supplies a spool directory
+`exec` reports byte counts and excerpts as text or Base64 for binary bytes. If a host supplies a spool directory
 and cap, the tool writes a single relative `exec-*.frames` artifact. Frames carry a
 one-byte stream tag, a little-endian 32-bit payload length, and raw payload bytes.
 Tags 1 and 2 identify stdout and stderr. The artifact stops at the cap and reports
