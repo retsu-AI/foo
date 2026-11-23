@@ -31,6 +31,10 @@ pub const Ticket = struct {
 
 pub const Outbound = struct { id: rpc.Id, ticket: Ticket };
 pub const Resolution = union(enum) { response: Ticket, expired: Ticket };
+pub const ResponseAdmission = union(enum) {
+    ready: struct { id: rpc.Id, deadline_ms: ?u64 },
+    expired: Ticket,
+};
 
 const Entry = struct {
     id: rpc.Id,
@@ -103,18 +107,26 @@ pub const Table = struct {
         return if (expired) .{ .expired = ticket } else .{ .response = ticket };
     }
 
-    pub fn requestId(self: *const Table, ticket: Ticket) Error!rpc.Id {
+    /// The ready ID borrows the table's entry through retirement.
+    pub fn prepareInboundResponse(self: *Table, ticket: Ticket, now_ms: u64) Error!ResponseAdmission {
+        const entry = try self.entryFor(ticket);
+        if (ticket.direction != .inbound) return error.StaleRequest;
+        if (hasExpired(entry, now_ms)) return .{ .expired = self.take(.inbound, ticket.slot) };
+        return .{ .ready = .{ .id = entry.id, .deadline_ms = entry.deadline_ms } };
+    }
+
+    fn entryFor(self: *const Table, ticket: Ticket) Error!Entry {
         if (self.closed) return error.Closed;
         if (ticket.table != self) return error.StaleRequest;
         const slots = self.slotsFor(ticket.direction);
         if (ticket.slot >= slots.len) return error.StaleRequest;
         const entry = slots[ticket.slot] orelse return error.StaleRequest;
         if (entry.sequence != ticket.sequence) return error.StaleRequest;
-        return entry.id;
+        return entry;
     }
 
     pub fn retire(self: *Table, ticket: Ticket) Error!void {
-        _ = try self.requestId(ticket);
+        _ = try self.entryFor(ticket);
         _ = self.take(ticket.direction, ticket.slot);
     }
 

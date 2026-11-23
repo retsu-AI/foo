@@ -26,8 +26,8 @@ test "IDs retain types and directions under a full correlation table" {
     try expectError(error.UnknownId, pending.resolve(.{ .failure = .{
         .err = .{ .code = rpc.Code.parse_error, .message = "invalid input" },
     } }, 0));
-    try expect((try pending.requestId(inbound_number)).eql(out.id));
-    try expect((try pending.requestId(inbound_string)).eql(.{ .string = "1" }));
+    try expect((try pending.prepareInboundResponse(inbound_number, 0)).ready.id.eql(out.id));
+    try expect((try pending.prepareInboundResponse(inbound_string, 0)).ready.id.eql(.{ .string = "1" }));
 
     try pending.retire(other.ticket);
     const next = try pending.beginOutbound(null);
@@ -40,7 +40,7 @@ test "owned inbound IDs survive discarded frame storage and stale completion" {
     var copied: [4]u8 = "abcd".*;
     const first = try pending.beginInbound(.{ .string = &copied }, null);
     @memset(&copied, 0);
-    try std.testing.expectEqualStrings("abcd", (try pending.requestId(first)).string);
+    try std.testing.expectEqualStrings("abcd", (try pending.prepareInboundResponse(first, 0)).ready.id.string);
     try expectError(error.DuplicateId, pending.beginInbound(.{ .string = "abcd" }, null));
     const cancelled = try pending.cancel(.inbound, .{ .string = "abcd" });
     try expect(cancelled.eql(first));
@@ -50,10 +50,10 @@ test "owned inbound IDs survive discarded frame storage and stale completion" {
 
     var other = try correlation.Table.init(std.testing.allocator, .{});
     defer other.deinit();
-    try expectError(error.StaleRequest, other.requestId(second));
-    try std.testing.expectEqualStrings("abcd", (try pending.requestId(second)).string);
+    try expectError(error.StaleRequest, other.prepareInboundResponse(second, 0));
+    try std.testing.expectEqualStrings("abcd", (try pending.prepareInboundResponse(second, 0)).ready.id.string);
     try pending.retire(second);
-    try expectError(error.StaleRequest, pending.requestId(second));
+    try expectError(error.StaleRequest, pending.prepareInboundResponse(second, 0));
 }
 
 test "deadline, resolution, cancellation, and shutdown retire each ticket once" {
@@ -71,9 +71,18 @@ test "deadline, resolution, cancellation, and shutdown retire each ticket once" 
 
     const inbound = try pending.beginInbound(.{ .number = 99 }, 100);
     const outbound = try pending.beginOutbound(null);
-    try expectEqual(@as(?correlation.Ticket, null), pending.expireNext(99));
-    try expect(pending.expireNext(100).?.eql(inbound));
-    try expectEqual(@as(?correlation.Ticket, null), pending.expireNext(100));
+    try expectError(error.StaleRequest, pending.prepareInboundResponse(outbound.ticket, 99));
+    const ready = (try pending.prepareInboundResponse(inbound, 99)).ready;
+    try expectEqual(@as(i64, 99), ready.id.number);
+    try expectEqual(@as(?u64, 100), ready.deadline_ms);
+    const late = try pending.prepareInboundResponse(inbound, 100);
+    try expect(late.expired.eql(inbound));
+    try expectError(error.StaleRequest, pending.prepareInboundResponse(inbound, 100));
+
+    const expirable = try pending.beginInbound(.{ .number = 100 }, 200);
+    try expectEqual(@as(?correlation.Ticket, null), pending.expireNext(199));
+    try expect(pending.expireNext(200).?.eql(expirable));
+    try expectEqual(@as(?correlation.Ticket, null), pending.expireNext(200));
     try expectEqual(@as(?correlation.Ticket, null), pending.drainNext());
     const remaining = try pending.beginInbound(.{ .string = "bye" }, null);
     pending.close();

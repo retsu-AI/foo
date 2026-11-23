@@ -57,18 +57,21 @@ failure closes the writer because the peer may have received a partial record.
 
 ## Correlate requests
 
-Give each connection one owner for its `correlation.Table`. The default limit
-is 64 pending entries per direction and 4096 copied bytes per inbound string
+Give each connection one owner for its `correlation.Table` and keep the table
+at a stable address while tickets exist. The default limit is 64 pending entries per direction and 4096 copied bytes per inbound string
 ID. For an outbound request, call `beginOutbound` before writing and retire the
 ticket if the send fails. Generated numeric IDs are never reused within a
 table. `resolve` distinguishes unknown IDs, retired IDs, and a response at or
 past its deadline. A deadline result carries the ticket of the expired request.
 
 Use `beginInbound` only for requests with an ID. The table copies string IDs
-and rejects a duplicate pending ID. Use the returned ticket to validate an
-inbound completion. The ticket changes if the peer later reuses an ID. Keep
-the ticket pending until its response has been ordered into the writer. Route
-peer cancellation through the same connection owner.
+and rejects a duplicate pending ID. Call `prepareInboundResponse` with the
+ticket and current monotonic time before replying. An expired response
+admission retires the ticket. A ready admission supplies the borrowed ID
+and deadline to use for writing. Keep the ticket pending until its response
+has been ordered into the writer, then retire it. The ID is valid up to
+retirement. A ticket changes if the peer reuses an ID. Route peer cancellation
+through the same connection owner.
 
 Call `cancel` or `expireNext` to retire work while the connection runs. To
 shut down, call `close` and use `drainNext` to notify each waiter once. Join
@@ -91,7 +94,7 @@ For MCP or ACP over stdio, feed stdout reads into `Ndjson`, decode each complete
 record before its callback returns, and route requests and responses by their
 types. Encode outgoing messages into separate storage before calling
 `Writer.write`. Keep stderr separate from the framed byte stream. The wire
-fixtures exercise both I/O contracts with scripted peers.
+fixtures exercise both I/O contracts with scripted peers. [Consumer fixtures](../../tests/wire/integration.zig)
 
 ## Verify
 
