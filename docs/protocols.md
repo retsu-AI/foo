@@ -2,7 +2,7 @@
 
 The proposed foo v1 requires an MCP client and an ACP agent. They adapt external protocols to the same execution core used by the CLI and TUI. They do not introduce an orchestrator, a daemon, a second agent loop, or a second permission system.
 
-This is a proposed protocol specification, not a claim that these features exist. Protocol sources were checked on **2026-11-16**. F00 records immutable schema sources and checksums in [the protocol pins](../tests/contracts/protocol-pins.json). The adapters and conformance tests remain planned. See [the shared contracts](../src/contracts/README.md) for current interfaces; do not build against a moving `latest` document.
+This is a proposed protocol specification, not a claim that these features exist. Protocol sources were checked on **2026-11-16**. F00 records immutable schema sources and checksums in [the protocol pins](../tests/contracts/protocol-pins.json). The implemented MCP module and fixtures are documented in the [MCP handoff](../src/mcp/README.md). The [ACP handoff](../src/acp/README.md) records the ACP surface and tests. See [the shared contracts](../src/contracts/README.md) for current interfaces; do not build against a moving `latest` document.
 
 ## 1. Supported roles and revisions
 

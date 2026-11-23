@@ -22,7 +22,6 @@ for args, code, stream, expected in [
     assert not getattr(result, "stderr" if stream == "stdout" else "stdout"), (args, result)
 
 for args, expected in [
-    (["test", "-Dmodule=mcp"], "unavailable"),
     (["test", "-Dmodule=unknown"], "Unknown test module"),
     (["acceptance"], "unavailable"),
     (["acceptance-live"], "unavailable"),

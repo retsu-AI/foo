@@ -273,11 +273,11 @@
         "After F05, real stdio child cancellation, shutdown, and reaping pass on every declared native OS; process fakes alone cannot complete F06."
       ],
       "handoff": [
-        "Exact revision/transport/capability matrix and unsupported optional features.",
-        "Protocol transcripts, fixtures, commands, and transport/process assumptions.",
+        "See src/mcp/README.md for profile, capability, and transport limits.",
+        "Run zig build test -Dmodule=mcp in Debug and ReleaseSafe. The native matrix exercises real stdio shutdown, cancellation, and reaping. The pinned F01 transport enables loopback HTTP tests.",
         "Real-server interoperability cases reserved for final F13 qualification."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1479",
         "uuid": "aef85f28-ec6d-4544-bb69-594e2077cd67",

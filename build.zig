@@ -74,6 +74,7 @@ pub fn build(b: *std.Build) void {
     const selected = b.option([]const u8, "module", "Test module") orelse "contracts";
     const include_codemode = b.option(bool, "codemode", "Build the optional Code Mode module and include it in check") orelse false;
     const native = addProcessSuites(b, foo, support, target, optimize, include_codemode or std.mem.eql(u8, selected, "codemode"));
+    const mcp_test = addMcpSuite(b, foo, native.spawner, native.guardian, target, optimize, transport_prefix);
     const module_names = [_][]const u8{
         "contracts",   "transport", "wire", "core",   "providers", "tools", "platform-process",
         "mcp",         "session",   "acp",  "config", "cli",       "tui",   "platform-terminal",
@@ -96,6 +97,8 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(native.process);
     } else if (std.mem.eql(u8, selected, "codemode")) {
         if (native.codemode) |code_tests| test_step.dependOn(code_tests);
+    } else if (std.mem.eql(u8, selected, "mcp")) {
+        test_step.dependOn(mcp_test);
     } else if (!std.mem.eql(u8, selected, "contracts")) {
         test_step.dependOn(&b.addFail(b.fmt("Module '{s}' is unavailable: its implementation and test root have not landed", .{selected})).step);
     } else {
@@ -118,6 +121,7 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&run_wire_tests.step);
     check.dependOn(native.tools);
     check.dependOn(native.process);
+    check.dependOn(mcp_test);
     if (native.codemode) |code_tests| check.dependOn(code_tests);
     for ([_][]const u8{ "acceptance", "acceptance-live", "bench", "release" }) |name| {
         b.step(name, "Reserved; unavailable until the owning work package lands").dependOn(
@@ -133,7 +137,13 @@ fn addProcessSuites(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.Optimize,
     include_codemode: bool,
-) struct { tools: *std.Build.Step, process: *std.Build.Step, codemode: ?*std.Build.Step } {
+) struct {
+    tools: *std.Build.Step,
+    process: *std.Build.Step,
+    codemode: ?*std.Build.Step,
+    spawner: *std.Build.Module,
+    guardian: ?*std.Build.Step.Compile,
+} {
     const use_guardian = target.result.os.tag == .linux or target.result.os.tag == .macos;
     const process = b.addModule("foo-process", .{
         .root_source_file = b.path("src/platform/process/root.zig"),
@@ -183,21 +193,24 @@ fn addProcessSuites(
     const fixtures = b.addSystemCommand(&.{if (builtin.os.tag == .windows) "python" else "python3"});
     fixtures.addFileArg(b.path("tests/platform-process/fixtures.py"));
     fixtures.addArtifactArg(probe);
-    if (use_guardian) {
-        const guardian = b.addExecutable(.{
+    const guardian = if (use_guardian) artifact: {
+        const executable = b.addExecutable(.{
             .name = "foo-process-guardian",
             .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
         });
-        guardian.root_module.addCSourceFiles(.{ .files = &.{
+        executable.root_module.addCSourceFiles(.{ .files = &.{
             "src/platform/process/guardian.c",
             "src/platform/process/posix_native.c",
         } });
-        b.installArtifact(guardian);
-        fixtures.addArtifactArg(guardian);
-    }
+        b.installArtifact(executable);
+        fixtures.addArtifactArg(executable);
+        break :artifact executable;
+    } else null;
     return .{
         .tools = &b.addRunArtifact(suite).step,
         .process = &fixtures.step,
+        .spawner = process,
+        .guardian = guardian,
         .codemode = if (include_codemode) addCodeModeSuite(b, foo, tools, target, optimize) else null,
     };
 }
@@ -260,6 +273,74 @@ fn addCodeModeSuite(
         },
     }) });
     return &b.addRunArtifact(suite).step;
+}
+
+fn addMcpSuite(
+    b: *std.Build,
+    foo: *std.Build.Module,
+    process: *std.Build.Module,
+    guardian: ?*std.Build.Step.Compile,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.Optimize,
+    transport_prefix: ?[]const u8,
+) *std.Build.Step {
+    const mcp = b.addModule("foo-mcp", .{
+        .root_source_file = b.path("src/mcp/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "foo", .module = foo }},
+    });
+    const suite = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("tests/mcp/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{ .{ .name = "foo", .module = foo }, .{ .name = "mcp", .module = mcp } },
+    }) });
+    const peer_tests = b.step("test-mcp", "Run the MCP protocol and native peer fixtures");
+    const run_tests = b.addRunArtifact(suite);
+    peer_tests.dependOn(&run_tests.step);
+
+    const probe = b.addExecutable(.{
+        .name = "mcp-stdio-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/mcp/stdio_probe.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "foo", .module = foo },
+                .{ .name = "mcp", .module = mcp },
+                .{ .name = "process", .module = process },
+            },
+        }),
+    });
+    const python = if (builtin.os.tag == .windows) "python" else "python3";
+    const stdio = b.addSystemCommand(&.{python});
+    stdio.addFileArg(b.path("tests/mcp/stdio_fixtures.py"));
+    stdio.addArtifactArg(probe);
+    if (guardian) |executable| stdio.addArtifactArg(executable);
+    peer_tests.dependOn(&stdio.step);
+
+    if (transport_prefix) |prefix| {
+        const http_probe = b.addExecutable(.{
+            .name = "mcp-http-probe",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/mcp/http_probe.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{ .{ .name = "foo", .module = foo }, .{ .name = "mcp", .module = mcp } },
+            }),
+        });
+        const http = b.addSystemCommand(&.{python});
+        http.addFileArg(b.path("tests/mcp/http_fixtures.py"));
+        http.addArtifactArg(http_probe);
+        if (builtin.os.tag == .windows) {
+            addTransportPath(b, run_tests, prefix);
+            addTransportPath(b, stdio, prefix);
+            addTransportPath(b, http, prefix);
+        }
+        peer_tests.dependOn(&http.step);
+    }
+    return peer_tests;
 }
 
 fn addTransportSuite(

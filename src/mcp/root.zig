@@ -1,0 +1,10 @@
+pub const link = @import("link.zig");
+pub const client = @import("client.zig");
+pub const Client = client.Client;
+pub const Stdio = @import("stdio.zig").Stdio;
+pub const Http = @import("http.zig").Http;
+pub const RegistrySet = @import("composite.zig").RegistrySet;
+pub const connection_config = @import("connection_config.zig");
+pub const catalog = @import("catalog.zig");
+pub const Registry = catalog.Registry;
+pub const context = @import("context.zig");
