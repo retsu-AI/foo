@@ -12,6 +12,11 @@ pub fn field(value: Value, name: []const u8) ?Value {
     return if (value == .object) value.object.get(name) else null;
 }
 
+pub fn nonNullField(value: Value, name: []const u8) ?Value {
+    const entry = field(value, name) orelse return null;
+    return if (entry == .null) null else entry;
+}
+
 pub fn required(value: Value, name: []const u8) Error!Value {
     return field(value, name) orelse error.Protocol;
 }
@@ -172,9 +177,7 @@ pub const State = struct {
 };
 
 pub fn optionalCount(value: Value, name: []const u8) Error!?u64 {
-    const entry = field(value, name) orelse return null;
-    if (entry == .null) return null;
-    return try number(entry);
+    return try number(nonNullField(value, name) orelse return null);
 }
 
 pub fn openAiUsage(value: Value, current: *p.Usage, shape: enum { chat, responses }) Error!void {

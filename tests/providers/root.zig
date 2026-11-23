@@ -757,3 +757,25 @@ test "Responses replay cannot override a normalized tool call" {
     try equal(1, wire.calls);
     try equal(io.Delivery.unsent, run.delivery);
 }
+
+test "a single invocation budget allows a larger tool catalog" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const profile = profiles[0];
+    var wire: Wire = .{ .allocator = allocator, .body = profile.body };
+    var adapter: providers.Adapter = .{ .transport = wire.transport() };
+    var run: Run = .{ .allocator = allocator };
+    var request = requestFor(profile.family, profile.url);
+    request.tools = &.{ lookup, .{
+        .name = "describe",
+        .description = "Describe an entry.",
+        .schema_json = "{\"type\":\"object\"}",
+    } };
+    request.limits.tool_calls = 1;
+    const response = try run.stream(&adapter, request);
+    try equal(provider.Stop.tool_use, response.stop);
+    const sent = try parse(allocator, wire.request_body);
+    try equal(2, (try member(sent, "tools")).array.items.len);
+    try equal(1, wire.calls);
+}

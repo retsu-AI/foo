@@ -79,15 +79,15 @@ pub const Reducer = struct {
             if (!self.litellm) return error.Rejected;
             try keepMetadata(s, &target.metadata, extras);
         };
-        if (c.field(value, "type")) |kind| if (!c.eq(try c.string(kind), "function")) return error.Rejected;
-        if (c.field(value, "id")) |id| {
+        if (c.nonNullField(value, "type")) |kind| if (!c.eq(try c.string(kind), "function")) return error.Rejected;
+        if (c.nonNullField(value, "id")) |id| {
             const bytes = try c.string(id);
             if (target.arguments.items.len != 0 and bytes.len != 0) return error.Protocol;
             try s.append(&target.id, bytes);
         }
-        if (c.field(value, "function")) |function| {
-            if (c.field(function, "name")) |name| try s.append(&target.name, try c.string(name));
-            if (c.field(function, "arguments")) |args| {
+        if (c.nonNullField(value, "function")) |function| {
+            if (c.nonNullField(function, "name")) |name| try s.append(&target.name, try c.string(name));
+            if (c.nonNullField(function, "arguments")) |args| {
                 const bytes = try c.string(args);
                 if (bytes.len > s.limits.tool_argument_bytes -| target.arguments.items.len) return error.LimitExceeded;
                 if (bytes.len != 0 and target.id.items.len == 0) return error.Protocol;

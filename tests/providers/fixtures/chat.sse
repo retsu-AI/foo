@@ -6,7 +6,7 @@ data: {"id":"chat_1","object":"chat.completion.chunk","choices":[{"index":0,"del
 
 data: {"id":"chat_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"lookup","arguments":"{\"key\":"},"id":"call_1","type":"function"},{"index":1,"function":{"name":"lookup","arguments":"{\"key\":"},"id":"call_2","type":"function"}]},"finish_reason":null}],"usage":null}
 
-data: {"id":"chat_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\"two\"}"}},{"index":0,"function":{"arguments":"\"one\"}"}}]},"finish_reason":null}],"usage":null}
+data: {"id":"chat_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\"two\"}","name":null},"id":null,"type":null},{"index":0,"function":{"arguments":"\"one\"}","name":null},"id":null,"type":null}]},"finish_reason":null}],"usage":null}
 
 data: {"id":"chat_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null}
 

@@ -72,7 +72,6 @@ pub fn encode(a: std.mem.Allocator, request: p.Request) p.Error![]const u8 {
 
 fn validate(request: p.Request) p.Error!void {
     if (request.model.id.len == 0 or request.model.endpoint.len == 0 or request.model.max_output_tokens == 0) return error.InvalidInput;
-    if (request.tools.len > request.limits.tool_calls) return error.LimitExceeded;
     var budget: foo.io.Budget = .{ .limit = request.limits.transcript_bytes };
     try countText(&budget, request.model.id);
     try countText(&budget, request.model.endpoint);
