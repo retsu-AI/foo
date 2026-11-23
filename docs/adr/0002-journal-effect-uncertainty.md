@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted target decision, 2026-11-16. The shared contracts and memory-only journal fake exercise the ordering. A durable session store and native crash recovery remain planned.
+Accepted 2026-11-16. F07 implements the session journal and passed native process-crash recovery on Linux. Native macOS and Windows filesystem qualification remains open. [Session store](../../src/session/README.md).
 
 ## Context
 
