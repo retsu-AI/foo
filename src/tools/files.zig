@@ -33,6 +33,24 @@ pub const Payload = struct { content: []const u8, truncated: bool = false };
 
 const Target = struct { dir: Dir, name: []const u8 };
 const Snapshot = struct { stat: File.Stat, bytes: []const u8, digest: Digest };
+const ReadResult = struct {
+    encoding: Encoding,
+    offset: usize,
+    bytes: usize = 0,
+    total_bytes: usize,
+    sha256: []const u8,
+    truncated: bool = false,
+    content: []const u8 = "",
+
+    fn format(self: *ReadResult, bytes: []const u8, encoded: []u8, buffer: []u8) error{WriteFailed}![]const u8 {
+        self.bytes = bytes.len;
+        self.truncated = self.offset != 0 or bytes.len != self.total_bytes;
+        self.content = if (self.encoding == .base64) base64.Encoder.encode(encoded, bytes) else bytes;
+        var writer = std.Io.Writer.fixed(buffer);
+        try std.json.Stringify.value(self.*, .{}, &writer);
+        return writer.buffered();
+    }
+};
 
 pub const max_replacements = 64;
 
@@ -45,7 +63,7 @@ pub fn absolute(path: []const u8) bool {
 }
 
 pub fn resolve(allocator: Allocator, cwd: []const u8, path: []const u8) Error![]const u8 {
-    if (path.len == 0 or std.mem.indexOfScalar(u8, path, 0) != null or
+    if (!absolute(cwd) or path.len == 0 or std.mem.indexOfScalar(u8, path, 0) != null or
         std.fs.path.isSep(path[path.len - 1])) return error.InvalidInput;
 
     if (builtin.os.tag == .windows) {
@@ -68,6 +86,7 @@ pub fn resolve(allocator: Allocator, cwd: []const u8, path: []const u8) Error![]
 pub fn decode(allocator: Allocator, encoding: Encoding, input: []const u8, limit: usize) Error![]const u8 {
     if (encoding == .utf8) {
         if (input.len > limit) return error.LimitExceeded;
+        if (!std.unicode.utf8ValidateSlice(input)) return error.InvalidEncoding;
         return input;
     }
     const size = base64.Decoder.calcSizeForSlice(input) catch return error.InvalidEncoding;
@@ -92,7 +111,7 @@ fn digest(bytes: []const u8) Digest {
 
 fn fileError(err: anyerror) Error {
     return switch (err) {
-        error.Cancelled => error.Cancelled,
+        error.Canceled => error.Cancelled,
         error.FileNotFound => error.MissingFile,
         error.AccessDenied, error.PermissionDenied, error.ReadOnlyFileSystem => error.PermissionDenied,
         error.IsDir, error.NotDir, error.SymLinkLoop => error.UnsupportedTarget,
@@ -103,8 +122,23 @@ fn fileError(err: anyerror) Error {
 }
 
 fn openTarget(op: foo.io.Context, path: []const u8) Error!Target {
+    try op.check();
+    if (!absolute(path)) return error.InvalidInput;
     const parent = std.fs.path.dirname(path) orelse return error.InvalidInput;
-    const dir = Dir.openDirAbsolute(op.io, parent, .{}) catch |err| return fileError(err);
+    const root_len: usize = if (builtin.os.tag == .windows) 3 else 1;
+    var dir = Dir.openDirAbsolute(op.io, path[0..root_len], .{}) catch |err| return fileError(err);
+    errdefer dir.close(op.io);
+    var parts = std.mem.tokenizeScalar(u8, parent[@min(parent.len, root_len)..], std.fs.path.sep);
+    while (parts.next()) |part| {
+        try op.check();
+        const child = dir.openDir(op.io, part, .{ .follow_symlinks = false }) catch |err| return fileError(err);
+        dir.close(op.io);
+        dir = child;
+        if (builtin.os.tag == .windows) {
+            const stat = dir.stat(op.io) catch |err| return fileError(err);
+            if (stat.kind != .directory) return error.UnsupportedTarget;
+        }
+    }
     return .{ .dir = dir, .name = std.fs.path.basename(path) };
 }
 
@@ -129,7 +163,10 @@ fn snapshot(allocator: Allocator, op: foo.io.Context, target: Target, limit: usi
     const file = target.dir.openFile(op.io, target.name, .{
         .allow_directory = false,
         .follow_symlinks = false,
-    }) catch |err| return fileError(err);
+    }) catch |err| switch (err) {
+        error.FileNotFound => return error.StaleFile,
+        else => return fileError(err),
+    };
     defer file.close(op.io);
     const opened = file.stat(op.io) catch |err| return fileError(err);
     if (opened.kind != .file or !sameStat(original, opened)) return error.StaleFile;
@@ -173,50 +210,38 @@ pub fn read(
     const max_bytes = @min(args.max_bytes, remaining.len, output_limit);
     const sha256 = std.fmt.bytesToHex(source.digest, .lower);
     const response_buffer = try scratch.alloc(u8, @min(output_limit, 256 +| 6 *| max_bytes));
-    const encoded = if (args.encoding == .base64)
+    const encoded: []u8 = if (args.encoding == .base64)
         try scratch.alloc(u8, base64.Encoder.calcSize(max_bytes))
     else
         &.{};
+    var result: ReadResult = .{
+        .encoding = args.encoding,
+        .offset = args.offset,
+        .total_bytes = source.bytes.len,
+        .sha256 = &sha256,
+    };
 
     var low: usize = 0;
     var high: usize = max_bytes;
-    var best: ?struct { size: usize, truncated: bool } = null;
+    var best: ?usize = null;
     while (low <= high) {
         try op.check();
-        const count = low + (high - low) / 2;
+        const count = if (best == null and high == max_bytes) high else low + (high - low) / 2;
         const bytes = remaining[0..prefixLength(args.encoding, remaining, count)];
-        const truncated = args.offset != 0 or bytes.len != remaining.len;
-        var writer = std.Io.Writer.fixed(response_buffer);
-        std.json.Stringify.value(.{
-            .encoding = @tagName(args.encoding),
-            .offset = args.offset,
-            .bytes = bytes.len,
-            .total_bytes = source.bytes.len,
-            .sha256 = sha256[0..],
-            .truncated = truncated,
-            .content = if (args.encoding == .base64) base64.Encoder.encode(encoded, bytes) else bytes,
-        }, .{}, &writer) catch {
+        const content = result.format(bytes, encoded, response_buffer) catch {
             if (count == 0) break;
             high = count - 1;
             continue;
         };
-        best = .{ .size = count, .truncated = truncated };
+        if (count == high) return .{ .content = try allocator.dupe(u8, content), .truncated = result.truncated };
+        best = count;
         low = count + 1;
     }
     const fit = best orelse return error.LimitExceeded;
-    const bytes = remaining[0..prefixLength(args.encoding, remaining, fit.size)];
-    var writer = std.Io.Writer.fixed(response_buffer);
+    const bytes = remaining[0..prefixLength(args.encoding, remaining, fit)];
     try op.check();
-    std.json.Stringify.value(.{
-        .encoding = @tagName(args.encoding),
-        .offset = args.offset,
-        .bytes = bytes.len,
-        .total_bytes = source.bytes.len,
-        .sha256 = sha256[0..],
-        .truncated = fit.truncated,
-        .content = if (args.encoding == .base64) base64.Encoder.encode(encoded, bytes) else bytes,
-    }, .{}, &writer) catch unreachable;
-    return .{ .content = try allocator.dupe(u8, writer.buffered()), .truncated = fit.truncated };
+    const content = result.format(bytes, encoded, response_buffer) catch unreachable;
+    return .{ .content = try allocator.dupe(u8, content), .truncated = result.truncated };
 }
 
 fn continuation(byte: u8) bool {
@@ -242,11 +267,13 @@ const Match = struct {
 
 fn applyEdit(scratch: Allocator, op: foo.io.Context, original: Snapshot, edit: Edit, limit: usize) Error![]const u8 {
     if (!std.mem.eql(u8, &original.digest, &edit.expected)) return error.StaleFile;
+    if (edit.replacements.len == 0 or edit.replacements.len > max_replacements) return error.InvalidInput;
 
     const bytes = original.bytes;
     var matches: [max_replacements]Match = undefined;
     for (edit.replacements, matches[0..edit.replacements.len]) |replacement, *match| {
         try op.check();
+        if (replacement.old.len == 0) return error.InvalidInput;
         const first = std.mem.indexOf(u8, bytes, replacement.old) orelse return error.MissingMatch;
         if (std.mem.indexOfPos(u8, bytes, first + 1, replacement.old) != null)
             return error.AmbiguousMatch;
@@ -304,14 +331,17 @@ pub fn mutate(
         .write => |bytes| bytes,
         .edit => |edit| try applyEdit(scratch, op, original orelse return error.MissingFile, edit, file_limit),
     };
+    if (replacement.len > file_limit) return error.LimitExceeded;
     if (original) |entry| {
-        if (entry.stat.permissions.readOnly()) return error.PermissionDenied;
+        if (builtin.os.tag != .windows and entry.stat.permissions.readOnly()) return error.PermissionDenied;
         const writable = target.dir.openFile(op.io, target.name, .{
             .mode = .write_only,
             .allow_directory = false,
             .follow_symlinks = false,
         }) catch |err| return fileError(err);
-        writable.close(op.io);
+        defer writable.close(op.io);
+        const stat = writable.stat(op.io) catch |err| return fileError(err);
+        if (stat.kind != .file or !sameStat(entry.stat, stat)) return error.StaleFile;
     }
 
     const sha256 = std.fmt.bytesToHex(digest(replacement), .lower);
@@ -365,9 +395,12 @@ pub fn mutate(
 
 fn commitError(err: anyerror) Error {
     return switch (err) {
-        error.Cancelled => error.CommitCancelled,
-        error.Unexpected, error.HardwareFailure, error.NetworkNotFound => error.CommitUncertain,
+        error.Canceled => error.CommitCancelled,
         error.PathAlreadyExists, error.FileNotFound => error.StaleFile,
-        else => fileError(err),
+        error.AccessDenied, error.PermissionDenied, error.ReadOnlyFileSystem => error.PermissionDenied,
+        error.IsDir, error.NotDir, error.SymLinkLoop => error.UnsupportedTarget,
+        error.BadPathName, error.NameTooLong => error.InvalidInput,
+        error.FileTooBig, error.DiskQuota, error.NoSpaceLeft => error.LimitExceeded,
+        else => error.CommitUncertain,
     };
 }
