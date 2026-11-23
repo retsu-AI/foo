@@ -354,11 +354,11 @@
         "Native stdio behavior is tested on Linux/macOS/Windows; no draft-v2 dependence or ACP-specific agent engine."
       ],
       "handoff": [
-        "Method/capability/stop-reason matrix and framed transcripts.",
-        "Native pipe results, host operation lifecycles, and known optional exclusions.",
-        "Target-client live interoperability checklist for F13."
+        "Method, capability, and stop-reason matrix. The pipe suite can save framed transcripts.",
+        "Native ACP pipe checks cover the supported host operation lifecycles on Linux, macOS, and Windows.",
+        "F12 wires the shared runner and F06 into the executable. F13 verifies live interoperability with target editors."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1481",
         "uuid": "839c4b0d-a78a-4bac-8715-a17bb0409227",
