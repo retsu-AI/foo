@@ -176,21 +176,21 @@
         "src/contracts/config.zig"
       ],
       "deliverables": [
-        "All three required provider adapters: OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages, with xAI-compatible endpoint configuration.",
-        "Configured models/base URLs/credentials separated from protocol grammar.",
-        "Reasoning/replay preservation, typed capability validation, usage/stop events, and bounded explicit retry policy."
+        "Streaming OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages.",
+        "Explicit endpoints, model IDs, API keys, and compatibility settings for xAI, DeepSeek, LiteLLM, and Bedrock.",
+        "Opaque reasoning replay, usage and stop reasons, and bounded retries for eligible unsent requests."
       ],
       "acceptance": [
-        "All three protocol codecs pass complete fixtures; two wire shapes are only an intermediate interface check, not F04 completion.",
-        "Text, tools, reasoning/signatures, usage, stream errors, limits, and retry eligibility match expected records.",
-        "Unsupported credential or provider features fail visibly rather than silently degrading."
+        "All three codecs pass fixtures for text, tools, partial arguments, reasoning replay, usage, interruption, errors, limits, and retry eligibility.",
+        "Unsupported credential modes and provider features return typed errors. Opaque replay requires the same protocol family, endpoint, and model."
       ],
       "handoff": [
-        "Implemented protocol/capability matrix and credential modes.",
-        "Wire fixtures, commands, observed results, and pending live cases.",
-        "No claim that arbitrary OpenAI-compatible endpoints have been qualified."
+        "Landed in PR #8 at ad6f06a. See src/providers/routes.md for endpoint, credential, and model settings.",
+        "All 17 provider tests passed on Linux x86_64 in Debug and ReleaseSafe. The suite cross-compiled for macOS arm64 and Windows x86_64.",
+        "LiteLLM Proxy 1.110.2 completed a signed tool continuation against a simulated Gemini upstream. See tests/providers/README.md for commands.",
+        "F12 owns CLI wiring and root test registration. F13 owns hosted-provider and native platform qualification."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1477",
         "uuid": "6dc0a6ad-c55d-4eb2-9cc0-c2b94860f6ea",
