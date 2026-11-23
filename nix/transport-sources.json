@@ -1,0 +1,20 @@
+{
+  "curl": {
+    "version": "8.23.0",
+    "url": "https://curl.se/download/curl-8.23.0.tar.xz",
+    "sha256": "ja3X0lNqMU+YKtBaZRtxP0Jr99Aswsds/7l5byIY5sU=",
+    "notice": "COPYING"
+  },
+  "c-ares": {
+    "version": "1.34.9",
+    "url": "https://github.com/c-ares/c-ares/releases/download/v1.34.9/c-ares-1.34.9.tar.gz",
+    "sha256": "k2S3ChLrWaBoMPtIjZNX+QEA3/DZiyPqNZOhg9Q+by8=",
+    "notice": "LICENSE.md"
+  },
+  "openssl": {
+    "version": "3.5.9",
+    "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+    "sha256": "YD9WAuLu8A13+9Qp003NWCK7MBdXobyc2yTGcPHrhZo=",
+    "notice": "LICENSE.txt"
+  }
+}

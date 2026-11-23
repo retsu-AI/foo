@@ -16,10 +16,24 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-zig
+      - name: Set transport prefix
+        shell: bash
+        run: |
+          echo "FOO_TRANSPORT_PREFIX=$RUNNER_TEMP/foo-transport" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/foo-transport/bin" >> "$GITHUB_PATH"
+      - name: Build pinned transport libraries
+        if: runner.os != 'Windows'
+        run: python .github/scripts/build-transport.py "$FOO_TRANSPORT_PREFIX"
+      - name: Build pinned transport libraries (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 || exit /b 1
+          python .github/scripts/build-transport.py "%FOO_TRANSPORT_PREFIX%"
       - name: Check Debug
         run: |
           zig build check

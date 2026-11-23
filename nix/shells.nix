@@ -3,6 +3,7 @@
   toolchain,
   tools,
   formatter,
+  transport,
 }:
 let
   common = [
@@ -21,11 +22,13 @@ in
   default = pkgs.mkShellNoCC {
     name = "foo-dev";
     packages = common ++ [ toolchain.zls ] ++ tools.interactive;
+    FOO_TRANSPORT_PREFIX = transport;
     shellHook = cacheEnvironment;
   };
   ci = pkgs.mkShellNoCC {
     name = "foo-ci";
     packages = common;
+    FOO_TRANSPORT_PREFIX = transport;
     shellHook = cacheEnvironment;
   };
 }
