@@ -159,9 +159,9 @@ All 15 session tests and five native process-crash scenarios passed in Debug and
 
 **Owner:** ACP agent. **Dependencies:** F02. **Paths:** `src/acp/**`, `tests/acp/**`. **Consumes:** JSON-RPC, events, core/provider/tool contracts, and host contract.
 
-Implement stable ACP v1 over stdio as specified in [protocols.md](../protocols.md), including initialize/capabilities, sessions, prompt/update/stop mapping, cancellation, client permission requests, and negotiated client filesystem/terminal operations. Use mocked runtime and host adapters so protocol work does not wait for provider engines. Advertise capabilities only after their complete lifecycle works. No ACP-specific planner or session engine.
+F08 implements ACP v1 over stdio with session creation, streamed prompt updates, cancellation, and correlated errors. The adapter uses the shared runner contract and negotiates permission, filesystem, and terminal delegation with the client. [ACP handoff and native test commands](../../tests/acp/README.md).
 
-Accept independent mock-client traces covering requests in flight, cancellation races, client refusal/unavailable capabilities, filesystem/terminal delegation, transport shutdown, correlated errors, and resumed sessions where advertised. Keep stdout exclusively framed protocol messages. Handoff gives the supported-method matrix, wire transcripts, exact stop-reason mapping, native pipe behavior, and target-client interoperability checks for F13.
+The native pipe suite uses an independent mock editor and a scripted runner. F12 owns executable registration, the production session factory, and F06 MCP integration. F13 owns live editor interoperability.
 
 ### F09 — Configuration and explicit customization
 
