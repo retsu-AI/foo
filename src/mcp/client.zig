@@ -39,6 +39,7 @@ pub const Profile = struct {
 pub const Completion = struct {
     raw: []const u8,
     fields: Object,
+    kind: union(enum) { complete, input_required: ?[]const u8 } = .complete,
 };
 
 pub const Client = struct {
@@ -94,7 +95,12 @@ pub const Client = struct {
             }
             return err;
         };
-        return self.complete(allocator, active.revision, reply);
+        const result = try self.complete(allocator, active.revision, reply);
+        if (result.kind == .input_required and
+            !std.mem.eql(u8, method, "tools/call") and
+            !std.mem.eql(u8, method, "resources/read") and
+            !std.mem.eql(u8, method, "prompts/get")) return error.MalformedPeer;
+        return result;
     }
 
     /// Drive on an independent task after connect. Join it before shutdown.
@@ -125,12 +131,25 @@ pub const Client = struct {
         try params.put(temp, "notifications", .{ .object = object });
         const id = try self.next();
         var subscription: Subscription = .{ .client = self, .id = id, .requested = filter };
-        const reply = try self.send(temp, op, modern, "subscriptions/listen", params, id, .subscription, .{}, .{
+        var timer: SubscriptionTimer = .{
+            .origin = op,
+            .acknowledged = &subscription.ack_observed,
+            .ack_deadline_ms = op.clock.now() +| self.options.handshake_ms,
+        };
+        var monitor = op.io.concurrent(SubscriptionTimer.run, .{&timer}) catch return error.Unavailable;
+        defer monitor.cancel(op.io);
+        var subscription_op = op;
+        subscription_op.cancellation = &timer.token;
+        const reply = self.send(temp, subscription_op, modern, "subscriptions/listen", params, id, .subscription, .{}, .{
             .context = &subscription,
             .notify_fn = Subscription.notify,
-        }, &delivery);
+        }, &delivery) catch |err| {
+            if (timer.ack_timeout.load(.acquire)) return error.DeadlineExceeded;
+            try op.check();
+            return err;
+        };
         const completion = try self.complete(temp, modern, reply);
-        if (subscription.acknowledged == null or !subscription.matches(completion.fields))
+        if (completion.kind != .complete or subscription.acknowledged == null or !subscription.matches(completion.fields))
             return error.MalformedPeer;
     }
 
@@ -162,7 +181,9 @@ pub const Client = struct {
                 return error.UnsupportedRevision;
             }
         }
-        const outcome = (try self.complete(allocator, modern, reply)).fields;
+        const discovery = try self.complete(allocator, modern, reply);
+        if (discovery.kind != .complete) return error.MalformedPeer;
+        const outcome = discovery.fields;
         if (!try supports(outcome.get("supportedVersions"), modern)) {
             if (allow_auto and try supports(outcome.get("supportedVersions"), legacy)) return null;
             return error.UnsupportedRevision;
@@ -174,12 +195,14 @@ pub const Client = struct {
         const raw = try std.json.Stringify.valueAlloc(allocator, .{
             .protocolVersion = @tagName(legacy),
             .clientInfo = clientInfo(),
-            .capabilities = .{},
+            .capabilities = Json{ .object = .empty },
         }, .{});
         const arguments = try self.decodeObject(allocator, raw);
         var delivery: foo.io.Delivery = .unsent;
         const reply = try self.send(allocator, op, legacy, "initialize", arguments, try self.next(), .request, .{}, null, &delivery);
-        const outcome = (try self.complete(allocator, legacy, reply)).fields;
+        const initialized_reply = try self.complete(allocator, legacy, reply);
+        if (initialized_reply.kind != .complete) return error.MalformedPeer;
+        const outcome = initialized_reply.fields;
         const version = outcome.get("protocolVersion") orelse return error.MalformedPeer;
         if (version != .string) return error.MalformedPeer;
         if (!std.mem.eql(u8, version.string, @tagName(legacy))) return error.UnsupportedRevision;
@@ -212,7 +235,7 @@ pub const Client = struct {
             const metadata = try std.json.Stringify.valueAlloc(temp, .{
                 .@"io.modelcontextprotocol/protocolVersion" = @tagName(modern),
                 .@"io.modelcontextprotocol/clientInfo" = clientInfo(),
-                .@"io.modelcontextprotocol/clientCapabilities" = .{},
+                .@"io.modelcontextprotocol/clientCapabilities" = Json{ .object = .empty },
             }, .{});
             const fields = try self.decodeObject(temp, metadata);
             try arguments.put(temp, "_meta", .{ .object = fields });
@@ -248,7 +271,12 @@ pub const Client = struct {
                 const fields = try self.decodeObject(allocator, raw);
                 if (fields.get("resultType")) |kind| {
                     if (kind != .string) return error.MalformedPeer;
-                    if (std.mem.eql(u8, kind.string, "input_required")) return error.UnsupportedCapability;
+                    if (std.mem.eql(u8, kind.string, "input_required")) {
+                        if (revision != modern) return error.MalformedPeer;
+                        const state = fields.get("requestState");
+                        if (state) |value| if (value != .string) return error.MalformedPeer;
+                        return .{ .raw = raw, .fields = fields, .kind = .{ .input_required = if (state) |value| value.string else null } };
+                    }
                     if (!std.mem.eql(u8, kind.string, "complete")) return error.MalformedPeer;
                 } else if (revision == modern) return error.MalformedPeer;
                 return .{ .raw = raw, .fields = fields };
@@ -359,6 +387,7 @@ const Subscription = struct {
     id: i64,
     requested: Filter,
     acknowledged: ?Filter = null,
+    ack_observed: std.atomic.Value(bool) = .init(false),
 
     fn matches(self: *const Subscription, params: Object) bool {
         const metadata = params.get("_meta") orelse return false;
@@ -392,6 +421,7 @@ const Subscription = struct {
                 }
             }
             self.acknowledged = accepted;
+            self.ack_observed.store(true, .release);
             return;
         }
         const accepted = self.acknowledged orelse return error.InvalidInput;
@@ -400,5 +430,28 @@ const Subscription = struct {
             if (field == @field(std.meta.FieldEnum(Filter), name) and !@field(accepted, name)) return error.InvalidInput;
         }
         self.client.markChanged();
+    }
+};
+
+const SubscriptionTimer = struct {
+    origin: foo.io.Context,
+    acknowledged: *const std.atomic.Value(bool),
+    ack_deadline_ms: u64,
+    token: foo.io.Cancellation = .{},
+    ack_timeout: std.atomic.Value(bool) = .init(false),
+
+    fn run(self: *SubscriptionTimer) void {
+        while (true) {
+            self.origin.check() catch {
+                self.token.request();
+                return;
+            };
+            if (!self.acknowledged.load(.acquire) and self.origin.clock.now() >= self.ack_deadline_ms) {
+                self.ack_timeout.store(true, .release);
+                self.token.request();
+                return;
+            }
+            self.origin.io.sleep(.fromMilliseconds(10), .awake) catch return;
+        }
     }
 };
