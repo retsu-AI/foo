@@ -55,7 +55,7 @@ Suggested initial limits, finalized once in F00:
 | --- | --- | --- |
 | One JSON-RPC message or assembled SSE event | 8 MiB | Typed limit failure; close an unrecoverably malformed stream |
 | JSON nesting | 64 levels | Reject before recursive work or large allocation |
-| Outstanding requests per peer | 64 | Explicit busy/limit error; no hidden queue growth |
+| Outstanding requests per peer | 64 per direction | Explicit busy/limit error; no hidden queue growth |
 | Server stderr retained in memory | 256 KiB ring | Mark truncation; keep draining to avoid deadlock |
 | One catalog refresh | 128 pages and 16 MiB accumulated metadata | Fail refresh and identify the limiting setting |
 | Opaque continuation/state bytes | Bounded by the message limit and a dedicated config limit | Reject oversized continuation |

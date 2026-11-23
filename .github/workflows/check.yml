@@ -23,6 +23,8 @@ jobs:
           zig build
           python tests/contracts/bootstrap.py
           python .github/scripts/test-install-zig.py
+      - name: Check wire fixtures
+        run: zig build test -Dmodule=wire
       - name: Check documentation
         run: |
           python -m pip install -r .github/docs-requirements.txt

@@ -109,7 +109,7 @@
         "Corpus, fuzz seeds, commands and observed bounds.",
         "Examples for SSE provider, MCP, and ACP consumers."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1475",
         "uuid": "c76caa8d-66b0-452c-b837-cb5edc39d036",

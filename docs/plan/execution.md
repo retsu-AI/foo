@@ -2,7 +2,7 @@
 
 This is a plan for building foo with parallel development agents. It does not add agents, scheduling, delegation, or orchestration to the foo runtime. Foo executes one configured conversation; a separate application may later coordinate multiple foo processes.
 
-The machine-readable task inventory is [work-packages.json](work-packages.json). This dated local snapshot records F00 and F01 as `complete`, and F02 through F13 as `planned`. The reviewed F00 contracts are at `55bd327`. The [native Nightly run](https://github.com/retsu-AI/foo/actions/runs/43960887714) qualified bootstrap commit `5c53fde07c0923ce914f9139dc21f43d3e5779da`, including its 13 contract tests and bootstrap behavior in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64, plus Linux Nix checks. F01 implements HTTP and TLS and passed the loopback suite on Linux, macOS, and Windows in Debug and ReleaseSafe. [Native qualification results](../../src/transport/README.md#build-and-verify). The remaining runtime packages are planned.
+The machine-readable task inventory is [work-packages.json](work-packages.json). This dated local snapshot records F00 through F02 as `complete` and F03 through F13 as `planned`. The reviewed F00 contracts are at `55bd327`. The [native Nightly run](https://github.com/retsu-AI/foo/actions/runs/43960887714) qualified bootstrap commit `5c53fde07c0923ce914f9139dc21f43d3e5779da`, including its 13 contract tests and bootstrap behavior in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64, plus Linux Nix checks. F01 implements HTTP and TLS and passed the loopback suite on Linux, macOS, and Windows in Debug and ReleaseSafe. [Native qualification results](../../src/transport/README.md#build-and-verify). F02 provides bounded stream framing and JSON-RPC correlation. [Wire handoff](../../src/wire/README.md). The remaining runtime packages are planned.
 
 All packages have issues in the [foo Linear project](https://linear.app/retsu-ai/project/foo-86eb1e09a2a5), ENG-1473 through ENG-1486. `dependencies` map to Linear blockers. `completion_dependencies` map to related issues and prominent completion criteria, preserving early authoring. The manifest carries the exact ID/URL mapping; Linear is authoritative for current assignment and workflow status. At creation every issue is unassigned in Backlog.
 
@@ -15,7 +15,7 @@ The bootstrap establishes shared interfaces without implementing the agent loop.
 ```sh
 git rev-parse --verify HEAD
 git status --short
-git worktree add ../foo-F02 -b impl/F02 5c53fde07c0923ce914f9139dc21f43d3e5779da
+git worktree add .lane/trees/eng-1475 -b impl/F02 6e0105520ac38c1bdc60dd02a457fffbecdb82d9
 ```
 
 Each active implementation agent gets one worktree and one assigned package. A worktree is not a claim of ownership: the package's path list is. Agents must not edit another package's files, inspect credentials, run live paid-provider tests without authorization, or broaden release scope because their local task has spare time.
@@ -69,17 +69,17 @@ finishable(package) = every(package.dependencies, status == complete)
 
 Use `in_progress` only after assignment and worktree creation; `review` means a concrete patch and handoff are ready; `complete` means the reviewed package was integrated and its package acceptance passed. `blocked` must name the missing prerequisite. A queued task, authored test, green fake test, merged module, cross-compiled binary, live protocol test, and qualified release are different evidence states.
 
-F02, F03, F05, F07, F09, and F13 are ready to start in the current snapshot. F01 is complete. F04, F06, F08, F10, F11, and F12 still need start prerequisites. Linear holds current assignments and workflow state. F13 may author fixtures now, but remains incomplete until native and live qualification is done against F12's candidate. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
+F03 through F09 and F13 are ready to start in the current snapshot. F01 and F02 are complete. F10, F11, and F12 still need start prerequisites. Linear holds current assignments and workflow state. F13 may author fixtures now, but remains incomplete until native and live qualification is done against F12's candidate. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
 
 ## Build commands and remaining targets
 
-Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` runs the `contracts` and `transport` suites. The remaining module suites and qualification targets stay unavailable until their owners supply them. An empty suite must never count as acceptance.
+Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` runs the `contracts`, `transport`, and `wire` suites. The remaining module suites and qualification targets stay unavailable until their owners supply them. An empty suite must never count as acceptance.
 
 | Command | Owner and current status |
 | --- | --- |
-| `zig build check` | Integrator. Formatting, executable compilation, and the contracts and transport suites |
+| `zig build check` | Integrator. Formatting, executable compilation, and the contracts, transport, and wire suites |
 | `zig build test -Dmodule=contracts` | F00. Implemented shared-contract and scripted-fake tests |
-| `zig build test -Dmodule=<module>` | Module owner. `contracts` and `transport` are available |
+| `zig build test -Dmodule=<module>` | Module owner. `contracts`, `transport`, and `wire` are available |
 | `zig build acceptance` | F13. Unavailable; planned native offline fixtures and loopback peers |
 | `zig build acceptance-live` | F13. Unavailable; planned opted-in interoperability with allowlist and spend cap |
 | `zig build bench` | F13. Unavailable; planned repeatable measurements and raw results |
@@ -111,7 +111,7 @@ Accept with deterministic loopback fixtures for split bodies, slow consumers, ce
 
 Implement incremental SSE, NDJSON/stdio framing, bounded JSON decoding, JSON-RPC envelopes, request correlation, and protocol-neutral error parsing. MCP/ACP method names, lifecycle state machines, capabilities, and revision rules remain with their protocol modules. Provider codecs consume SSE without importing MCP.
 
-Accept arbitrary byte splits, UTF-8 boundaries, CR/LF variants, comments/keepalives where applicable, multiple records per read, oversized/truncated/malformed records, duplicate/unknown IDs, and clean shutdown. Fuzz parser entrypoints with explicit allocation and nesting bounds. Handoff supplies a fixture corpus and demonstrated compatibility with the transports each consumer requires.
+Accept arbitrary byte splits, UTF-8 boundaries, CR/LF variants, comments/keepalives where applicable, multiple records per read, oversized/truncated/malformed records, duplicate/unknown IDs, and clean shutdown. Fuzz parser entrypoints with explicit allocation and nesting bounds. The handoff supplies a fixture corpus, fuzz inputs, and transport examples. [Wire handoff](../../src/wire/README.md).
 
 ### F03 — Single-conversation core
 
