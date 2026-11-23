@@ -1,0 +1,18 @@
+data: {"id":"ds_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":"Preserve "},"finish_reason":null}],"usage":null}
+
+data: {"id":"ds_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":null,"reasoning_content":"exactly."},"finish_reason":null}],"usage":null}
+
+data: {"id":"ds_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Café "},"finish_reason":null}],"usage":null}
+
+data: {"id":"ds_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"☕"},"finish_reason":null}],"usage":null}
+
+data: {"id":"ds_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"lookup","arguments":"{\"key\":"},"id":"call_1","type":"function"},{"index":1,"function":{"name":"lookup","arguments":"{\"key\":"},"id":"call_2","type":"function"}]},"finish_reason":null}],"usage":null}
+
+data: {"id":"ds_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\"two\"}"}},{"index":0,"function":{"arguments":"\"one\"}"}}]},"finish_reason":null}],"usage":null}
+
+data: {"id":"ds_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null}
+
+data: {"id":"ds_1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":7,"prompt_cache_hit_tokens":2,"prompt_cache_miss_tokens":10,"total_tokens":19}}
+
+data: [DONE]
+
