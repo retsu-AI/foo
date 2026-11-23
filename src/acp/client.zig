@@ -15,7 +15,7 @@ const Terminal = struct {
     running: bool = true,
 };
 const TerminalRef = struct { sessionId: []const u8, terminalId: []const u8 };
-const Exit = struct { exitCode: ?i32 = null, signal: ?[]const u8 = null };
+const Exit = struct { exitCode: ?u32 = null, signal: ?[]const u8 = null };
 
 pub const Client = struct {
     allocator: std.mem.Allocator,
@@ -221,7 +221,7 @@ pub const Client = struct {
     }
 
     fn exitStatus(status: Exit) host.CommandStatus {
-        if (status.exitCode) |code| return .{ .exited = code };
+        if (status.exitCode) |code| return .{ .exited = @bitCast(code) };
         if (status.signal) |signal| {
             const known = .{
                 .{ "SIGHUP", 1 },  .{ "SIGINT", 2 },   .{ "SIGQUIT", 3 },

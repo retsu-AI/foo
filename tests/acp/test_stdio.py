@@ -425,6 +425,19 @@ class AcpStdio(unittest.TestCase):
         peer.reply(release, {})
         self.assertEqual(agent_text(peer.wait_for_turn(turn, session)), "second")
 
+    def test_terminal_exit_supports_unsigned_status(self):
+        peer, session = self.initialized({"terminal": True})
+        turn = peer.prompt(session, "terminal")
+        create = peer.expect_request("terminal/create", session)
+        peer.reply(create, {"terminalId": "failed-command"})
+        output = peer.expect_request("terminal/output", session)
+        peer.reply(output, {"output": "", "truncated": False})
+        wait = peer.expect_request("terminal/wait_for_exit", session)
+        peer.reply(wait, {"exitCode": 0xC0000005})
+        release = peer.expect_request("terminal/release", session)
+        peer.reply(release, {})
+        peer.wait_for_turn(turn, session, error=True)
+
     def test_terminal_cancel_uses_separate_cleanup_lifetime(self):
         peer, session = self.initialized({"terminal": True})
         turn = peer.prompt(session, "terminal")
