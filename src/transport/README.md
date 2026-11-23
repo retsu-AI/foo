@@ -33,8 +33,8 @@ source must supply the declared bytes. An unknown-length source ends at EOF.
 Call `Client.deinit` after the exchange returns. To stop an active exchange,
 request cancellation and wait for it to return before shutting down the client.
 The event loop checks cancellation and the absolute deadline between network
-operations and at callbacks. Each network poll has a 20 ms timeout. The caller
-must also honor the context during blocking callbacks. Exchange cleanup removes
+operations and at callbacks. Each network poll uses a timeout of at most 20 ms.
+The caller must also honor the context during blocking callbacks. Exchange cleanup removes
 the easy handle before freeing callback state. Client shutdown closes the pool.
 
 ## HTTP behavior and limits
