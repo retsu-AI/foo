@@ -156,22 +156,67 @@ fn sameStat(a: File.Stat, b: File.Stat) bool {
         a.ctime.nanoseconds == b.ctime.nanoseconds and a.permissions == b.permissions;
 }
 
+fn openCheckedFile(target: Target, op: foo.io.Context, mode: Dir.OpenFileOptions.Mode, original: File.Stat) Error!File {
+    const file = switch (builtin.os.tag) {
+        .linux, .macos => try openNonblocking(target, op, mode),
+        else => target.dir.openFile(op.io, target.name, .{
+            .mode = mode,
+            .allow_directory = false,
+            .follow_symlinks = false,
+        }) catch |err| return fileError(err),
+    };
+    errdefer file.close(op.io);
+    const stat = file.stat(op.io) catch |err| return fileError(err);
+    if (stat.kind == .directory) return error.UnsupportedTarget;
+    if (stat.kind != .file or !sameStat(original, stat)) return error.StaleFile;
+    return file;
+}
+
+fn openNonblocking(target: Target, op: foo.io.Context, mode: Dir.OpenFileOptions.Mode) Error!File {
+    const posix = std.posix;
+    const openat = if (posix.lfs64_abi) posix.system.openat64 else posix.system.openat;
+    const path = posix.toPosixPath(target.name) catch |err| return fileError(err);
+    const flags: posix.O = .{
+        .ACCMODE = switch (mode) {
+            .read_only => .RDONLY,
+            .write_only => .WRONLY,
+            .read_write => unreachable,
+        },
+        .CLOEXEC = true,
+        .NOCTTY = true,
+        .NOFOLLOW = true,
+        .NONBLOCK = true,
+    };
+    const permissions: posix.mode_t = 0;
+    while (true) {
+        try op.check();
+        op.io.checkCancel() catch return error.Cancelled;
+        const rc = openat(target.dir.handle, &path, flags, permissions);
+        switch (posix.errno(rc)) {
+            .SUCCESS => return .{ .handle = @intCast(rc), .flags = .{ .nonblocking = true } },
+            .INTR => continue,
+            .NOENT, .SRCH => return error.MissingFile,
+            .NXIO => return error.StaleFile,
+            .ISDIR, .NOTDIR, .LOOP => return error.UnsupportedTarget,
+            .ACCES, .PERM, .ROFS => return error.PermissionDenied,
+            .INVAL, .NAMETOOLONG, .ILSEQ => return error.InvalidInput,
+            .FBIG, .OVERFLOW, .NOSPC => return error.LimitExceeded,
+            else => return error.IoFailure,
+        }
+    }
+}
+
 fn snapshot(allocator: Allocator, op: foo.io.Context, target: Target, limit: usize) Error!?Snapshot {
     try op.check();
     const original = try targetStat(target, op) orelse return null;
     if (original.size > limit) return error.LimitExceeded;
-    const file = target.dir.openFile(op.io, target.name, .{
-        .allow_directory = false,
-        .follow_symlinks = false,
-    }) catch |err| switch (err) {
-        error.FileNotFound => return error.StaleFile,
-        else => return fileError(err),
+    const file = openCheckedFile(target, op, .read_only, original) catch |err| switch (err) {
+        error.MissingFile => return error.StaleFile,
+        else => return err,
     };
     defer file.close(op.io);
-    const opened = file.stat(op.io) catch |err| return fileError(err);
-    if (opened.kind != .file or !sameStat(original, opened)) return error.StaleFile;
 
-    const bytes = try allocator.alloc(u8, @intCast(opened.size));
+    const bytes = try allocator.alloc(u8, @intCast(original.size));
     var offset: usize = 0;
     while (offset < bytes.len) {
         try op.check();
@@ -182,7 +227,7 @@ fn snapshot(allocator: Allocator, op: foo.io.Context, target: Target, limit: usi
     }
     const finished = file.stat(op.io) catch |err| return fileError(err);
     const path_now = try targetStat(target, op) orelse return error.StaleFile;
-    if (!sameStat(opened, finished) or !sameStat(finished, path_now)) return error.StaleFile;
+    if (!sameStat(original, finished) or !sameStat(finished, path_now)) return error.StaleFile;
     try op.check();
     return .{ .stat = finished, .bytes = bytes, .digest = digest(bytes) };
 }
@@ -334,14 +379,8 @@ pub fn mutate(
     if (replacement.len > file_limit) return error.LimitExceeded;
     if (original) |entry| {
         if (builtin.os.tag != .windows and entry.stat.permissions.readOnly()) return error.PermissionDenied;
-        const writable = target.dir.openFile(op.io, target.name, .{
-            .mode = .write_only,
-            .allow_directory = false,
-            .follow_symlinks = false,
-        }) catch |err| return fileError(err);
-        defer writable.close(op.io);
-        const stat = writable.stat(op.io) catch |err| return fileError(err);
-        if (stat.kind != .file or !sameStat(entry.stat, stat)) return error.StaleFile;
+        const writable = try openCheckedFile(target, op, .write_only, entry.stat);
+        writable.close(op.io);
     }
 
     const sha256 = std.fmt.bytesToHex(digest(replacement), .lower);
@@ -383,6 +422,15 @@ pub fn mutate(
         if (!sameStat(entry.stat, now.stat) or !std.mem.eql(u8, &entry.digest, &now.digest))
             return error.StaleFile;
     } else if (current != null) return error.StaleFile;
+
+    const approved = openTarget(op, path) catch |err| switch (err) {
+        error.MissingFile, error.UnsupportedTarget => return error.StaleFile,
+        else => return err,
+    };
+    defer approved.dir.close(op.io);
+    const staged_parent = target.dir.stat(op.io) catch |err| return fileError(err);
+    const approved_parent = approved.dir.stat(op.io) catch |err| return fileError(err);
+    if (!sameStat(staged_parent, approved_parent)) return error.StaleFile;
 
     try op.check();
     if (original != null) {

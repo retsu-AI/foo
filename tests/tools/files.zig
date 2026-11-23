@@ -294,12 +294,37 @@ test "file and directory symbolic links are rejected" {
 
 const Interference = struct {
     threadlocal var active: ?*Fixture = null;
+    threadlocal var stats_until_pipe_swap: usize = 0;
+
+    extern "c" fn mkfifo(path: [*:0]const u8, mode: std.posix.mode_t) c_int;
 
     fn changeFile(userdata: ?*anyopaque, file: std.Io.File) std.Io.File.SyncError!void {
         try testing.io.vtable.fileSync(userdata, file);
         const fixture = active.?;
         active = null;
         fixture.seed("external change") catch return error.InputOutput;
+    }
+
+    fn moveParent(userdata: ?*anyopaque, file: std.Io.File) std.Io.File.SyncError!void {
+        try testing.io.vtable.fileSync(userdata, file);
+        const dir = active.?.tmp.dir;
+        active = null;
+        dir.rename("approved", dir, "moved", testing.io) catch return error.InputOutput;
+        dir.createDir(testing.io, "approved", .default_dir) catch return error.InputOutput;
+        dir.writeFile(testing.io, .{ .sub_path = "approved/" ++ name, .data = "other" }) catch return error.InputOutput;
+    }
+
+    fn swapPipeAfterStat(
+        userdata: ?*anyopaque,
+        dir: std.Io.Dir,
+        path: []const u8,
+        options: std.Io.Dir.StatFileOptions,
+    ) std.Io.Dir.StatFileError!std.Io.Dir.Stat {
+        const stat = try testing.io.vtable.dirStatFile(userdata, dir, path, options);
+        if (stats_until_pipe_swap == 0) return stat;
+        stats_until_pipe_swap -= 1;
+        if (stats_until_pipe_swap == 0) dir.rename("pipe", dir, path, testing.io) catch return error.Unexpected;
+        return stat;
     }
 
     fn cancelRename(_: ?*anyopaque, _: std.Io.Dir, _: []const u8, _: std.Io.Dir, _: []const u8) std.Io.Dir.RenameError!void {
@@ -325,6 +350,57 @@ test "an external write during preparation wins over a stale edit" {
     try expectRejected(try fixture.run(edit, op, output_limit), "Read it again");
     try testing.expect(Interference.active == null);
     try fixture.expectFile("external change");
+}
+
+test "a pipe substituted during file open is rejected without waiting for a peer" {
+    if (platform.os.tag != .linux and platform.os.tag != .macos) return error.SkipZigTest;
+    for ([_]tools.Kind{ .read, .write }) |kind| {
+        var fixture = try Fixture.init();
+        defer fixture.deinit();
+        try fixture.seed("original");
+        if (platform.os.tag == .linux and !platform.link_libc) {
+            const rc = std.os.linux.mknodat(fixture.tmp.dir.handle, "pipe", std.posix.S.IFIFO | 0o600, 0);
+            try testing.expectEqual(.SUCCESS, std.posix.errno(rc));
+        } else {
+            const fifo = try std.fmt.allocPrintSentinel(fixture.arena.allocator(), "{s}/pipe", .{fixture.cwd}, 0);
+            try testing.expectEqual(0, Interference.mkfifo(fifo, 0o600));
+        }
+
+        const prepared = if (kind == .read)
+            try fixture.prepare(.read, .{ .path = name })
+        else
+            try fixture.prepare(.write, .{ .path = name, .content = "replacement" });
+        var vtable = testing.io.vtable.*;
+        vtable.dirStatFile = Interference.swapPipeAfterStat;
+        Interference.stats_until_pipe_swap = if (kind == .read) 1 else 2;
+        var op = fixture.operation();
+        op.io.vtable = &vtable;
+        try expectRejected(try fixture.run(prepared, op, output_limit), "Read it again");
+        const stat = try fixture.tmp.dir.statFile(testing.io, name, .{ .follow_symlinks = false });
+        try testing.expectEqual(.named_pipe, stat.kind);
+    }
+}
+
+test "a renamed parent is rejected before replacing a file" {
+    if (platform.os.tag == .windows) return error.SkipZigTest;
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try fixture.tmp.dir.createDir(testing.io, "approved", .default_dir);
+    const path = "approved/" ++ name;
+    try fixture.tmp.dir.writeFile(testing.io, .{ .sub_path = path, .data = "original" });
+    const write = try fixture.prepare(.write, .{ .path = path, .content = "replacement" });
+    var vtable = testing.io.vtable.*;
+    vtable.fileSync = Interference.moveParent;
+    Interference.active = &fixture;
+    defer Interference.active = null;
+    var op = fixture.operation();
+    op.io.vtable = &vtable;
+    try expectRejected(try fixture.run(write, op, output_limit), "Read it again");
+    const allocator = fixture.arena.allocator();
+    const original = try fixture.tmp.dir.readFileAlloc(testing.io, "moved/" ++ name, allocator, .limited(file_limit));
+    try testing.expectEqualStrings("original", original);
+    const replacement = try fixture.tmp.dir.readFileAlloc(testing.io, path, allocator, .limited(file_limit));
+    try testing.expectEqualStrings("other", replacement);
 }
 
 test "cancellation distinguishes pre-commit and uncertain rename" {
