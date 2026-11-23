@@ -12,6 +12,7 @@ See [the shared contracts](../src/contracts/README.md) for implemented commands 
 | --- | --- |
 | `zig build test -Dmodule=core` | Integrator registration pending. Run the landed suite with the [direct Zig command](../src/core/README.md#verification). |
 | `zig build test -Dmodule=providers` | Integrator registration pending. Run the landed suite with the [direct Zig command](../tests/providers/README.md). |
+| `zig build test -Dmodule=session` | Integrator registration pending. Run the landed suite and native crash probe with the [session test command](../src/session/README.md#verification-and-integration). |
 | `zig build test -Dmodule=transport` | Run native HTTP and TLS loopback fixtures with the pinned transport profile |
 | `zig build test -Dmodule=wire` | Run the framing, JSON-RPC, and correlation fixtures |
 | `zig build check` | Check formatting, compile the executable, and run the contracts, transport, and wire suites |
@@ -68,7 +69,9 @@ Executable tool fixtures cover malformed JSON, missing results, duplicate result
 
 ## Persistence failure fixtures
 
-Persisted sessions use one writer, ordered semantic records, and a defined commit operation. Live display deltas do not imply durable state.
+Persisted sessions use one writer, ordered semantic records, and a defined commit operation. Display deltas remain provisional.
+
+F07 passed 15 session tests and five native process-crash scenarios on Linux x86_64 in Debug and ReleaseSafe. The suite and crash probe type-checked for macOS arm64 and Windows x86_64. Native filesystem qualification on those platforms remains open. [Session verification and commands](../src/session/README.md#verification-and-integration).
 
 - Kill the process before tool intent, after committed intent, after the external effect, and after committed outcome. A missing outcome after intent is uncertain; no automatic replay occurs.
 - Make a tool succeed and then fail the journal commit. Stop subsequent effects and report the uncertain durable outcome.

@@ -302,21 +302,22 @@
         "src/contracts/config.zig"
       ],
       "deliverables": [
-        "Optional in-memory sessions and versioned append-only linear local journal.",
-        "Single writer, bounded records/artifact references, explicit commit/durability behavior.",
-        "Crash recovery distinguishing incomplete tail, corruption, and unknown tool effects."
+        "Bounded in-memory sessions and a versioned append-only JSONL journal.",
+        "One writer, synchronized commits, and bounded session-relative artifacts.",
+        "Recovery repairs torn final frames, rejects corruption, and reports uncertain tool effects."
       ],
       "acceptance": [
-        "Short write, disk full, failed commit, concurrent open, torn tail, middle corruption, and resume-phase fixtures pass.",
-        "Committed events require successful configured persistence; provisional deltas are explicitly different.",
-        "Unknown effects are reported and never automatically replayed; no database/tree/goal ledger introduced."
+        "Linux fixtures cover short writes, disk full, sync failure, concurrent opens, torn tails, corrupt records, and recovery at five committed phases.",
+        "The core publishes committed events after the store acknowledges the record. Display deltas remain provisional.",
+        "Recovery reports unresolved call IDs for explicit reconciliation and never dispatches tools."
       ],
       "handoff": [
-        "Format examples, writer/durability rules, and recovery traces.",
-        "Exact failure-injection commands and results.",
-        "Storage-disabled behavior and artifact retention limits."
+        "Landed in PR #7 at 4200b0e. See src/session/README.md for format examples, durability rules, limits, and commands.",
+        "All 15 tests and five native process-crash scenarios passed on Linux x86_64 in Debug and ReleaseSafe.",
+        "The session suite and crash probe type-checked for macOS arm64 and Windows x86_64. Native filesystem qualification remains open.",
+        "F12 owns root test registration and production wiring."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1480",
         "uuid": "1ccc5f32-9848-4462-b820-2ed0ad3ce41c",
