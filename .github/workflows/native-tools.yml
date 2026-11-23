@@ -5,11 +5,13 @@ on:
       - 'src/platform/process/**'
       - 'src/tools/**'
       - 'src/codemode/**'
+      - 'src/mcp/**'
       - 'src/session/**'
       - 'src/contracts/**'
       - 'tests/platform-process/**'
       - 'tests/tools/**'
       - 'tests/codemode/**'
+      - 'tests/mcp/**'
       - 'tests/session/**'
       - 'build.zig'
       - 'build.zig.zon'
@@ -51,3 +53,8 @@ jobs:
         run: |
           zig build test -Dmodule=codemode --summary all
           zig build test -Dmodule=codemode -Doptimize=ReleaseSafe --summary all
+      - name: MCP fixtures
+        if: ${{ !cancelled() && steps.zig.outcome == 'success' }}
+        run: |
+          zig build test -Dmodule=mcp --summary all
+          zig build test -Dmodule=mcp -Doptimize=ReleaseSafe --summary all

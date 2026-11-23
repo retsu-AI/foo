@@ -16,6 +16,7 @@ The [successful native Nightly run](https://github.com/retsu-AI/foo/actions/runs
 | [Provider adapters](../src/providers/README.md) | Streaming codecs, tool replay, usage, and retry policy |
 | [Provider routes](../src/providers/routes.md) | Endpoints and credential settings for OpenAI, Anthropic, xAI, DeepSeek, LiteLLM, and Bedrock |
 | [Coding and executable tools](../src/tools/README.md) | Tool selection, argument and result schemas, permissions, and output limits |
+| [MCP client](../src/mcp/README.md) | Profile selection, stdio and HTTP connections, the run catalog, and context retrieval |
 | [Code Mode](../src/codemode/README.md) | JavaScript over enabled tools, limits, and nested journal records |
 | [Native process ownership](../src/platform/process/README.md) | Child lifecycle, cancellation, exit status, and platform test commands |
 | [Session store](../src/session/README.md) | Journal format, writer ownership, recovery, artifact limits, and test commands |
