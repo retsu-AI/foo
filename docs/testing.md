@@ -6,6 +6,8 @@ This is a proposed qualification specification for the runtime. F00 supplies com
 
 See [the shared contracts](../src/contracts/README.md) for implemented commands and their limits. F01 implements streaming HTTP and TLS with deterministic loopback fixtures. [Transport handoff](../src/transport/README.md). F02 adds wire fixtures and fuzz entrypoints. [Wire handoff](../src/wire/README.md). F03 passed 26 scripted core tests on Linux in Debug and ReleaseSafe. [Core verification](../src/core/README.md#verification). F04 passed 17 provider tests on Linux in Debug and ReleaseSafe and cross-compiled the suite for macOS arm64 and Windows x86_64. The local LiteLLM probe completed a signed tool continuation against a simulated Gemini upstream. Final native and hosted qualification depends on the integrated F12 release candidate. [Provider verification and commands](../tests/providers/README.md).
 
+F09 passed all 16 configuration fixtures on Linux in Debug and ReleaseSafe. The tests cover layer order, explicit files, provenance, settings validation, and redaction. [Configuration test commands](../tests/config/README.md).
+
 ## Build and test commands
 
 | Command | Purpose and current status |
@@ -13,6 +15,7 @@ See [the shared contracts](../src/contracts/README.md) for implemented commands 
 | `zig build test -Dmodule=core` | Integrator registration pending. Run the landed suite with the [direct Zig command](../src/core/README.md#verification). |
 | `zig build test -Dmodule=providers` | Integrator registration pending. Run the landed suite with the [direct Zig command](../tests/providers/README.md). |
 | `zig build test -Dmodule=session` | Integrator registration pending. Run the landed suite and native crash probe with the [session test command](../src/session/README.md#verification-and-integration). |
+| `zig build test -Dmodule=config` | Integrator registration pending. Run the landed suite with the [direct Zig command](../tests/config/README.md). |
 | `zig build test -Dmodule=transport` | Run native HTTP and TLS loopback fixtures with the pinned transport profile |
 | `zig build test -Dmodule=wire` | Run the framing, JSON-RPC, and correlation fixtures |
 | `zig build test -Dmodule=tools` | Run the coding and custom executable tool fixtures |

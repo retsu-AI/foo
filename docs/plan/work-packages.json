@@ -391,11 +391,11 @@
         "Complete schema and examples correspond to supported first-release behavior."
       ],
       "handoff": [
-        "Schema, redacted effective-config fixture, and provenance/override examples.",
-        "Exact parser/validation commands and outcomes.",
-        "CLI argument parsing remains with F10."
+        "Landed in PR #10 at 89522cc. See src/config/README.md for the JSON schema, examples, and redaction policy.",
+        "All 16 resolver tests passed on Linux in Debug and ReleaseSafe. See tests/config/README.md for the standalone test command.",
+        "F10 owns CLI flag parsing. F11 consumes the TUI settings. F12 owns root test registration and runtime wiring."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1482",
         "uuid": "9c864c23-bc0e-48cf-8c25-2b01c61409b9",
