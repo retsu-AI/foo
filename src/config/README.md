@@ -1,10 +1,10 @@
 # Configuration reference
 
-F09 resolves explicit JSON layers into the shared runtime settings and typed launch settings. It does not parse CLI arguments, start providers or processes, discover files, read environment variables, or create session directories. F10, F11, and F12 consume the same resolver.
+F09 resolves explicit JSON layers into shared runtime settings and typed launch settings. F10 turns CLI arguments into configuration layers. F11 consumes the launch settings, and F12 wires the result into providers, tools, and sessions.
 
 ## Library API
 
-`root.zig` imports the `foo` module. Its public entrypoints are:
+`root.zig` imports the `foo` module. It exports two public entrypoints.
 
 ```zig
 pub fn resolve(
@@ -19,11 +19,11 @@ pub fn effectiveJson(allocator: std.mem.Allocator, settings: Effective) Error![]
 
 `Input.cwd` is an absolute invocation directory. `Input.preset` is `none` by default or explicitly `coding`. `Input.layers` contains `Layer` records with a `foo.config.Source`, optional `location`, and either `.data.json` bytes or `.data.file` filename.
 
-Only `file`, `environment`, and `command_line` are accepted layer sources. Only a `file` layer can use `.data.file`. An environment layer is a JSON patch supplied by the caller after its own declared environment handling. This module never inspects ambient environment variables.
+Only `file`, `environment`, and `command_line` are accepted layer sources. Only a `file` layer can use `.data.file`. An environment layer is a JSON patch supplied by the caller after its own declared environment handling. Only caller-supplied environment patches take part in precedence.
 
 `Effective.runtime` is `foo.config.Resolved`. `Effective.launch` contains `process`, `session`, `tui`, and `custom_tools`. `Effective.prompt_files` lists normalized surviving prompt filenames. Strings and arrays in the result remain valid until the caller frees its arena. Use one caller-owned arena for each resolution and discard it after the final consumer finishes. A failed resolution can leave allocations in that arena.
 
-`resolve` clears the diagnostic before work. Schema, file, and limit failures include a setting `path`, `source`, `location`, and a typed `reason`. Diagnostics never include setting values. Syntax and duplicate-key errors use `$` because the JSON parser does not expose a reliable field path. Unsupported versions use `version`. Cancellation, deadlines, and allocation failure do not manufacture schema diagnostics.
+`resolve` clears the diagnostic before work. Schema, file, and limit failures include a setting `path`, `source`, `location`, and a typed `reason`. Diagnostics never include setting values. Syntax and duplicate-key errors use `$` because the JSON parser does not expose a reliable field path. Unsupported versions use `version`. Cancellation, deadline, and allocation errors return directly.
 
 ## Precedence and merging
 
@@ -41,13 +41,13 @@ Object fields merge individually for `model`, `limits`, `process`, `session`, `s
 
 Omitting a setting retains its earlier value. `[]` clears a list, `false` disables a boolean, and an empty prompt stays empty. Null is accepted only for `model.credential`, `session.directory`, and an MCP `revision`. Null clears the credential or session directory, or leaves MCP revision negotiation to F06.
 
-`runtime.provenance` records the winning source and location for every configurable scalar or atomic replacement value, including defaults. It does not retain overridden values. Changing a model family or endpoint origin clears inherited credentials and headers before applying explicit credentials and headers from that same layer. Origin compares scheme and host without case and treats omitted HTTP/HTTPS ports as 80/443. Changing only the path or query on the same origin retains authentication.
+`runtime.provenance` records the winning source and location for every configurable scalar or atomic replacement value, including defaults. Changing a model family or endpoint origin clears inherited credentials and headers before applying explicit credentials and headers from that same layer. Origin compares scheme and host without case and treats omitted HTTP/HTTPS ports as 80/443. Changing only the path or query on the same origin retains authentication.
 
-The neutral defaults contain an empty prompt, no selected tools, no custom tools, no MCP servers, no session directory, no inherited process environment, local backends, and denied tool permissions. The coding preset supplies `coding_prompt` from `root.zig` and selects `read`, `edit`, `write`, and `exec`. It reads no instruction files and does not choose a model, credentials, or permission policy.
+The neutral defaults contain an empty prompt, no selected tools, no custom tools, no MCP servers, no session directory, no inherited process environment, local backends, and denied tool permissions. The coding preset supplies `coding_prompt` from `root.zig` and selects `read`, `edit`, `write`, and `exec`. The caller supplies the model and any credentials or permission overrides. The preset uses the built-in prompt text.
 
 ## Profile schema
 
-The root is a JSON object. All settings are optional in an individual patch. The final configuration requires `model.family`, `model.endpoint`, and `model.id`. No profile includes or executable configuration helpers are supported.
+The root is a JSON object. All settings are optional in an individual patch. The final configuration requires `model.family`, `model.endpoint`, and `model.id`. File-backed layers accept static JSON from paths supplied by the caller.
 
 | Root key | Value | Default or behavior |
 | --- | --- | --- |
@@ -81,7 +81,7 @@ NUL is rejected in strings used by the schema. JSON text must be UTF-8. Integer 
 | `options` | JSON object, retained as `runtime.model.options_json` | `{}` |
 | `max_output_tokens` | Positive unsigned 32-bit integer | `4096` |
 
-Endpoints reject missing hosts, user information, fragments, whitespace, control bytes, backslashes, and port zero. Queries are accepted but hidden in effective output. The resolver does not add protocol paths or infer a provider from a model name. F04 owns the option allowlist and protocol-specific option validation. See [provider routes](../providers/routes.md) for endpoint and model selection.
+Endpoints reject missing hosts, user information, fragments, whitespace, control bytes, backslashes, and port zero. Queries are accepted but hidden in effective output. Choose the protocol family explicitly and supply the complete POST URL. F04 owns the option allowlist and protocol-specific option validation. See [provider routes](../providers/routes.md) for endpoint and model selection.
 
 Header entries have exactly `name` and `value`. Header names use HTTP token characters and must be unique without regard to case. Values are literal strings or `{"environment":"VARIABLE_NAME"}` references. Literal header values reject line breaks and control characters other than tab.
 
@@ -91,13 +91,13 @@ Environment entries have the same `name` and `value` shape. Names and referenced
 
 `system_prompt` accepts only `text` and `append_files`. Omitted members of this atomic object become `""` and `[]`. `append_files` is an ordered list of nonempty path strings. Replacing the object discards the earlier text and file list. Files are read only after all layers and other semantic validation succeed.
 
-The final prompt starts with `text`. Each file contributes its exact UTF-8 bytes. A newline separates two nonempty contributions. File contents are not parsed as instructions or configuration. Empty files add no separator. NUL and invalid UTF-8 are rejected.
+The final prompt starts with `text`. Each file contributes its exact UTF-8 bytes. A newline separates two nonempty contributions. File contents become literal prompt text. Empty files add no separator. NUL and invalid UTF-8 are rejected.
 
-`cwd`, prompt filenames, and `session.directory` resolve lexically against the directory containing their explicit configuration file. For inline `.data.json` with source `file`, `location`, when supplied, is that configuration filename. Other layers resolve paths against `Input.cwd`. A previously layered `cwd` never becomes a path base. `~`, environment variables, and glob syntax are not expanded. No existence check runs for `cwd` or a session directory.
+`cwd`, prompt filenames, and `session.directory` resolve lexically against the directory containing their explicit configuration file. For inline `.data.json` with source `file`, `location`, when supplied, is that configuration filename. Other layers resolve paths against `Input.cwd`. The invocation or declaring file directory anchors each path. The resolver takes `~`, environment variables, and glob syntax literally. The frontend opens working and session directories during setup.
 
-On Linux, an invocation directory of `/work` and an explicit file `/settings/profile.json` resolve `"cwd":"../project"` to `/project` and `"append_files":["rules.txt"]` to `/settings/rules.txt`. On Windows, `Input.cwd` can be `C:\\work`; a profile at `C:\\settings\\profile.json` resolves `"cwd":"..\\project"` to `C:\\project`. JSON requires escaped backslashes. Path syntax follows the compilation target. A Windows path is not interpreted as an absolute Windows path by a Linux build.
+On Linux, an invocation directory of `/work` and an explicit file `/settings/profile.json` resolve `"cwd":"../project"` to `/project` and `"append_files":["rules.txt"]` to `/settings/rules.txt`. On Windows, `Input.cwd` can be `C:\\work`; a profile at `C:\\settings\\profile.json` resolves `"cwd":"..\\project"` to `C:\\project`. JSON requires escaped backslashes. Path syntax follows the compilation target. Use Windows path syntax on Windows and POSIX path syntax on Linux and macOS.
 
-File reads use ordinary local regular files. The resolver checks file type and size before opening and again after opening, then checks cancellation and byte limits between bounded reads. It follows explicit symlinks. Lexical resolution does not resolve symlink targets. These checks are not a filesystem sandbox and do not prevent hostile path replacement between filesystem calls. Cancellation cannot promise an immediate return from a stalled filesystem syscall.
+File reads use ordinary local regular files. The resolver checks file type and size before opening and again after opening, then checks cancellation and byte limits between bounded reads. It follows explicit symlinks. Lexical resolution does not resolve symlink targets. Callers choose which files they trust. Paths can change between filesystem calls, and cancellation checks run between calls.
 
 ### MCP servers
 
@@ -108,7 +108,7 @@ Each entry requires unique nonempty `id` and one `transport` object. `revision` 
 - `stdio` requires `argv` and accepts `environment`, defaulting to `[]`.
 - `http` requires `url` and accepts `headers`, defaulting to `[]`.
 
-`argv` must have a nonempty executable at index zero. Later arguments can be empty. No argument may contain NUL. Arguments are kept as supplied and never interpreted by a shell. MCP URLs follow the same validation as model endpoints. No discovery or connection occurs during configuration resolution. Revision-specific protocol behavior remains F06's responsibility.
+`argv` must have a nonempty executable at index zero. Later arguments can be empty. No argument may contain NUL. Arguments are kept as supplied and never interpreted by a shell. MCP URLs follow the same validation as model endpoints. F06 owns discovery, connections, and revision-specific protocol behavior.
 
 ### Custom tools
 
@@ -116,7 +116,7 @@ Each entry requires `name`, `description`, `schema`, and `argv`. Optional fields
 
 Names match `[A-Za-z0-9_-]{1,64}`, must be unique, and cannot collide with the built-in names `read`, `edit`, `write`, or `exec`. Descriptions may be empty. `schema` must be a JSON object and becomes `CustomTool.schema_json`; F05 validates the supported schema semantics. `argv` follows the MCP rules. Environment defaults to `[]`, inheritance to `false`, and timeout to `30000` positive unsigned 64-bit milliseconds.
 
-The list becomes `launch.custom_tools`. F12 maps these values into F05 descriptors and resolves explicit environment references. Selecting a tool is a separate decision in `enabled_tools`. The resolver neither starts executables nor expands arguments, shells, paths, or secrets. A shell requires an explicit executable such as `sh` in `argv`.
+The list becomes `launch.custom_tools`. F12 maps these values into F05 descriptors and resolves explicit environment references. Selecting a tool is a separate decision in `enabled_tools`. The resolver preserves explicit arguments and environment references for the host. For shell execution, declare an executable such as `sh` in `argv`.
 
 ### Runtime limits
 
@@ -162,7 +162,7 @@ F12 maps these controls into F05's built-in and registry options. Custom-tool an
 | `max_artifact_bytes` | Unsigned 64-bit | 67108864 |
 | `max_artifacts` | `usize` | 1024 |
 
-The host creates or opens the directory explicitly and passes it to F07. Resolution never opens a journal or resumes a session.
+The host creates or opens the directory explicitly and passes it to F07. Journal access and resume happen in the host.
 
 ### TUI settings
 
@@ -174,12 +174,12 @@ The host creates or opens the directory explicitly and passes it to F07. Resolut
 
 Configuration limits are fixed at 64 layers, 1 MiB per JSON layer, 8 MiB total JSON, 64 open JSON containers, 1 MiB final prompt, and 16 MiB serialized effective output. Limits apply before parsing or retaining oversized file contents. Configuration allocation is proportional to bounded JSON trees and surviving prompt data. `operation.check()` runs before work, between layers, between file reads, and before return.
 
-`effectiveJson` emits a diagnostic JSON object with `runtime`, `launch`, and `prompt_files`. It retains `runtime.provenance` and uses the shared contract's union representation. The result is not a reloadable profile. It replaces all literal header and environment values with `<redacted>`, keeps environment reference names, hides endpoint and MCP URL queries, and replaces every nonempty model-options object with a redaction marker. Runtime settings are unchanged. Other values, including prompts, command arguments, descriptions, paths, and schemas, remain visible; credential values belong in declared credential or environment fields.
+`effectiveJson` emits a diagnostic JSON object with `runtime`, `launch`, and `prompt_files`. It retains `runtime.provenance` and uses the shared contract's union representation. Use the result for inspection. Load settings with the profile schema above. It replaces all literal header and environment values with `<redacted>`, keeps environment reference names, hides endpoint and MCP URL queries, and replaces every nonempty model-options object with a redaction marker. Other values, including prompts, command arguments, descriptions, paths, and schemas, remain visible; credential values belong in declared credential or environment fields.
 
-Output size is counted before allocating the exact result buffer. The serializer has no I/O or environment access. A failed output bound returns `LimitExceeded`.
+Output size is counted before allocating the exact result buffer. The serializer uses only the supplied settings. A failed output bound returns `LimitExceeded`.
 
 ## Examples and verification
 
 [Minimal profile](examples/minimal.json) contains only the explicit provider selection. [Customized profile](examples/customized.json) includes prompt, tool, MCP, process, session, and TUI settings. The examples use fixture hosts and no real credentials. [The acceptance suite](../../tests/config/README.md) documents its direct Zig command and includes a redacted effective fixture.
 
-Root test registration and frontend wiring remain F12 work. The configuration module does not claim that config check validates provider-specific options or custom tool schema semantics. Those adapters must run their own validation before any effects.
+Root test registration and frontend wiring remain F12 work. Provider adapters validate model options before sending a request. The tool registry validates executable tool schemas before admitting a tool.
