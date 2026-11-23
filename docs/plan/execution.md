@@ -73,7 +73,7 @@ The [work-package board](index.html#packages) computes availability using the ma
 
 ## Build commands and remaining targets
 
-Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` runs the `contracts`, `transport`, `wire`, `tools`, `platform-process`, and `codemode` suites. The core, provider, session, and configuration suites use package-local commands pending registration. The qualification targets remain planned. An empty suite must never count as acceptance.
+Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` runs the `contracts`, `transport`, `wire`, `tools`, and `platform-process` suites. Add `-Dcodemode=true` to include Code Mode. The core, provider, session, and configuration suites use package-local commands pending registration. The qualification targets remain planned. An empty suite must never count as acceptance.
 
 | Command | Owner and current status |
 | --- | --- |

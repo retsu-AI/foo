@@ -69,15 +69,15 @@ pub const Registry = struct {
             try budget.take(tool_name.len +| declaration.spec.description.len +| declaration.spec.schema_json.len);
             tool_spec.* = declaration.spec;
         }
-        var json: std.Io.Writer.Allocating = .init(allocator);
-        defer json.deinit();
-        std.json.Stringify.value(tool_specs, .{}, &json.writer) catch return error.OutOfMemory;
-        if (json.written().len > options.run_limits.catalog_bytes) return error.LimitExceeded;
+        const catalog_buffer = try allocator.alloc(u8, @min(options.run_limits.catalog_bytes, budget.used *| 6 +| 128));
+        defer allocator.free(catalog_buffer);
+        var json = std.Io.Writer.fixed(catalog_buffer);
+        std.json.Stringify.value(tool_specs, .{}, &json) catch return error.LimitExceeded;
         return .{
             .allocator = allocator,
             .base = base,
             .declarations = declarations,
-            .catalog_json = try json.toOwnedSlice(),
+            .catalog_json = try allocator.dupe(u8, json.buffered()),
             .names = names,
             .options = options,
         };
@@ -256,6 +256,10 @@ const Evaluation = struct {
             self.stop = .{ .message = "Nested tool arguments exceed the JSON limits" };
             return 1;
         };
+        if (std.mem.trimStart(u8, args.slice(), " \t\r\n")[0] != '{') {
+            self.stop = .{ .message = "Nested tool arguments must be a JSON object" };
+            return 1;
+        }
         const ordinal = self.child_count + 1;
         const id = childId(self.parent_id, ordinal);
         const declaration = owner.declarations[index];

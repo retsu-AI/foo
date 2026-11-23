@@ -7,6 +7,7 @@
         .quickjs = .{
             .url = "https://codeload.github.com/quickjs-ng/quickjs/tar.gz/refs/tags/v0.18.0",
             .hash = "N-V-__8AAEonRQDLGmzE5rsLWtgt8tvcL5ZUZSQFr0vq4ree",
+            .lazy = true,
         },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src", "tests", ".zig-version" },

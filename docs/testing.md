@@ -21,7 +21,7 @@ F09 passed all 16 configuration fixtures on Linux in Debug and ReleaseSafe. The 
 | `zig build test -Dmodule=tools` | Run the coding and custom executable tool fixtures |
 | `zig build test -Dmodule=codemode` | Run the JavaScript runtime, capability, and real file composition checks |
 | `zig build test -Dmodule=platform-process` | Run the native subprocess and cleanup fixtures |
-| `zig build check` | Check formatting, compile the executable, and run the contracts, transport, wire, tools, platform-process, and Code Mode suites |
+| `zig build check` | Check formatting, compile the executable, and run the contracts, transport, wire, tools, and platform-process suites. Add `-Dcodemode=true` for Code Mode |
 | `zig build check-bootstrap` | Check formatting, compile the executable, and run contract tests without the transport profile |
 | `zig build acceptance` | Unavailable; planned native offline CLI, process, journal, MCP, ACP, and terminal scenarios |
 | `zig build acceptance-live` | Unavailable; planned provider/server/editor interoperability with an allowlist and spend ceiling |

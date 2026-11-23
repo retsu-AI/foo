@@ -1,6 +1,6 @@
 # Code Mode
 
-Code Mode is an opt-in `foo.tool.Registry` decorator. Give it the registry the run already uses. The resulting catalog includes the direct tools and one extra tool named `codemode`.
+Code Mode is an opt-in `foo.tool.Registry` decorator. Build or depend on Foo with `-Dcodemode=true` to expose the optional module. Give the decorator the registry the run already uses. The resulting catalog includes the direct tools and one extra tool named `codemode`.
 
 ```zig
 const codemode = @import("foo-codemode");

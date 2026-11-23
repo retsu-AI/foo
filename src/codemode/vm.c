@@ -242,18 +242,17 @@ static JSValue compile_body(JSContext *ctx, foo_vm_bytes source)
                        JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_STRICT);
     }
 
-    // Pass capabilities only to the function whose source spans the whole body.
     if (JS_IsAsyncFunction(body)) {
         JSValue actual = JS_Call(ctx, to_string, body, 0, NULL);
         size_t actual_len;
         const char *actual_bytes = JS_IsException(actual)
             ? NULL
             : JS_ToCStringLen(ctx, &actual_len, actual);
-        bool matches = actual_bytes != NULL && actual_len == length - 2 &&
+        bool is_complete_body = actual_bytes != NULL && actual_len == length - 2 &&
             memcmp(actual_bytes, wrapped + 1, actual_len) == 0;
         JS_FreeCString(ctx, actual_bytes);
         JS_FreeValue(ctx, actual);
-        if (!matches) {
+        if (!is_complete_body) {
             JS_FreeValue(ctx, body);
             body = JS_HasException(ctx)
                 ? JS_EXCEPTION

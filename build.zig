@@ -71,8 +71,9 @@ pub fn build(b: *std.Build) void {
         if (builtin.os.tag == .windows) addTransportPath(b, run_wire_tests, prefix);
     }
 
-    const native = addProcessSuites(b, foo, support, target, optimize);
     const selected = b.option([]const u8, "module", "Test module") orelse "contracts";
+    const include_codemode = b.option(bool, "codemode", "Build the optional Code Mode module and include it in check") orelse false;
+    const native = addProcessSuites(b, foo, support, target, optimize, include_codemode or std.mem.eql(u8, selected, "codemode"));
     const module_names = [_][]const u8{
         "contracts",   "transport", "wire", "core",   "providers", "tools", "platform-process",
         "mcp",         "session",   "acp",  "config", "cli",       "tui",   "platform-terminal",
@@ -94,7 +95,7 @@ pub fn build(b: *std.Build) void {
     } else if (std.mem.eql(u8, selected, "platform-process")) {
         test_step.dependOn(native.process);
     } else if (std.mem.eql(u8, selected, "codemode")) {
-        test_step.dependOn(native.codemode);
+        if (native.codemode) |code_tests| test_step.dependOn(code_tests);
     } else if (!std.mem.eql(u8, selected, "contracts")) {
         test_step.dependOn(&b.addFail(b.fmt("Module '{s}' is unavailable: its implementation and test root have not landed", .{selected})).step);
     } else {
@@ -117,7 +118,7 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&run_wire_tests.step);
     check.dependOn(native.tools);
     check.dependOn(native.process);
-    check.dependOn(native.codemode);
+    if (native.codemode) |code_tests| check.dependOn(code_tests);
     for ([_][]const u8{ "acceptance", "acceptance-live", "bench", "release" }) |name| {
         b.step(name, "Reserved; unavailable until the owning work package lands").dependOn(
             &b.addFail(b.fmt("'{s}' is unavailable in the contracts bootstrap", .{name})).step,
@@ -131,7 +132,8 @@ fn addProcessSuites(
     support: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.Optimize,
-) struct { tools: *std.Build.Step, process: *std.Build.Step, codemode: *std.Build.Step } {
+    include_codemode: bool,
+) struct { tools: *std.Build.Step, process: *std.Build.Step, codemode: ?*std.Build.Step } {
     const use_guardian = target.result.os.tag == .linux or target.result.os.tag == .macos;
     const process = b.addModule("foo-process", .{
         .root_source_file = b.path("src/platform/process/root.zig"),
@@ -196,7 +198,7 @@ fn addProcessSuites(
     return .{
         .tools = &b.addRunArtifact(suite).step,
         .process = &fixtures.step,
-        .codemode = addCodeModeSuite(b, foo, tools, support, target, optimize),
+        .codemode = if (include_codemode) addCodeModeSuite(b, foo, tools, target, optimize) else null,
     };
 }
 
@@ -204,15 +206,14 @@ fn addCodeModeSuite(
     b: *std.Build,
     foo: *std.Build.Module,
     tools: *std.Build.Module,
-    support: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.Optimize,
-) *std.Build.Step {
+) ?*std.Build.Step {
     const os = target.result.os.tag;
     if (os != .linux and os != .macos and os != .windows)
         return &b.addFail("Code Mode supports Linux, macOS, and Windows").step;
 
-    const interpreter = b.dependency("quickjs", .{});
+    const interpreter = b.lazyDependency("quickjs", .{}) orelse return null;
     const codemode = b.addModule("foo-codemode", .{
         .root_source_file = b.path("src/codemode/root.zig"),
         .target = target,
@@ -256,7 +257,6 @@ fn addCodeModeSuite(
             .{ .name = "tools", .module = tools },
             .{ .name = "session", .module = session },
             .{ .name = "core", .module = core },
-            .{ .name = "support", .module = support },
         },
     }) });
     return &b.addRunArtifact(suite).step;

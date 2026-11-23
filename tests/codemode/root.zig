@@ -129,6 +129,17 @@ test "denial and explicit absence reach no underlying effects" {
     try testing.expectEqual(@as(usize, 0), f.effects);
 }
 
+test "non-object nested arguments reach no permissive backend" {
+    var f: Fixture = .{};
+    defer f.deinit();
+    var mode = try codemode.Registry.init(testing.allocator, f.backend(&.{demo}), .{ .generation = 1 });
+    defer mode.deinit();
+    const result = try f.script(&mode, "try { await tools.invoke([]); } catch {} await tools.invoke({});");
+    try testing.expectEqual(.failure, result.status);
+    try testing.expectEqual(.not_started, result.effect);
+    try testing.expectEqual(@as(usize, 0), f.effects);
+}
+
 test "outer, nested, and ordinary calls share a bounded run budget" {
     var f: Fixture = .{};
     defer f.deinit();
