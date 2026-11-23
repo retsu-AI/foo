@@ -295,6 +295,7 @@ fn curlResult(result: curl.CURLcode) io.Error!void {
         curl.CURLE_OK => {},
         curl.CURLE_OPERATION_TIMEDOUT => error.DeadlineExceeded,
         curl.CURLE_OUT_OF_MEMORY => error.OutOfMemory,
+        curl.CURLE_TOO_LARGE, curl.CURLE_FILESIZE_EXCEEDED => error.LimitExceeded,
         curl.CURLE_UNSUPPORTED_PROTOCOL, curl.CURLE_URL_MALFORMAT => error.InvalidInput,
         curl.CURLE_NOT_BUILT_IN, curl.CURLE_UNKNOWN_OPTION => error.Unavailable,
         curl.CURLE_COULDNT_CONNECT, curl.CURLE_COULDNT_RESOLVE_HOST, curl.CURLE_COULDNT_RESOLVE_PROXY, curl.CURLE_PARTIAL_FILE, curl.CURLE_GOT_NOTHING, curl.CURLE_SEND_ERROR, curl.CURLE_RECV_ERROR, curl.CURLE_SEND_FAIL_REWIND => error.Disconnected,
