@@ -305,6 +305,10 @@ const Interference = struct {
     fn cancelRename(_: ?*anyopaque, _: std.Io.Dir, _: []const u8, _: std.Io.Dir, _: []const u8) std.Io.Dir.RenameError!void {
         return error.Canceled;
     }
+
+    fn cancelWait(_: ?*anyopaque, _: std.Io.Timeout) std.Io.Cancelable!void {
+        return error.Canceled;
+    }
 };
 
 test "an external write during preparation wins over a stale edit" {
@@ -342,5 +346,22 @@ test "cancellation distinguishes pre-commit and uncertain rename" {
     const before_contact = try fixture.run(write, op, output_limit);
     try testing.expectEqual(.cancelled, before_contact.status);
     try testing.expectEqual(.not_started, before_contact.effect);
+    try fixture.expectFile("original");
+}
+
+test "cancellation while another writer holds the lock leaves the file intact" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try fixture.seed("original");
+    const write = try fixture.prepare(.write, .{ .path = name, .content = "updated" });
+    try testing.expect(fixture.writer_lock.tryLock());
+    defer fixture.writer_lock.unlock(testing.io);
+    var vtable = testing.io.vtable.*;
+    vtable.sleep = Interference.cancelWait;
+    var op = fixture.operation();
+    op.io.vtable = &vtable;
+    const result = try fixture.run(write, op, output_limit);
+    try testing.expectEqual(.cancelled, result.status);
+    try testing.expectEqual(.not_started, result.effect);
     try fixture.expectFile("original");
 }
