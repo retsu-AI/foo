@@ -17,6 +17,8 @@ F09 passed all 16 configuration fixtures on Linux in Debug and ReleaseSafe. The 
 | `zig build test -Dmodule=session` | Integrator registration pending. Run the landed suite and native crash probe with the [session test command](../src/session/README.md#verification-and-integration). |
 | `zig build test -Dmodule=acp` | Integrator registration pending. Run the [native ACP pipe suite](../tests/acp/README.md). |
 | `zig build test -Dmodule=config` | Integrator registration pending. Run the landed suite with the [direct Zig command](../tests/config/README.md). |
+| `zig build test -Dmodule=tui` | Integrator registration pending. Run the [native TUI fixtures](../tests/tui/README.md). |
+| `zig build test -Dmodule=platform-terminal` | Integrator registration pending. The [native terminal driver](../tests/tui/README.md) includes direct backend and TUI probes. |
 | `zig build test -Dmodule=cli` | Integrator registration pending. Run the landed [real-pipe CLI suite](../src/cli/README.md#integration-and-verification). |
 | `zig build test -Dmodule=transport` | Run native HTTP and TLS loopback fixtures with the pinned transport profile |
 | `zig build test -Dmodule=wire` | Run the framing, JSON-RPC, and correlation fixtures |

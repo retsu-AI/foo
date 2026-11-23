@@ -475,11 +475,11 @@
         "No dashboard, widget platform, image protocols, theme marketplace, or duplicate execution logic."
       ],
       "handoff": [
-        "Supported terminal assumptions, frame/input fixtures, exact commands/results.",
-        "Render-byte and input-latency measurements with method and host identity.",
-        "Manual native scenarios awaiting final F13 qualification."
+        "Native PTY and ConPTY fixtures run on all three platforms. See tests/tui/README.md for commands and frame captures.",
+        "The native fixture records input-to-output latency and render bytes with platform, sample count, and dimensions.",
+        "F12 wires the production command and registers the modules. F13 qualifies the integrated terminal experience."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1484",
         "uuid": "8dd96d01-497f-46a0-84b0-6d7ed63f218c",
