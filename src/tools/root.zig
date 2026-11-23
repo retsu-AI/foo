@@ -3,8 +3,11 @@ const foo = @import("foo");
 const Schema = @import("schema.zig").Schema;
 
 pub const exec = @import("exec.zig");
+pub const builtin_tools = @import("builtin.zig");
+pub const files = @import("files.zig");
 
 pub const backend = "executable";
+pub const coding_preset: []const []const u8 = &.{ "read", "edit", "write", "exec" };
 
 pub const Descriptor = struct {
     name: []const u8,
@@ -24,15 +27,30 @@ pub const Options = struct {
     permissions: ?foo.host.PermissionHandler = null,
     cleanup_ms: u64 = 2_000,
     spool: ?exec.Spool = null,
+    builtins: ?BuiltinOptions = null,
+};
+
+pub const BuiltinOptions = struct {
+    file_bytes: usize = 8 * 1024 * 1024,
+    environment: []const foo.io.Environment = &.{},
+    inherit_environment: bool = false,
+    timeout_ms: u64 = 30_000,
 };
 
 pub const Registry = struct {
-    const Entry = struct {
-        schema: Schema,
+    const Executable = struct {
         argv: []const []const u8,
         environment: []const foo.io.Environment,
         inherit_environment: bool,
         timeout_ms: u64,
+    };
+    const Action = union(enum) {
+        executable: Executable,
+        builtin: builtin_tools.Kind,
+    };
+    const Entry = struct {
+        schema: Schema,
+        action: Action,
         revoked: std.atomic.Value(bool) = .init(false),
     };
     const NameIndex = std.StringHashMapUnmanaged(usize);
@@ -45,6 +63,8 @@ pub const Registry = struct {
     limits: foo.config.Limits,
     permission_mode: foo.config.PermissionMode,
     options: Options,
+    writer_lock: std.Io.Mutex = .init,
+    active_commands: std.atomic.Value(usize) = .init(0),
     next_operation_id: std.atomic.Value(u64) = .init(1),
 
     pub fn init(
@@ -91,36 +111,49 @@ pub const Registry = struct {
 
         var budget: foo.io.Budget = .{ .limit = limits.catalog_bytes };
         for (selected, declarations, entries) |maybe_descriptor, *decl, *entry| {
-            const descriptor = maybe_descriptor orelse return error.InvalidInput;
-            try budget.take(@sizeOf(foo.tool.Declaration) +| backend.len +| (decl.spec.name.len *| 2) +|
-                descriptor.description.len +| descriptor.schema_json.len);
-            try validateDescriptor(descriptor);
+            const kind = if (options.builtins != null) std.meta.stringToEnum(builtin_tools.Kind, decl.spec.name) else null;
+            if (kind != null and maybe_descriptor != null) return error.InvalidInput;
+            const action: Action = if (kind) |builtin_kind| builtins: {
+                if (builtin_kind == .exec) {
+                    if (settings.process_backend != .local) return error.Unavailable;
+                } else if (settings.files_backend != .local) return error.Unavailable;
+                decl.identity.backend = "builtin";
+                decl.spec = builtin_tools.spec(builtin_kind);
+                break :builtins .{ .builtin = builtin_kind };
+            } else configured: {
+                const descriptor = maybe_descriptor orelse return error.InvalidInput;
+                if (settings.process_backend != .local) return error.Unavailable;
+                try validateDescriptor(descriptor);
+                try chargeCommand(&budget, descriptor.argv, descriptor.environment);
+                decl.spec.description = try owned.dupe(u8, descriptor.description);
+                decl.spec.schema_json = try owned.dupe(u8, descriptor.schema_json);
+                const argv = try owned.alloc([]const u8, descriptor.argv.len);
+                for (descriptor.argv, argv) |arg, *copy| copy.* = try owned.dupe(u8, arg);
+                break :configured .{ .executable = .{
+                    .argv = argv,
+                    .environment = try copyEnvironment(owned, descriptor.environment),
+                    .inherit_environment = descriptor.inherit_environment,
+                    .timeout_ms = descriptor.timeout_ms,
+                } };
+            };
+            try budget.take(@sizeOf(foo.tool.Declaration) +| decl.identity.backend.len +|
+                (decl.spec.name.len *| 2) +| decl.spec.description.len +| decl.spec.schema_json.len);
             var schema_scratch = std.heap.ArenaAllocator.init(allocator);
             defer schema_scratch.deinit();
-            const schema = try Schema.compile(owned, schema_scratch.allocator(), descriptor.schema_json, .{
+            const schema = try Schema.compile(owned, schema_scratch.allocator(), decl.spec.schema_json, .{
                 .max_bytes = limits.catalog_bytes,
                 .max_depth = limits.json_depth,
             });
-            decl.spec.description = try owned.dupe(u8, descriptor.description);
-            decl.spec.schema_json = try owned.dupe(u8, descriptor.schema_json);
-
-            const argv = try owned.alloc([]const u8, descriptor.argv.len);
-            for (descriptor.argv, argv) |arg, *copy| copy.* = try owned.dupe(u8, arg);
-            const environment = try owned.alloc(foo.io.Environment, descriptor.environment.len);
-            for (descriptor.environment, environment) |item, *copy| copy.* = .{
-                .name = try owned.dupe(u8, item.name),
-                .value = try owned.dupe(u8, item.value),
-            };
-            entry.* = .{
-                .schema = schema,
-                .argv = argv,
-                .environment = environment,
-                .inherit_environment = descriptor.inherit_environment,
-                .timeout_ms = descriptor.timeout_ms,
-            };
+            entry.* = .{ .schema = schema, .action = action };
         }
 
         const cwd = try owned.dupe(u8, settings.cwd);
+        var owned_options = options;
+        if (owned_options.builtins) |*profile| {
+            if (profile.file_bytes == 0 or profile.timeout_ms == 0 or !files.absolute(cwd)) return error.InvalidInput;
+            try chargeCommand(&budget, &.{}, profile.environment);
+            profile.environment = try copyEnvironment(owned, profile.environment);
+        }
         return .{
             .arena = arena,
             .declarations = declarations,
@@ -129,7 +162,7 @@ pub const Registry = struct {
             .cwd = cwd,
             .limits = limits,
             .permission_mode = settings.permissions,
-            .options = options,
+            .options = owned_options,
         };
     }
 
@@ -187,6 +220,14 @@ pub const Registry = struct {
         operation.check() catch
             return self.rejected(allocator, call.id, .cancelled, "Tool cancelled before dispatch");
 
+        var scratch = std.heap.ArenaAllocator.init(allocator);
+        defer scratch.deinit();
+        const prepared = switch (entry.action) {
+            .executable => null,
+            .builtin => |kind| builtin_tools.prepare(kind, scratch.allocator(), self.cwd, call.arguments_json, self.options.builtins.?.file_bytes) catch |err|
+                return self.rejected(allocator, call.id, .failure, @errorName(err)),
+        };
+        const target = if (prepared) |builtin_call| builtin_call.target() else entry.action.executable.argv[0];
         switch (self.permission_mode) {
             .allow => {},
             .deny => return self.rejected(allocator, call.id, .denied, "Tool permission denied"),
@@ -198,7 +239,7 @@ pub const Registry = struct {
                     .run = self.options.run,
                     .operation_id = self.next_operation_id.fetchAdd(1, .monotonic),
                     .invocation = .{ .declaration = declaration, .call = call },
-                    .targets = &.{entry.argv[0]},
+                    .targets = &.{target},
                 }) catch |err| return switch (err) {
                     error.Cancelled, error.DeadlineExceeded => self.rejected(allocator, call.id, .cancelled, "Tool permission request cancelled"),
                     else => self.rejected(allocator, call.id, .denied, "Tool permission could not be obtained"),
@@ -215,16 +256,42 @@ pub const Registry = struct {
         operation.check() catch
             return self.rejected(allocator, call.id, .cancelled, "Tool cancelled before dispatch");
 
-        return exec.run(allocator, operation, call.id, .{ .argv = entry.argv, .input = call.arguments_json }, .{
+        const starts_process = switch (entry.action) {
+            .executable => true,
+            .builtin => |kind| kind == .exec,
+        };
+        if (starts_process and !self.admitCommand())
+            return self.rejected(allocator, call.id, .failure, "Active command limit reached");
+        defer if (starts_process) {
+            _ = self.active_commands.fetchSub(1, .release);
+        };
+        var execution: exec.Options = .{
             .spawner = self.options.spawner,
             .cwd = self.cwd,
-            .environment = entry.environment,
-            .inherit_environment = entry.inherit_environment,
-            .timeout_ms = entry.timeout_ms,
             .cleanup_ms = self.options.cleanup_ms,
             .output_bytes = self.limits.tool_output_bytes,
             .spool = self.options.spool,
-        });
+        };
+        if (prepared) |builtin_call| {
+            const profile = self.options.builtins.?;
+            execution.environment = profile.environment;
+            execution.inherit_environment = profile.inherit_environment;
+            execution.timeout_ms = profile.timeout_ms;
+            return builtin_call.run(allocator, scratch.allocator(), operation, call.id, profile.file_bytes, execution.output_bytes, &self.writer_lock, execution);
+        }
+        const command = entry.action.executable;
+        execution.environment = command.environment;
+        execution.inherit_environment = command.inherit_environment;
+        execution.timeout_ms = command.timeout_ms;
+        return exec.run(allocator, operation, call.id, .{ .argv = command.argv, .input = call.arguments_json }, execution);
+    }
+
+    fn admitCommand(self: *Registry) bool {
+        var active = self.active_commands.load(.acquire);
+        while (active < self.limits.active_commands) {
+            active = self.active_commands.cmpxchgWeak(active, active + 1, .acq_rel, .acquire) orelse return true;
+        }
+        return false;
     }
 
     fn rejected(self: *const Registry, allocator: std.mem.Allocator, call_id: []const u8, status: foo.tool.Status, message: []const u8) foo.io.Error!foo.tool.Result {
@@ -252,10 +319,24 @@ fn validateDescriptor(descriptor: Descriptor) foo.io.Error!void {
     if (descriptor.argv.len == 0 or descriptor.argv[0].len == 0 or descriptor.timeout_ms == 0 or
         !std.unicode.utf8ValidateSlice(descriptor.description)) return error.InvalidInput;
     for (descriptor.argv) |arg| if (containsNul(arg)) return error.InvalidInput;
-    for (descriptor.environment) |item| {
+}
+
+fn chargeCommand(budget: *foo.io.Budget, argv: []const []const u8, environment: []const foo.io.Environment) foo.io.Error!void {
+    for (argv) |arg| try budget.take(@sizeOf([]const u8) +| arg.len);
+    for (environment) |item| {
         if (item.name.len == 0 or containsNul(item.name) or containsNul(item.value) or
             std.mem.indexOfScalar(u8, item.name, '=') != null) return error.InvalidInput;
+        try budget.take(@sizeOf(foo.io.Environment) +| item.name.len +| item.value.len);
     }
+}
+
+fn copyEnvironment(allocator: std.mem.Allocator, source: []const foo.io.Environment) error{OutOfMemory}![]const foo.io.Environment {
+    const environment = try allocator.alloc(foo.io.Environment, source.len);
+    for (source, environment) |item, *copy| copy.* = .{
+        .name = try allocator.dupe(u8, item.name),
+        .value = try allocator.dupe(u8, item.value),
+    };
+    return environment;
 }
 
 fn validName(name: []const u8) bool {

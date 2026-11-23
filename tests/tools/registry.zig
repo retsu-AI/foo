@@ -449,3 +449,40 @@ test "deny ask without a handler and cancellation stop before spawning" {
     try expectEqual(1, permission.calls);
     try expectEqual(0, fixture.spawner.launches);
 }
+
+test "an explicitly installed builtin and a custom descriptor share one catalog" {
+    var fixture: Fixture = .{};
+    var directory = std.testing.tmpDir(.{});
+    defer directory.cleanup();
+    var scratch = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer scratch.deinit();
+    const allocator = scratch.allocator();
+    var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd_len = try directory.dir.realPath(std.testing.io, &cwd_buffer);
+    var resolved = settings(.allow);
+    resolved.cwd = cwd_buffer[0..cwd_len];
+    resolved.enabled_tools = &.{ "write", "echo" };
+    const no_preset = fixture.options();
+    try expectError(error.InvalidInput, tools.Registry.init(allocator, resolved, &.{echo}, no_preset));
+    var options = no_preset;
+    options.builtins = .{};
+    var registry = try tools.Registry.init(allocator, resolved, &.{echo}, options);
+    defer registry.deinit();
+
+    const interface = registry.interface();
+    try expectEqual(2, interface.declarations.len);
+    try expectEqualStrings("builtin", interface.declarations[0].identity.backend);
+    try expectEqualStrings(tools.backend, interface.declarations[1].identity.backend);
+    const result = try interface.invoke_fn(interface.context, allocator, fixture.operation(), invocation(
+        interface.declarations[0],
+        "{\"path\":\"new file.txt\",\"content\":\"hello\\r\\n\"}",
+    ));
+    try expectEqual(.success, result.status);
+    try expectEqual(.observed, result.effect);
+    const bytes = try directory.dir.readFileAlloc(std.testing.io, "new file.txt", allocator, .limited(16));
+    try expectEqualStrings("hello\r\n", bytes);
+    try expectEqual(0, fixture.spawner.launches);
+
+    resolved.files_backend = .client;
+    try expectError(error.Unavailable, tools.Registry.init(allocator, resolved, &.{echo}, options));
+}

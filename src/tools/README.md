@@ -55,3 +55,54 @@ The registry enforces this JSON Schema subset. Each schema node needs a single s
 | All types | `description` is an optional string annotation. |
 
 All other keywords and types cause registry initialization to fail. References cause initialization to fail and incur no network I/O. The wire validator checks UTF-8, complete JSON syntax, and depth on schemas and calls. Parsing rejects duplicate object keys. The catalog uses the `catalog_bytes` limit, calls use `tool_argument_bytes`, and both use `json_depth` up to the wire validator's maximum.
+
+## Optional coding preset
+
+Set `Options.builtins` explicitly and select the names in `settings.enabled_tools`. Use
+`tools.coding_preset` to select all four. The preset needs an absolute working
+directory. Configured custom tools can share the same catalog. Each enabled name
+has one definition, with an error if a custom tool collides with an enabled preset
+name. The same schema, permission, cancellation, and revocation checks apply.
+
+| Tool | Arguments | Result |
+| --- | --- | --- |
+| `read` | `path`, optional `encoding`, `offset`, and `max_bytes` | Bounded byte range, size, truncation, and source SHA-256 |
+| `write` | `path`, `content`, and optional `encoding` | Create or replace one file |
+| `edit` | `path`, `expected_sha256`, `replacements` of `{old,new}`, and optional `encoding` | Replace distinct, unique byte sequences in one file |
+| `exec` | `argv` array | Exit or signal, stdout and stderr excerpts, and optional output artifact |
+
+File encoding is UTF-8 by default. Select Base64 for binary bytes. Read the full
+source digest before editing. An edit validates all old text against the same
+snapshot and rejects stale, missing, ambiguous, or overlapping replacements before
+publishing the replacement. New files publish without overwriting a concurrent
+creator. Existing files use same-directory staging and replacement. The registry
+serializes its own writes, and the adapter checks for external changes immediately
+before replacement. A writer outside the registry can still race that last check.
+The tools operate on one file per call.
+
+`exec` passes literal argv elements with the configured cwd and environment. To
+run shell syntax, call a shell explicitly in argv. This gives the command the
+launching user's operating-system privileges. Configure an external isolation
+boundary when running commands that require isolation.
+
+## Executable protocol
+
+A custom executable reads one admitted JSON object from stdin until EOF. It
+writes one UTF-8 JSON object to stdout, then exits. The reply contains a required
+string `content` and optional boolean `is_error`. Exit zero with a complete valid
+reply reports the supplied content. A nonzero exit, signal, malformed reply, or
+oversized reply produces a typed failure with process diagnostics. Cancellation
+after possible launch and unconfirmed cleanup produce an uncertain effect.
+
+The adapter drains stdout and stderr independently and caps retained bytes.
+`exec` reports byte counts and Base64 excerpts. If a host supplies a spool directory
+and cap, the tool writes a single relative `exec-*.frames` artifact. Frames carry a
+one-byte stream tag, a little-endian 32-bit payload length, and raw payload bytes.
+Tags 1 and 2 identify stdout and stderr. The artifact stops at the cap and reports
+truncation. On spool failure, the adapter discards the incomplete file where the
+filesystem permits and reports the failure.
+
+Run `zig build test -Dmodule=tools` for registry and built-in fixtures. Run
+`zig build test -Dmodule=platform-process` for subprocess protocol and ownership
+fixtures. The [process handoff](../platform/process/README.md) describes native
+ownership and platform limits.
