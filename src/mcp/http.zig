@@ -34,7 +34,8 @@ pub const Http = struct {
 
     const Channel = enum { main, listener, housekeeping };
     const Session = struct { generation: u64, token: Token };
-    const SessionState = union(enum) { uninitialized, active: Session, expired };
+    const SessionState = union(enum) { uninitialized, awaiting_initialized: Session, active: Session, expired };
+    const LegacyRequest = enum { initialize, acknowledge, established };
 
     options: Options,
     mutex: std.Io.Mutex = .init,
@@ -95,9 +96,17 @@ pub const Http = struct {
         defer arena.deinit();
         const allocator = arena.allocator();
         const kind = try classify(request);
-        const initializing = request.revision == legacy and same(request.method, "initialize") and kind == .request;
-        const session = if (request.revision == legacy) try self.sessionFor(op, initializing) else null;
-        const headers = try self.requestHeaders(allocator, request, kind, if (session) |*active| active.token.slice() else "", initializing);
+        const legacy_request: ?LegacyRequest = if (request.revision != legacy)
+            null
+        else if (kind == .request and same(request.method, "initialize"))
+            .initialize
+        else if (kind == .notification and same(request.method, "notifications/initialized"))
+            .acknowledge
+        else
+            .established;
+        const initializing = legacy_request == .initialize;
+        const session = if (legacy_request) |phase| try self.sessionFor(op, phase) else null;
+        const headers = try self.requestHeaders(allocator, request, kind, if (session) |*current| current.token.slice() else "", initializing);
 
         var pending: Pending = .{
             .http = self,
@@ -118,7 +127,8 @@ pub const Http = struct {
             }
             return err;
         };
-        if (initializing and reply == .success) self.activate(op, pending.token);
+        if (initializing and reply == .success) self.beginInitialization(op, pending.token);
+        if (legacy_request == .acknowledge and reply == .accepted) self.activate(op, session.?);
         return reply;
     }
 
@@ -163,17 +173,22 @@ pub const Http = struct {
         };
     }
 
-    fn sessionFor(self: *Http, op: io.Context, initializing: bool) link.Error!?Session {
+    fn sessionFor(self: *Http, op: io.Context, request: LegacyRequest) link.Error!?Session {
         self.mutex.lockUncancelable(op.io);
         defer self.mutex.unlock(op.io);
-        if (initializing) {
-            if (self.session == .active) return error.InvalidInput;
+        if (request == .initialize) {
+            switch (self.session) {
+                .uninitialized, .expired => {},
+                .awaiting_initialized => self.session = .uninitialized,
+                .active => return error.InvalidInput,
+            }
             return null;
         }
         return switch (self.session) {
             .uninitialized => error.InvalidInput,
             .expired => error.SessionExpired,
-            .active => |session| session,
+            .awaiting_initialized => |session| if (request == .acknowledge) session else error.InvalidInput,
+            .active => |session| if (request == .established) session else error.InvalidInput,
         };
     }
 
@@ -183,17 +198,27 @@ pub const Http = struct {
         if (self.session != .active or self.session.active.generation != session.generation) return error.SessionExpired;
     }
 
-    fn activate(self: *Http, op: io.Context, token: Token) void {
+    fn beginInitialization(self: *Http, op: io.Context, token: Token) void {
         self.mutex.lockUncancelable(op.io);
         defer self.mutex.unlock(op.io);
         self.generation +%= 1;
-        self.session = .{ .active = .{ .generation = self.generation, .token = token } };
+        self.session = .{ .awaiting_initialized = .{ .generation = self.generation, .token = token } };
+    }
+
+    fn activate(self: *Http, op: io.Context, session: Session) void {
+        self.mutex.lockUncancelable(op.io);
+        defer self.mutex.unlock(op.io);
+        self.session = .{ .active = session };
     }
 
     fn expire(self: *Http, op: io.Context, session: Session) void {
         self.mutex.lockUncancelable(op.io);
         defer self.mutex.unlock(op.io);
-        if (self.session == .active and self.session.active.generation == session.generation) self.session = .expired;
+        const current = switch (self.session) {
+            .awaiting_initialized, .active => |current| current,
+            .uninitialized, .expired => return,
+        };
+        if (current.generation == session.generation) self.session = .expired;
     }
 
     fn requestHeaders(self: *Http, allocator: Allocator, request: link.Request, kind: Kind, token: []const u8, initializing: bool) link.Error!Headers {
@@ -653,7 +678,6 @@ const Incoming = struct {
                 if (message_value.id == null) {
                     try link.Observer.notify(self.pending.observer, op, message_value);
                 } else if (self.pending.revision == legacy) {
-                    // Reverse messages are bounded independently of stream lifetime.
                     var arena = std.heap.ArenaAllocator.init(self.pending.http.options.scratch_allocator);
                     defer arena.deinit();
                     try self.pending.reverse(arena.allocator(), op, message_value);
@@ -674,8 +698,10 @@ const Incoming = struct {
                 return reply;
             },
             .sse => {
-                self.sse.?.finish(op) catch |err| return mapFraming(err);
                 try self.rememberCursor();
+                self.sse.?.finish(op) catch |err| {
+                    if (err != error.TruncatedFrame or self.pending.cursor.len == 0) return mapFraming(err);
+                };
                 return error.Disconnected;
             },
         }

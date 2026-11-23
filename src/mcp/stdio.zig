@@ -448,14 +448,14 @@ pub const Stdio = struct {
     }
 
     fn reverse(self: *Stdio, op: io.Context, id: Id, method: []const u8) io.Error!void {
-        if (tooLong(id)) return error.LimitExceeded;
-        const legacy = profile: {
+        {
             self.mutex.lockUncancelable(self.io_backend);
             defer self.mutex.unlock(self.io_backend);
             if (self.state != .open) return;
-            break :profile self.revision == .@"2025-11-25";
-        };
-        const reply: foo.jsonrpc.Response = if (legacy and std.mem.eql(u8, method, "ping"))
+            if (self.revision != .@"2025-11-25") return error.InvalidInput;
+        }
+        if (tooLong(id)) return error.LimitExceeded;
+        const reply: foo.jsonrpc.Response = if (std.mem.eql(u8, method, "ping"))
             .{ .success = .{ .id = id, .result_json = "{}" } }
         else
             .{ .failure = .{ .id = id, .err = .{ .code = foo.jsonrpc.Code.method_not_found, .message = "Method not supported" } } };

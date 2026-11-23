@@ -32,17 +32,18 @@ const initialized_step: Step = .{
     .body_part = "\"method\":\"notifications/initialized\"",
     .status = 202,
 };
+const initialized_request: link.Request = .{
+    .revision = legacy,
+    .id = null,
+    .method = "notifications/initialized",
+    .body = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}",
+};
 
 fn initialize(client: link.Link, op: io.Context) !void {
     const reply = try call(client, op, legacyRequest(1, "initialize", "{\"protocolVersion\":\"2025-11-25\"}"), null);
     defer release(reply);
     try t.expectEqualStrings("{\"protocolVersion\":\"2025-11-25\"}", reply.success);
-    const ack = try call(client, op, .{
-        .revision = legacy,
-        .id = null,
-        .method = "notifications/initialized",
-        .body = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}",
-    }, null);
+    const ack = try call(client, op, initialized_request, null);
     try t.expectEqual(link.Reply.accepted, ack);
 }
 
@@ -340,6 +341,41 @@ test "legacy resumes a tool POST by cursor and answers reverse requests independ
     try housekeeping.done();
 }
 
+test "legacy clean EOF resumes from the committed cursor and rejects malformed events" {
+    const checkpoint = "id: checkpoint\ndata:\n\nretry: 0\n\n";
+    var main: Script = .{ .steps = &.{
+        init_step,
+        initialized_step,
+        .{
+            .headers = &legacy_headers,
+            .body_part = "\"method\":\"tools/call\"",
+            .response_headers = &sse,
+            .chunks = &.{ checkpoint, "id: uncommitted\ndata: {\"result\":\"\xe9\x9b" },
+        },
+        .{
+            .method = .get,
+            .headers = &.{ legacy_headers[1], .{ .name = "Last-Event-ID", .value = "checkpoint" } },
+            .response_headers = &sse,
+            .chunks = &.{"data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{}}\n\n"},
+        },
+        .{ .response_headers = &sse, .chunks = &.{ checkpoint, "data: \xff\n\n" } },
+        .{ .response_headers = &sse, .chunks = &.{ checkpoint, "data: invalid json\n\n" } },
+    } };
+    var cancel: io.Cancellation = .{};
+    const op = opFor(&cancel);
+    var http = try Http.init(.{ .transport = main.transport(), .url = url, .scratch_allocator = t.allocator, .max_message_bytes = 8192 });
+    defer http.deinit();
+    const client = http.interface();
+    try initialize(client, op);
+
+    const reply = try call(client, op, legacyRequest(2, "tools/call", "{\"name\":\"fixture\"}"), null);
+    defer release(reply);
+    try t.expectEqualStrings("{}", reply.success);
+    try t.expectError(error.MalformedPeer, call(client, op, legacyRequest(3, "ping", "{}"), null));
+    try t.expectError(error.MalformedPeer, call(client, op, legacyRequest(4, "ping", "{}"), null));
+    try main.done();
+}
+
 const legacy_listener: link.Request = .{ .revision = legacy, .id = null, .method = "", .body = "", .mode = .legacy_notifications };
 
 test "legacy optional listener and teardown tolerate 405 without dropping the session" {
@@ -398,6 +434,52 @@ test "legacy session expiry reports uncertain delivery and waits for explicit re
     try t.expectError(error.SessionExpired, client.exchange(t.allocator, op, request, null, &delivery));
     try t.expectEqual(io.Delivery.unsent, delivery);
     try initialize(client, op);
+    try client.shutdown(op);
+    try main.done();
+}
+
+test "legacy connect can retry after revision rejection and a failed initialized notification" {
+    const server_info = "\"serverInfo\":{\"name\":\"fixture\",\"version\":\"1\"},\"capabilities\":{\"tools\":{}}";
+    const fresh_headers = [_]ExpectedHeader{ legacy_headers[0], .{ .name = "MCP-Session-Id", .value = "session-2" }, legacy_headers[2] };
+    var other_revision = init_step;
+    other_revision.chunks = &.{"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-06-18\"," ++ server_info ++ "}}"};
+    var handshake = init_step;
+    handshake.chunks = &.{"{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"protocolVersion\":\"2025-11-25\"," ++ server_info ++ "}}"};
+    var rejected_notification = initialized_step;
+    rejected_notification.status = 500;
+    var next_handshake = handshake;
+    next_handshake.response_headers = &.{ json[0], .{ .name = "MCP-Session-Id", .value = "session-2" } };
+    next_handshake.chunks = &.{"{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"protocolVersion\":\"2025-11-25\"," ++ server_info ++ "}}"};
+    var accepted_notification = initialized_step;
+    accepted_notification.headers = &fresh_headers;
+    var main: Script = .{ .steps = &.{
+        other_revision,
+        handshake,
+        rejected_notification,
+        next_handshake,
+        accepted_notification,
+        .{ .method = .delete, .headers = &fresh_headers, .status = 204 },
+    } };
+    var cancel: io.Cancellation = .{};
+    const op = opFor(&cancel);
+    var http = try Http.init(.{ .transport = main.transport(), .url = url, .scratch_allocator = t.allocator });
+    defer http.deinit();
+    const wire = http.interface();
+    var client = try mcp.Client.init(wire, .{ .server_id = "fixture", .revision = legacy });
+
+    try t.expectError(error.InvalidInput, call(wire, op, initialized_request, null));
+    try t.expectEqual(0, main.next);
+    try t.expectError(error.UnsupportedRevision, client.connect(t.allocator, op));
+    try t.expectError(error.InvalidInput, call(wire, op, legacyRequest(1, "ping", "{}"), null));
+    try t.expectEqual(1, main.next);
+    try t.expectError(error.IoFailure, client.connect(t.allocator, op));
+    try t.expectError(error.InvalidInput, call(wire, op, legacy_listener, null));
+    try t.expectEqual(3, main.next);
+    const profile = try client.connect(t.allocator, op);
+    try t.expectEqual(legacy, profile.revision);
+    try t.expect(profile.capabilities.tools);
+    try t.expectError(error.InvalidInput, call(wire, op, initialized_request, null));
+    try t.expectEqual(5, main.next);
     try client.shutdown(op);
     try main.done();
 }
