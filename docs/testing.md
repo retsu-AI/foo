@@ -13,7 +13,9 @@ See [the shared contracts](../src/contracts/README.md) for implemented commands 
 | `zig build test -Dmodule=core` | Integrator registration pending. Run the landed suite with the [direct Zig command](../src/core/README.md#verification). |
 | `zig build test -Dmodule=transport` | Run native HTTP and TLS loopback fixtures with the pinned transport profile |
 | `zig build test -Dmodule=wire` | Run the framing, JSON-RPC, and correlation fixtures |
-| `zig build check` | Check formatting, compile the executable, and run the contracts, transport, and wire suites |
+| `zig build test -Dmodule=tools` | Run the coding and custom executable tool fixtures |
+| `zig build test -Dmodule=platform-process` | Run the native subprocess and cleanup fixtures |
+| `zig build check` | Check formatting, compile the executable, and run the contracts, transport, wire, tools, and platform-process suites |
 | `zig build check-bootstrap` | Check formatting, compile the executable, and run contract tests without the transport profile |
 | `zig build acceptance` | Unavailable; planned native offline CLI, process, journal, MCP, ACP, and terminal scenarios |
 | `zig build acceptance-live` | Unavailable; planned provider/server/editor interoperability with an allowlist and spend ceiling |
@@ -55,15 +57,17 @@ Live qualification records exact build, endpoint, protocol family, model, reques
 
 ## Tool and process fixtures
 
-Exercise paths containing spaces, non-ASCII characters, long names, and platform-specific separators. Preserve explicit working directory and environment behavior. Verify quoting with argument vectors; shell syntax is tested only for a configured shell.
+The F05 suites run in Debug and ReleaseSafe on native Linux, macOS, and Windows through the [Native tools workflow](../.github/workflows/native-tools.yml). The [tools handoff](../src/tools/README.md) and [process handoff](../src/platform/process/README.md) describe the isolated package checks. F12 and F13 exercise the process lifecycle again through the exact integrated release candidate.
 
-File cases include missing files, invalid encodings, ambiguous matches, stale content, permissions, symbolic links, concurrent external edits, and replacement failure. Assert exact changed bytes and unchanged files after rejection. Single-file atomic replacement must not be described as multi-file transactional behavior.
+Exercise paths containing spaces, non-ASCII characters, long names, and platform-specific separators. Verify working directory and environment behavior, including argument-vector quoting. If a host explicitly configures a shell, test its argument handling separately.
+
+File cases include missing files, invalid encodings, ambiguous matches, stale content, permissions, symbolic links, concurrent external edits, and replacement failure. Assert exact changed bytes and unchanged files after rejection. Check replacement atomicity at the single-file boundary.
 
 Run a command that produces output far larger than the model excerpt limit. Verify bounded memory, complete spooling up to the configured disk limit, byte offsets, truncation metadata, and accessible output. Test a full disk, invalid spill destination, and a reader that stops consuming output. Reaching a disk cap is visible and must not silently erase diagnostics.
 
-Start ordinary child/grandchild processes and cancel the run. Assert native process-tree ownership and cleanup using process groups on POSIX and job objects or an equivalently qualified mechanism on Windows. Document limitations for descendants that deliberately escape ordinary process ownership; this mechanism is not a hostile-process sandbox.
+Start ordinary child/grandchild processes and cancel the run. Assert native process-tree ownership and cleanup using process groups on POSIX and job objects or an equivalently qualified mechanism on Windows. Record the cleanup scope for ordinary descendants and the platform limits when a process leaves that scope.
 
-Executable tool fixtures cover malformed JSON, missing results, duplicate results, mixed stdout diagnostics, nonzero exit, timeout, cancellation, and oversized stderr/stdout. A long-command handle cannot outlive its owning run without an explicit external owner, which v1 does not provide.
+Executable tool fixtures cover valid and malformed JSON, missing or duplicate results, mixed stdout diagnostics, nonzero exit, timeout, cancellation, and oversized output. Check that invalid arguments and denied calls start no child. Check that run shutdown closes and reaps owned command processes.
 
 ## Persistence failure fixtures
 

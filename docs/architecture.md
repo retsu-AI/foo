@@ -56,7 +56,7 @@ Use one Zig package and one executable. Directories organize ownership; they do 
 | F02 | `src/wire/**` | Bounded incremental framing and JSON/SSE/JSON-RPC primitives | MCP or ACP lifecycle policy |
 | F03 | `src/core/**` | One run, ordered tool loop, limits, outcome, request preparation seam | Concrete providers, persistence format, protocols, UI |
 | F04 | `src/providers/**` | Three provider codecs, capability checks, provider replay data | Tool execution or model-routing policy |
-| F05 | `src/tools/**`, `src/platform/process/**` | Built-in/executable tools, command handles, output capture, process cleanup | Agents, worktrees, shell-intent classification |
+| F05 | `src/tools/**`, `src/platform/process/**` | Built-in and executable tools, output capture, process cleanup | Agents, worktrees, shell-intent classification |
 | F06 | `src/mcp/**` | MCP client lifecycle, discovery, tool mapping, calls and cancellation | Agent decisions, MCP server hosting |
 | F07 | `src/session/**` | Optional journal, locking, artifacts, recovery and context loading | Automatic tool replay or compaction model |
 | F08 | `src/acp/**` | ACP agent lifecycle, capability negotiation, session and event mapping | A second agent loop or editor-independent task scheduler |
@@ -135,26 +135,24 @@ Retries have one owner and a finite configured allowance. Retry only categories 
 
 ## Tools and process lifecycle
 
-The neutral core starts with no tools. An optional coding preset registers `exec`, `read`, `write`, and `edit`; each can be removed or replaced explicitly. Tool names and schemas are the model-facing contract, so keep them small and stable. Additional functionality is an executable tool or MCP tool rather than another compulsory subsystem.
-
-The initial tool behavior is:
+The neutral core starts with an empty tool catalog. The host can opt into the coding preset for `read`, `write`, `edit`, and `exec`, or explicitly select individual tools. The registry exposes the selected tools with stable names and argument schemas. It can also expose host-configured executable tools.
 
 | Tool | Required behavior |
 | --- | --- |
-| `read` | Bounded reads with explicit truncation/range information; binary content is not silently treated as text |
-| `write` | Explicit target, bounded content, atomic replacement where supported, accurate failure reporting |
-| `edit` | Exact replacement with unique-match admission by default; stale/ambiguous input produces actionable error; no fuzzy guess |
-| `exec` | Explicit cwd/environment and command form; bounded model excerpt, complete configured spool, exit status/signal, cancellation and command ownership |
+| `read` | Bounded byte ranges with a whole-file SHA-256. Request base64 for binary data. |
+| `write` | Create or replace one file with bounded content. Return the size and SHA-256. |
+| `edit` | Apply unique, disjoint byte replacements to one file at its expected SHA-256. Reject stale or ambiguous input. |
+| `exec` | Run an argument vector in the host-configured working directory and environment. Return bounded output and the exit status. |
 
-Multi-file edits are not claimed to be a filesystem transaction. Validate all intended edits before writing, replace files atomically where supported, and report any partial application precisely. Permission and metadata behavior must be tested on Windows as well as POSIX systems.
+The file tools operate on one file per call. An edit validates every replacement against the same snapshot before replacing the file. The result distinguishes a rejected edit from an uncertain replacement.
 
-Executable tools receive JSON on stdin and return a documented JSON result on stdout. Stderr is diagnostic output, separately bounded or spooled. Configuration declares argv, cwd/environment policy, schema and limits; foo does not construct a shell command by interpolating model text. A tool can explicitly be a shell tool, in which case its normal shell authority is part of its declared behavior.
+Custom executable tools receive validated JSON on stdin and return one JSON result on stdout. The host supplies argv, environment policy, schema, and limits. Stderr carries diagnostics. The registry checks the supported JSON Schema subset when it loads a tool and validates arguments before dispatch. [Tool schemas and filesystem limits](../src/tools/README.md).
 
-For custom tools, implement only the documented JSON Schema subset or make the external executable authoritative for validation. Reject unsupported schema features rather than accepting a schema the runtime cannot enforce. A schema validator must not fetch remote references.
+The native process adapter provides independent stdin, stdout, and stderr. Tool execution drains output under an excerpt limit and can write a bounded spool. The invocation returns after exit or cancellation cleanup, with the available exit status and effect outcome. POSIX process groups and Windows job objects own ordinary descendants. Processes run with the launching account's privileges. A caller that needs containment must supply isolation through its account, container, or VM. [Native process behavior and limits](../src/platform/process/README.md).
 
-Long commands can yield a run-scoped handle so the model and TUI remain responsive. The handle supports bounded status reads, wait and cancel. The command table has a count/byte bound. On run termination, foo cancels remaining owned commands, waits through the configured cleanup interval, and reports cleanup failures or uncertain outcomes. Surviving services require a separate external owner; foo is not a process supervisor.
+### Local Code Mode follow-up
 
-Use platform process primitives for process groups/job ownership and native tests for descendant cleanup. Do not claim that ordinary process-group cancellation can contain every deliberately escaping descendant. Running an unrestricted shell means running with the launching account's effective privileges. Strong isolation belongs to the caller's container, VM or account setup.
+A later opt-in Code Mode can run model-authored code in a local sandbox. The sandbox calls tools through the same enabled registry and follows its permission, cancellation, and resource limits. Local calls work without an MCP server. MCP tools can use the same interface once the host exposes them through the registry.
 
 ## MCP and ACP
 
