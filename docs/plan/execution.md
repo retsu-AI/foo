@@ -2,7 +2,7 @@
 
 This is a plan for building foo with parallel development agents. It does not add agents, scheduling, delegation, or orchestration to the foo runtime. Foo executes one configured conversation; a separate application may later coordinate multiple foo processes.
 
-The machine-readable task inventory is [work-packages.json](work-packages.json). This dated local snapshot records F00 as `complete`, F01 as `in_progress`, and F02 through F13 as `planned`. The reviewed F00 contracts are at `55bd327`. The [native Nightly run](https://github.com/retsu-AI/foo/actions/runs/43960887714) qualified bootstrap commit `5c53fde07c0923ce914f9139dc21f43d3e5779da`, including its 13 contract tests and bootstrap behavior in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64, plus Linux Nix checks. F01 starts with an integrator-owned upload contract prerequisite. No production transport exists yet; the remaining runtime packages are planned.
+The machine-readable task inventory is [work-packages.json](work-packages.json). This dated local snapshot records F00 and F01 as `complete`, and F02 through F13 as `planned`. The reviewed F00 contracts are at `55bd327`. The [native Nightly run](https://github.com/retsu-AI/foo/actions/runs/43960887714) qualified bootstrap commit `5c53fde07c0923ce914f9139dc21f43d3e5779da`, including its 13 contract tests and bootstrap behavior in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64, plus Linux Nix checks. F01 implements HTTP and TLS and passed the loopback suite on Linux, macOS, and Windows in Debug and ReleaseSafe. [Native qualification results](../../src/transport/README.md#build-and-verify). The remaining runtime packages are planned.
 
 All packages have issues in the [foo Linear project](https://linear.app/retsu-ai/project/foo-86eb1e09a2a5), ENG-1473 through ENG-1486. `dependencies` map to Linear blockers. `completion_dependencies` map to related issues and prominent completion criteria, preserving early authoring. The manifest carries the exact ID/URL mapping; Linear is authoritative for current assignment and workflow status. At creation every issue is unassigned in Backlog.
 
@@ -69,23 +69,23 @@ finishable(package) = every(package.dependencies, status == complete)
 
 Use `in_progress` only after assignment and worktree creation; `review` means a concrete patch and handoff are ready; `complete` means the reviewed package was integrated and its package acceptance passed. `blocked` must name the missing prerequisite. A queued task, authored test, green fake test, merged module, cross-compiled binary, live protocol test, and qualified release are different evidence states.
 
-F02, F03, F05, F07, F09, and F13 are ready to start in the current snapshot. F01 is already in progress. F04, F06, F08, F10, F11, and F12 still need start prerequisites. Linear holds current assignments and workflow state. F13 may author fixtures now, but remains incomplete until native and live qualification is done against F12's candidate. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
+F02, F03, F05, F07, F09, and F13 are ready to start in the current snapshot. F01 is complete. F04, F06, F08, F10, F11, and F12 still need start prerequisites. Linear holds current assignments and workflow state. F13 may author fixtures now, but remains incomplete until native and live qualification is done against F12's candidate. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
 
 ## Build commands and remaining targets
 
-Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` and the `contracts` suite work in the bootstrap. Remaining module suites and qualification targets fail as unavailable until their owners supply real behavior. An empty suite must never count as acceptance.
+Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` runs the `contracts` and `transport` suites. The remaining module suites and qualification targets stay unavailable until their owners supply them. An empty suite must never count as acceptance.
 
 | Command | Owner and current status |
 | --- | --- |
-| `zig build check` | Integrator. Implemented formatting, executable compilation, and contract tests |
+| `zig build check` | Integrator. Formatting, executable compilation, and the contracts and transport suites |
 | `zig build test -Dmodule=contracts` | F00. Implemented shared-contract and scripted-fake tests |
-| `zig build test -Dmodule=<module>` | Module owner. Names registered; all suites except `contracts` unavailable |
+| `zig build test -Dmodule=<module>` | Module owner. `contracts` and `transport` are available |
 | `zig build acceptance` | F13. Unavailable; planned native offline fixtures and loopback peers |
 | `zig build acceptance-live` | F13. Unavailable; planned opted-in interoperability with allowlist and spend cap |
 | `zig build bench` | F13. Unavailable; planned repeatable measurements and raw results |
 | `zig build release -Dtarget=<declared-target>` | F12. Unavailable; planned candidate archive and manifest |
 
-F00 registers these target interfaces and makes unimplemented suites unavailable. Its module allowlist includes `contracts`, `transport`, `wire`, `core`, `providers`, `tools`, `platform-process`, `mcp`, `session`, `acp`, `config`, `cli`, `tui`, `platform-terminal`, and `integration`. The owning packages add their actual test roots; F12 completes packaging and CI. A module handoff runs its narrow suite. The integrator runs affected dependent suites after a merge and the full deterministic gate once per candidate. Live tests and benchmarks are opt-in lanes; ordinary edits must not depend on remote credentials or provider spending.
+F00 established the target interfaces. F01 registers the transport suite and its pinned native profile. Its module allowlist includes `contracts`, `transport`, `wire`, `core`, `providers`, `tools`, `platform-process`, `mcp`, `session`, `acp`, `config`, `cli`, `tui`, `platform-terminal`, and `integration`. The owning packages add their actual test roots; F12 completes packaging and CI. A module handoff runs its narrow suite. The integrator runs affected dependent suites after a merge and the full deterministic gate once per candidate. Live tests and benchmarks are opt-in lanes; ordinary edits must not depend on remote credentials or provider spending.
 
 ## Work packages
 
@@ -103,7 +103,7 @@ Accept when a clean clone can build the bootstrap and run contract tests on the 
 
 Implement outbound HTTP with TLS validation, proxy configuration where declared, connection reuse, streamed bodies, request/body/header limits, cancellation, deadlines, and normalized transport errors. Providers and MCP own protocol retry/reconnect policy; transport must not secretly retry requests that may have effects. If a mature transport library is selected, isolate its use here and measure its release footprint rather than reimplementing cryptography.
 
-Accept with deterministic loopback fixtures for split bodies, slow consumers, certificate failures, redirects/credentials rules, timeout, cancellation, abrupt disconnect, and bounded buffering on all operating systems. Handoff documents allocation ownership, transport shutdown, proxy/CA behavior, resolved dependency footprint, and exact commands/results.
+Accept with deterministic loopback fixtures for split bodies, slow consumers, certificate failures, redirects/credentials rules, timeout, cancellation, abrupt disconnect, and bounded buffering on all operating systems. The handoff documents allocation ownership, transport shutdown, proxy and CA behavior, dependency footprint, and verification. [Transport handoff](../../src/transport/README.md).
 
 ### F02 — Wire framing and JSON-RPC envelopes
 

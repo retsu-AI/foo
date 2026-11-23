@@ -19,7 +19,7 @@ jobs:
         id: zig
       - name: Check bootstrap
         run: |
-          zig build check
+          zig build check-bootstrap
           zig build
           python tests/contracts/bootstrap.py
           python .github/scripts/test-install-zig.py

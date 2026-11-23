@@ -11,6 +11,7 @@ let
       pkgs = nixpkgs.legacyPackages.${system};
       toolchain = import ./toolchain.nix { inherit pkgs; };
       tools = import ./tools.nix { inherit pkgs; };
+      transport = import ./transport.nix { inherit pkgs; };
       formatter = import ./formatter.nix { inherit pkgs; };
     in
     {
@@ -21,6 +22,7 @@ let
           toolchain
           tools
           formatter
+          transport
           ;
       };
       checks = import ./checks.nix {

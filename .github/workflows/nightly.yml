@@ -16,10 +16,35 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-zig
+      - name: Set transport prefix
+        shell: bash
+        run: |
+          echo "FOO_TRANSPORT_PREFIX=$RUNNER_TEMP/foo-transport" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/foo-transport/bin" >> "$GITHUB_PATH"
+      - name: Build pinned transport libraries
+        if: runner.os != 'Windows'
+        run: python .github/scripts/build-transport.py "$FOO_TRANSPORT_PREFIX"
+      - name: Install NASM for OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'nasm-2.16.03-win64.zip'
+          Invoke-WebRequest -Uri 'https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip' -OutFile $archive -MaximumRetryCount 2 -RetryIntervalSec 2
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '3ee4782247bcb874378d02f7eab4e294a84d3d15f3f6ee2de2f47a46aa7226e6') {
+            throw 'NASM archive SHA-256 mismatch'
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP
+          Join-Path $env:RUNNER_TEMP 'nasm-2.16.03' >> $env:GITHUB_PATH
+      - name: Build pinned transport libraries (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 || exit /b 1
+          python .github/scripts/build-transport.py "%FOO_TRANSPORT_PREFIX%"
       - name: Check Debug
         run: |
           zig build check

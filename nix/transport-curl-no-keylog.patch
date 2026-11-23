@@ -1,0 +1,11 @@
+--- a/lib/vtls/keylog.c
++++ b/lib/vtls/keylog.c
+@@ -38,7 +38,7 @@
+ void Curl_tls_keylog_open(void)
+ {
+   if(!keylog_file_fp) {
+-    keylog_file_name = getenv("SSLKEYLOGFILE");
++    keylog_file_name = NULL;
+     if(keylog_file_name) {
+       keylog_file_fp = curlx_fopen(keylog_file_name, FOPEN_APPENDTEXT);
+       if(keylog_file_fp) {
