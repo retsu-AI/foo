@@ -433,11 +433,12 @@
         "Command startup creates no hidden server, updater, planner, or background task."
       ],
       "handoff": [
-        "Help text and concrete CLI examples.",
-        "Exit/output fixtures and exact test results.",
-        "Black-box candidate scenarios and remaining production adapter checks."
+        "Landed in PR #11 at f09ef84. See src/cli/README.md for help, protocol, exit codes, and commands.",
+        "All 18 subprocess tests passed on Linux x86_64 in Debug and ReleaseSafe. They include cancellation while stdout is blocked.",
+        "The fixture cross-built for macOS arm64 and Windows x86_64. Native process qualification remains open.",
+        "F12 owns production wiring and root test registration. F13 qualifies the integrated executable."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1483",
         "uuid": "0d08af9a-9210-4c64-8e31-f6d38e043288",

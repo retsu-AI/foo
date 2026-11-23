@@ -1,0 +1,391 @@
+const std = @import("std");
+const foo = @import("foo");
+const config = @import("configuration");
+const arguments = @import("arguments.zig");
+const rpc = @import("rpc.zig");
+
+const process = @import("process.zig");
+
+pub const executeProcess = process.execute;
+pub const SessionMode = arguments.SessionMode;
+pub const BindError = foo.io.Error || error{ MissingCredential, SessionUnavailable };
+
+pub const Release = struct {
+    context: *anyopaque,
+    close_fn: *const fn (*anyopaque, std.Io) void,
+};
+
+pub const Binding = struct {
+    session: foo.events.SessionId,
+    tools: foo.tool.Registry,
+    services: foo.host.Services,
+    release: ?Release = null,
+};
+
+pub const Runtime = struct {
+    context: *anyopaque,
+    runner: foo.host.Runner,
+    bind_fn: *const fn (*anyopaque, std.mem.Allocator, foo.io.Context, config.Effective, SessionMode) BindError!Binding,
+};
+
+pub const Streams = struct {
+    input: std.Io.File,
+    output: std.Io.File,
+    diagnostic: std.Io.File,
+};
+
+pub const Options = struct {
+    cwd: []const u8,
+    streams: ?Streams = null,
+    environ: ?*const std.process.Environ.Map = null,
+    environment_json: ?[]const u8 = null,
+    runtime: ?Runtime = null,
+};
+
+pub const Exit = enum(u8) {
+    success = 0,
+    usage = 2,
+    limit = 3,
+    provider = 4,
+    storage = 5,
+    host = 6,
+    interrupted = 7,
+    cancelled = 130,
+
+    fn fromError(err: foo.io.Error) Exit {
+        return switch (err) {
+            error.InvalidInput => .usage,
+            error.DeadlineExceeded, error.LimitExceeded => .limit,
+            error.Cancelled => .cancelled,
+            else => .host,
+        };
+    }
+
+    fn fromOutcome(outcome: foo.events.Outcome) Exit {
+        return switch (outcome.reason) {
+            .completed => .success,
+            .cancelled => .cancelled,
+            .interrupted => .interrupted,
+            .limit_reached => .limit,
+            .provider_error => .provider,
+            .storage_error => .storage,
+            .host_error => .host,
+        };
+    }
+};
+
+pub const help =
+    \\Usage:
+    \\  foo run (--prompt TEXT | --stdin) [--resume] [OPTIONS]
+    \\  foo rpc [--resume] [OPTIONS]
+    \\  foo config (check | show) [OPTIONS]
+    \\  foo --help | --version
+    \\
+    \\Options:
+    \\  --config PATH          Load an explicit JSON config. Repeat in precedence order.
+    \\  --preset coding        Select the built-in coding preset.
+    \\  --provider FAMILY      openai_responses, openai_chat, or anthropic_messages
+    \\  --model ID             Select the model.
+    \\  --endpoint URL         Select the complete provider POST URL.
+    \\  --credential-env NAME  Read the model credential from a named environment variable.
+    \\  --cwd PATH             Override the configured working directory.
+    \\  --resume               Open the existing journal in the configured session directory.
+    \\
+;
+
+pub fn execute(
+    allocator: std.mem.Allocator,
+    operation: foo.io.Context,
+    argv: []const []const u8,
+    options: Options,
+) Exit {
+    const streams = options.streams orelse Streams{
+        .input = .stdin(),
+        .output = .stdout(),
+        .diagnostic = .stderr(),
+    };
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    operation.check() catch |err| return failed(streams, operation, err);
+    const command = arguments.parse(a, argv, options.cwd, options.environment_json) catch |err| switch (err) {
+        error.InvalidArguments => {
+            report(streams, operation.io, "invalid arguments. Use foo --help", .{});
+            return .usage;
+        },
+        else => |e| return failed(streams, operation, e),
+    };
+    switch (command.action) {
+        .help => return print(streams, operation, help),
+        .version => return print(streams, operation, "foo " ++ foo.version ++ "\n"),
+        else => {},
+    }
+
+    var diagnostic: ?config.Diagnostic = null;
+    const effective = config.resolve(a, operation, command.config, &diagnostic) catch |err| {
+        if (diagnostic) |detail| {
+            report(streams, operation.io, "config {s} from {s} at {s}", .{
+                @tagName(detail.reason), @tagName(detail.source), detail.path,
+            });
+            return if (err == error.LimitExceeded) .limit else .usage;
+        }
+        return switch (err) {
+            error.InvalidConfiguration, error.InvalidJson, error.UnsupportedVersion => .usage,
+            else => |e| failed(streams, operation, e),
+        };
+    };
+    switch (command.action) {
+        .check => return .success,
+        .show => {
+            const json = config.effectiveJson(a, effective) catch |err| return switch (err) {
+                error.InvalidConfiguration, error.InvalidJson, error.UnsupportedVersion => .usage,
+                else => |e| failed(streams, operation, e),
+            };
+            writeAll(streams.output, operation, json) catch |err| return failed(streams, operation, err);
+            return print(streams, operation, "\n");
+        },
+        .run, .rpc => {},
+        .help, .version => unreachable,
+    }
+
+    if (command.session == .@"resume" and effective.launch.session.directory == null) {
+        report(streams, operation.io, "--resume requires a configured session directory", .{});
+        return .usage;
+    }
+    if (missingCredential(effective.runtime.model, options.environ)) |name| {
+        report(streams, operation.io, "missing or invalid credential in environment variable {s}", .{name});
+        return .usage;
+    }
+    const runtime = options.runtime orelse {
+        report(streams, operation.io, "runtime is unavailable", .{});
+        return .host;
+    };
+    const text = if (command.action == .run)
+        getPrompt(a, operation, streams.input, command.action.run, effective.runtime.limits) catch |err|
+            return failed(streams, operation, err)
+    else
+        "";
+    const binding = runtime.bind_fn(runtime.context, a, operation, effective, command.session) catch |err| switch (err) {
+        error.MissingCredential => {
+            report(streams, operation.io, "runtime credential is unavailable", .{});
+            return .usage;
+        },
+        error.SessionUnavailable => {
+            report(streams, operation.io, "session is unavailable", .{});
+            return .storage;
+        },
+        else => |e| return failed(streams, operation, e),
+    };
+    defer if (binding.release) |release| release.close_fn(release.context, operation.io);
+    if (effective.launch.session.directory != null and binding.services.store == null) {
+        report(streams, operation.io, "configured session store is unavailable", .{});
+        return .storage;
+    }
+
+    var invocation: Invocation = .{
+        .settings = effective.runtime,
+        .binding = binding,
+        .runner = runtime.runner,
+        .restore_history = command.session == .@"resume",
+    };
+    if (command.action == .rpc) {
+        rpc.serve(allocator, operation, streams.input, streams.output, effective.runtime.limits, .{
+            .context = &invocation,
+            .run_fn = Invocation.run,
+        }) catch |err| return failed(streams, operation, err);
+        return .success;
+    }
+    return runPlain(allocator, operation, streams, &invocation, text);
+}
+
+const Invocation = struct {
+    settings: foo.config.Resolved,
+    binding: Binding,
+    runner: foo.host.Runner,
+    restore_history: bool,
+
+    fn run(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        operation: foo.io.Context,
+        run_id: foo.events.RunId,
+        text: []const u8,
+        sink: foo.events.Sink,
+    ) foo.io.Error!foo.events.Outcome {
+        const self: *Invocation = @ptrCast(@alignCast(context));
+        try operation.check();
+        try validatePrompt(text, self.settings.limits);
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var history: []const foo.provider.Message = &.{};
+        if (self.binding.services.store) |store| {
+            if (self.restore_history) {
+                const recovered = store.load_fn(store.context, a, operation) catch |err| switch (err) {
+                    error.Cancelled, error.DeadlineExceeded, error.OutOfMemory => |e| return e,
+                    else => return .{ .reason = .storage_error },
+                };
+                if (recovered.uncertain_call_ids.len != 0)
+                    return .{ .reason = .interrupted, .uncertain_effects = true };
+                history = recovered.messages;
+            }
+            self.restore_history = true;
+        }
+        const block: foo.provider.Block = .{ .text = text };
+        const messages = try a.alloc(foo.provider.Message, history.len + 1);
+        @memcpy(messages[0..history.len], history);
+        messages[history.len] = .{ .role = .user, .blocks = (&block)[0..1] };
+        return self.runner.run_fn(self.runner.context, allocator, operation, .{
+            .session = self.binding.session,
+            .run = run_id,
+            .settings = self.settings,
+            .messages = messages,
+            .tools = self.binding.tools,
+            .services = self.binding.services,
+        }, sink);
+    }
+};
+
+const Plain = struct {
+    output: std.Io.File,
+    last: ?u8 = null,
+    failure: ?foo.io.Error = null,
+
+    fn emit(context: *anyopaque, operation: foo.io.Context, event: foo.events.Event) foo.io.Error!void {
+        const self: *Plain = @ptrCast(@alignCast(context));
+        switch (event.data) {
+            .message_committed => |committed| {
+                if (committed.message.role != .assistant) return;
+                for (committed.message.blocks) |block| {
+                    if (block != .text or block.text.len == 0) continue;
+                    process.fileOperation(operation, writeAll, .{ self.output, operation, block.text }) catch |err| {
+                        self.failure = err;
+                        return err;
+                    };
+                    self.last = block.text[block.text.len - 1];
+                }
+            },
+            else => {},
+        }
+    }
+};
+
+fn runPlain(
+    a: std.mem.Allocator,
+    operation: foo.io.Context,
+    streams: Streams,
+    invocation: *Invocation,
+    text: []const u8,
+) Exit {
+    var plain: Plain = .{ .output = streams.output };
+    const outcome = Invocation.run(invocation, a, operation, @fromBackingInt(@intCast(1)), text, .{
+        .context = &plain,
+        .emit_fn = Plain.emit,
+    }) catch |err| return failed(streams, operation, plain.failure orelse err);
+    const status = Exit.fromOutcome(outcome);
+    if (outcome.uncertain_effects) report(streams, operation.io, "unresolved tool effects", .{});
+    if (plain.failure) |err| return failed(streams, operation, err);
+    if (status != .success) {
+        report(streams, operation.io, "run ended with {s}", .{@tagName(outcome.reason)});
+        return status;
+    }
+    if (plain.last) |last| {
+        if (last != '\n') {
+            process.fileOperation(operation, writeAll, .{ streams.output, operation, "\n" }) catch |err|
+                return failed(streams, operation, err);
+        }
+    }
+    return .success;
+}
+
+fn missingCredential(model: foo.config.Model, environ: ?*const std.process.Environ.Map) ?[]const u8 {
+    if (model.credential == .environment) {
+        const name = model.credential.environment;
+        const key = if (environ) |env| env.get(name) orelse return name else return name;
+        if (key.len == 0 or !validHeaderValue(key)) return name;
+    }
+    for (model.headers) |header| {
+        if (header.value != .environment) continue;
+        const name = header.value.environment;
+        const val = if (environ) |env| env.get(name) orelse return name else return name;
+        if (!validHeaderValue(val)) return name;
+    }
+    return null;
+}
+
+fn validHeaderValue(bytes: []const u8) bool {
+    for (bytes) |byte| {
+        if ((byte < 0x20 and byte != '\t') or byte == 0x7f) return false;
+    }
+    return true;
+}
+
+fn promptLimit(limits: foo.config.Limits) usize {
+    return @min(arguments.max_prompt_bytes, limits.transcript_bytes);
+}
+
+fn validatePrompt(text: []const u8, limits: foo.config.Limits) foo.io.Error!void {
+    if (text.len > promptLimit(limits)) return error.LimitExceeded;
+    if (text.len == 0 or !std.unicode.utf8ValidateSlice(text)) return error.InvalidInput;
+}
+
+fn getPrompt(
+    a: std.mem.Allocator,
+    operation: foo.io.Context,
+    input: std.Io.File,
+    prompt: arguments.Prompt,
+    limits: foo.config.Limits,
+) foo.io.Error![]const u8 {
+    const text = switch (prompt) {
+        .argument => |value| value,
+        .stdin => try process.fileOperation(operation, readPrompt, .{ a, operation, input, promptLimit(limits) }),
+    };
+    try validatePrompt(text, limits);
+    return text;
+}
+
+fn readPrompt(a: std.mem.Allocator, operation: foo.io.Context, input: std.Io.File, limit: usize) foo.io.Error![]const u8 {
+    var text: std.ArrayList(u8) = .empty;
+    var buffer: [8192]u8 = undefined;
+    while (true) {
+        try operation.check();
+        const capacity = @min(buffer.len, limit - text.items.len + 1);
+        const n = input.readStreaming(operation.io, &.{buffer[0..capacity]}) catch |err| switch (err) {
+            error.EndOfStream => return text.items,
+            error.Canceled => return error.Cancelled,
+            else => return error.IoFailure,
+        };
+        if (n > limit - text.items.len) return error.LimitExceeded;
+        try text.appendSlice(a, buffer[0..n]);
+    }
+}
+
+fn writeAll(output: std.Io.File, operation: foo.io.Context, bytes: []const u8) foo.io.Error!void {
+    var remaining = bytes;
+    while (remaining.len != 0) {
+        try operation.check();
+        const n = output.writeStreaming(operation.io, &.{}, &.{remaining}, 1) catch |err| switch (err) {
+            error.Canceled => return error.Cancelled,
+            error.BrokenPipe => return error.Disconnected,
+            else => return error.IoFailure,
+        };
+        if (n == 0) return error.IoFailure;
+        remaining = remaining[n..];
+    }
+}
+
+fn print(streams: Streams, operation: foo.io.Context, bytes: []const u8) Exit {
+    writeAll(streams.output, operation, bytes) catch |err| return failed(streams, operation, err);
+    return .success;
+}
+
+fn failed(streams: Streams, operation: foo.io.Context, err: foo.io.Error) Exit {
+    report(streams, operation.io, "{s}", .{@errorName(err)});
+    return Exit.fromError(err);
+}
+
+fn report(streams: Streams, io: std.Io, comptime format: []const u8, args: anytype) void {
+    var buffer: [1024]u8 = undefined;
+    const bytes = std.fmt.bufPrint(&buffer, "foo: " ++ format ++ "\n", args) catch "foo: command failed\n";
+    streams.diagnostic.writeStreamingAll(io, bytes) catch {};
+}
