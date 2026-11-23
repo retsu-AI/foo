@@ -46,7 +46,7 @@ A second prompt while a run is active receives `busy`. A cancel for an inactive 
 
 The prompt limit is the smaller of 1 MiB and the configured transcript byte limit. The input frame and encoded event cap is the smaller of 8 MiB and the configured wire-message limit. The configured JSON depth also applies. The output queue limits event count to the smaller of 64 and the configured pending-event limit. Queued event bytes have the same cap as an encoded event, with one additional frame in flight. Control replies have a separate allowance of 16 queued records and one reserved terminal record. Exhausting control capacity ends the connection.
 
-While output is blocked, the command reader can still process cancel. The runner observes cooperative cancellation, and the writer keeps its partially written record on an ordinary prompt cancel. The client must resume reading to receive the acknowledgment and result. EOF closes admission, cancels the prompt, joins the runner, and gives stdout up to 500 ms to drain. A broken pipe or drain timeout closes output and joins the workers. If transport ends during a write, the last physical line can be incomplete.
+While output is blocked, the command reader can still process cancel. The runner observes cooperative cancellation, and the writer keeps its partially written record on an ordinary prompt cancel. The client must resume reading to receive the acknowledgment and result. EOF or a handled process signal closes admission, cancels the prompt, joins the runner, and gives stdout up to 500 ms to drain. A broken pipe or drain timeout closes output and joins the workers. If transport ends during a write, the last physical line can be incomplete.
 
 ## Exit status and signals
 

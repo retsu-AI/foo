@@ -99,6 +99,7 @@ const Job = struct {
 };
 
 const Action = union(enum) { start: *Job, finish, end };
+const InputEnd = union(enum) { open, eof, failed: Error };
 
 const State = struct {
     a: Allocator,
@@ -108,7 +109,7 @@ const State = struct {
     event_buffer: []u8,
     mutex: Io.Mutex = .init,
     changed: Io.Condition = .init,
-    input_end: union(enum) { open, eof, failed: Error } = .open,
+    input_end: InputEnd = .open,
     output_failure: ?Error = null,
     writer_done: bool = false,
     aborting: bool = false,
@@ -126,12 +127,22 @@ const State = struct {
         for (state.queue[0..state.queued]) |frame| state.a.free(frame.bytes);
     }
 
+    fn closeInput(state: *State, end: InputEnd) bool {
+        if (state.input_end != .open) return false;
+        state.input_end = end;
+        if (state.job) |job| job.cancellation.request();
+        state.changed.broadcast(state.operation.io);
+        return true;
+    }
+
     fn next(state: *State) Error!Action {
         const io = state.operation.io;
         state.mutex.lockUncancelable(io);
         defer state.mutex.unlock(io);
         while (true) {
-            try state.operation.check();
+            if (state.input_end == .open) state.operation.check() catch |err| {
+                _ = state.closeInput(.{ .failed = err });
+            };
             if (state.output_failure) |err| return err;
             if (state.job) |job| {
                 switch (job.phase) {
@@ -152,12 +163,15 @@ const State = struct {
                 if (state.drain == null) state.drain = drain_interval.toDeadline(io);
                 state.changed.waitTimeout(io, &state.mutex, state.drain.?) catch |err| return switch (err) {
                     error.Canceled => error.Cancelled,
-                    error.Timeout => error.Disconnected,
+                    error.Timeout => switch (state.input_end) {
+                        .failed => |failure| failure,
+                        else => error.Disconnected,
+                    },
                 };
                 continue;
             }
             state.changed.waitTimeout(io, &state.mutex, check_interval) catch |err| switch (err) {
-                error.Canceled => return error.Cancelled,
+                error.Canceled => _ = state.closeInput(.{ .failed = error.Cancelled }),
                 error.Timeout => {},
             };
         }
@@ -237,7 +251,8 @@ const State = struct {
         const io = state.operation.io;
         state.mutex.lockUncancelable(io);
         defer state.mutex.unlock(io);
-        if (state.aborting or state.output_failure != null) return error.Disconnected;
+        if (state.aborting or state.output_failure != null or state.input_end != .open)
+            return error.Disconnected;
         switch (request.command) {
             .prompt => |prompt| {
                 if (state.job) |job| return state.reply(.{
@@ -311,9 +326,7 @@ fn readInput(state: *State, input: Io.File, storage: []u8) void {
     const read_error = readFrames(input, &framer, state.operation, sink);
     state.mutex.lockUncancelable(io);
     defer state.mutex.unlock(io);
-    state.input_end = if (read_error) |err| .{ .failed = err } else .eof;
-    if (state.job) |job| job.cancellation.request();
-    state.changed.broadcast(io);
+    if (!state.closeInput(if (read_error) |err| .{ .failed = err } else .eof)) return;
     if (!state.aborting and state.output_failure == null) {
         const code: protocol.ErrorCode = switch (read_error orelse return) {
             error.InvalidInput => .invalid_command,

@@ -366,6 +366,29 @@ class Cli(unittest.TestCase):
                 self.assertEqual(child.stdout.read(), b"")
 
     @unittest.skipUnless(os.name == "posix", "requires POSIX signal delivery")
+    def test_signal_drains_active_rpc_result(self):
+        with self.start("rpc", *self.options()) as child:
+            reader = Reader(child.stdout)
+            self.send(child, "active", "prompt", prompt="hold")
+            reader.until(lambda row: row["type"] == "accepted")
+            self.wait_marker("started", child)
+            child.send_signal(signal.SIGTERM)
+            reader.collect()
+            self.assertEqual(child.wait(timeout=TIMEOUT), 130)
+            self.assertEqual(self.marker.read_text(), "stopped")
+            self.assertEqual([row["outcome"]["reason"] for row in reader.results("active")], ["cancelled"])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "observe the blocked Linux pipe writer")
+    def test_signal_joins_active_rpc_when_stdout_stays_blocked(self):
+        with self.start("rpc", *self.options()) as child:
+            self.send(child, "active", "prompt", prompt="pressure")
+            self.wait_marker("started", child)
+            self.wait_for(lambda: self.wait_channel(child, "pipe_write"), "stdout writer did not block", child)
+            child.send_signal(signal.SIGTERM)
+            self.assertEqual(child.wait(timeout=TIMEOUT), 130)
+            self.assertEqual(self.marker.read_text(), "stopped")
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX signal delivery")
     def test_signal_allows_session_to_commit_cancelled_outcome(self):
         directory = self.directory / "journal"
         directory.mkdir()
