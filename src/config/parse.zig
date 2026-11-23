@@ -184,10 +184,17 @@ fn url(self: *Self, value: Value, path_name: []const u8) Error![]const u8 {
     const text = try self.string(value, path_name, false);
     for (text) |c| if (c <= 32 or c == 127 or c == '\\') return self.fail(path_name, .invalid_value);
     const parsed = std.Uri.parse(text) catch return self.fail(path_name, .invalid_value);
-    if ((!std.ascii.eqlIgnoreCase(parsed.scheme, "http") and !std.ascii.eqlIgnoreCase(parsed.scheme, "https")) or
-        parsed.host == null or parsed.host.?.percent_encoded.len == 0 or parsed.user != null or parsed.password != null or parsed.fragment != null or parsed.port == 0)
+    const scheme = if (std.ascii.eqlIgnoreCase(parsed.scheme, "https"))
+        "https"
+    else if (std.ascii.eqlIgnoreCase(parsed.scheme, "http"))
+        "http"
+    else
         return self.fail(path_name, .invalid_value);
-    return text;
+    if (parsed.host == null or parsed.host.?.percent_encoded.len == 0 or
+        parsed.user != null or parsed.password != null or parsed.fragment != null or parsed.port == 0)
+        return self.fail(path_name, .invalid_value);
+    if (std.mem.eql(u8, parsed.scheme, scheme)) return text;
+    return std.mem.concat(self.a, u8, &.{ scheme, text[parsed.scheme.len..] });
 }
 fn sameOrigin(a: []const u8, b: []const u8) bool {
     const left = std.Uri.parse(a) catch return false;

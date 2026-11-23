@@ -81,7 +81,7 @@ NUL is rejected in strings used by the schema. JSON text must be UTF-8. Integer 
 | `options` | JSON object, retained as `runtime.model.options_json` | `{}` |
 | `max_output_tokens` | Positive unsigned 32-bit integer | `4096` |
 
-Endpoints reject missing hosts, user information, fragments, whitespace, control bytes, backslashes, and port zero. Queries are accepted but hidden in effective output. Choose the protocol family explicitly and supply the complete POST URL. F04 owns the option allowlist and protocol-specific option validation. See [provider routes](../providers/routes.md) for endpoint and model selection.
+Endpoints reject missing hosts, user information, fragments, whitespace, control bytes, backslashes, and port zero. The resolver lowercases the URL scheme and preserves the remaining URL bytes. Effective output hides query values. Choose the protocol family explicitly and supply the complete POST URL. F04 owns the option allowlist and protocol-specific option validation. See [provider routes](../providers/routes.md) for endpoint and model selection.
 
 Header entries have exactly `name` and `value`. Header names use HTTP token characters and must be unique without regard to case. Values are literal strings or `{"environment":"VARIABLE_NAME"}` references. Literal header values reject line breaks and control characters other than tab.
 

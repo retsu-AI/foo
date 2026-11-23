@@ -283,7 +283,7 @@ test "MCP accepts explicit stdio environments and pinned HTTP revisions" {
             .{ .source = .file, .data = .{ .json =
             \\{"mcp_servers":[
             \\ {"id":"local","transport":{"stdio":{"argv":["fixture-bin","--stdio"],"environment":[{"name":"TOKEN","value":{"environment":"FIXTURE_TOKEN"}}]}}},
-            \\ {"id":"remote","revision":"2026-07-28","transport":{"http":{"url":"https://fixture.invalid/mcp"}}}
+            \\ {"id":"remote","revision":"2026-07-28","transport":{"http":{"url":"hTtP://fixture.invalid/Mcp"}}}
             \\]}
             } },
         },
@@ -294,7 +294,7 @@ test "MCP accepts explicit stdio environments and pinned HTTP revisions" {
     try same("--stdio", local.transport.stdio.argv[1]);
     try same("FIXTURE_TOKEN", local.transport.stdio.environment[0].value.environment);
     try equal(@as(?foo.config.McpRevision, .@"2026-07-28"), remote.revision);
-    try same("https://fixture.invalid/mcp", remote.transport.http.url);
+    try same("http://fixture.invalid/Mcp", remote.transport.http.url);
 }
 
 test "an invalid lower layer fails even if a higher layer replaces its value" {
@@ -335,11 +335,13 @@ test "model credentials and headers follow the endpoint origin" {
     const cases = [_]struct {
         patch: []const u8,
         credential: ?[]const u8,
+        endpoint: ?[]const u8 = null,
         headers: usize,
     }{
         .{
-            .patch = "{\"model\":{\"endpoint\":\"https://API.DEEPSEEK.COM:443/v1/chat/completions\"}}",
+            .patch = "{\"model\":{\"endpoint\":\"HTTPS://API.DEEPSEEK.COM:443/v1/chat/Completions\"}}",
             .credential = "DEEPSEEK_API_KEY",
+            .endpoint = "https://API.DEEPSEEK.COM:443/v1/chat/Completions",
             .headers = 2,
         },
         .{
@@ -372,6 +374,7 @@ test "model credentials and headers follow the endpoint origin" {
             try equal(foo.config.Source.command_line, (try sourceOf(result, "model.credential")).source);
         }
         try equal(case.headers, result.runtime.model.headers.len);
+        if (case.endpoint) |endpoint| try same(endpoint, result.runtime.model.endpoint);
         if (has(case.patch, "fixture-query-secret")) {
             try expect(has(result.runtime.model.endpoint, "fixture-query-secret"));
             try expect(!has(try config.effectiveJson(allocator, result), "fixture-query-secret"));
