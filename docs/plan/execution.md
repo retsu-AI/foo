@@ -2,7 +2,7 @@
 
 This is a plan for building foo with parallel development agents. It does not add agents, scheduling, delegation, or orchestration to the foo runtime. Foo executes one configured conversation; a separate application may later coordinate multiple foo processes.
 
-The machine-readable task inventory is [work-packages.json](work-packages.json). This dated local snapshot records F00 through F04 and F07 as `complete`. The other packages are `planned`. The reviewed F00 contracts are at `55bd327`. The [native Nightly run](https://github.com/retsu-AI/foo/actions/runs/43960887714) qualified bootstrap commit `5c53fde07c0923ce914f9139dc21f43d3e5779da`, including its 13 contract tests and bootstrap behavior in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64, plus Linux Nix checks. F01 implements HTTP and TLS and passed the loopback suite on Linux, macOS, and Windows in Debug and ReleaseSafe. [Native qualification results](../../src/transport/README.md#build-and-verify). F02 provides bounded stream framing and JSON-RPC correlation. [Wire handoff](../../src/wire/README.md). F03 implements the single-conversation runner. [Core handoff](../../src/core/README.md). F04 implements all three streaming provider codecs. [Provider handoff](../../src/providers/README.md). F07 provides in-memory sessions and a local journal. [Session handoff](../../src/session/README.md).
+The machine-readable task inventory is [work-packages.json](work-packages.json). This dated local snapshot records F00 through F05 and F07 as `complete`. The other packages are `planned`. The reviewed F00 contracts are at `55bd327`. The [native Nightly run](https://github.com/retsu-AI/foo/actions/runs/43960887714) qualified bootstrap commit `5c53fde07c0923ce914f9139dc21f43d3e5779da`, including its 13 contract tests and bootstrap behavior in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64, plus Linux Nix checks. F01 implements HTTP and TLS and passed the loopback suite on Linux, macOS, and Windows in Debug and ReleaseSafe. [Native qualification results](../../src/transport/README.md#build-and-verify). F02 provides bounded stream framing and JSON-RPC correlation. [Wire handoff](../../src/wire/README.md). F03 implements the single-conversation runner. [Core handoff](../../src/core/README.md). F04 implements all three streaming provider codecs. [Provider handoff](../../src/providers/README.md). F05 implements opt-in local tools and owned child processes. [Tool handoff](../../src/tools/README.md). [Process handoff](../../src/platform/process/README.md). F07 provides in-memory sessions and a local journal. [Session handoff](../../src/session/README.md).
 
 All packages have issues in the [foo Linear project](https://linear.app/retsu-ai/project/foo-86eb1e09a2a5), ENG-1473 through ENG-1486. `dependencies` map to Linear blockers. `completion_dependencies` map to related issues and prominent completion criteria, preserving early authoring. The manifest carries the exact ID/URL mapping; Linear is authoritative for current assignment and workflow status. At creation every issue is unassigned in Backlog.
 
@@ -69,17 +69,17 @@ finishable(package) = every(package.dependencies, status == complete)
 
 Use `in_progress` only after assignment and worktree creation; `review` means a concrete patch and handoff are ready; `complete` means the reviewed package was integrated and its package acceptance passed. `blocked` must name the missing prerequisite. A queued task, authored test, green fake test, merged module, cross-compiled binary, live protocol test, and qualified release are different evidence states.
 
-F05, F06, F08, F09, and F13 are ready to start in the current snapshot. F10 and F11 still depend on F09. F12 waits for the remaining implementation packages. Linear holds current assignments and workflow state. F13 may author fixtures now, but remains incomplete until native and live qualification is done against F12's candidate. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
+The [work-package board](index.html#packages) computes availability using the manifest. F10 and F11 still depend on F09. F12 waits for the remaining implementation packages. Linear holds current assignments and workflow state. F13 may author fixtures now, but remains incomplete until native and live qualification is done against F12's candidate. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
 
 ## Build commands and remaining targets
 
-Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` runs the `contracts`, `transport`, and `wire` suites. The core, provider, and session suites use package-local commands until the integrator registers them. The qualification targets remain planned. An empty suite must never count as acceptance.
+Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` runs the `contracts`, `transport`, `wire`, `tools`, and `platform-process` suites. The core, provider, and session suites use package-local commands pending registration. The qualification targets remain planned. An empty suite must never count as acceptance.
 
 | Command | Owner and current status |
 | --- | --- |
-| `zig build check` | Integrator. Formatting, executable compilation, and the contracts, transport, and wire suites |
+| `zig build check` | Integrator. Formatting, executable compilation, and all registered suites |
 | `zig build test -Dmodule=contracts` | F00. Implemented shared-contract and scripted-fake tests |
-| `zig build test -Dmodule=<module>` | Module owner. `contracts`, `transport`, and `wire` are available |
+| `zig build test -Dmodule=<module>` | Module owner. `contracts`, `transport`, `wire`, `tools`, and `platform-process` are available |
 | `zig build acceptance` | F13. Unavailable; planned native offline fixtures and loopback peers |
 | `zig build acceptance-live` | F13. Unavailable; planned opted-in interoperability with allowlist and spend cap |
 | `zig build bench` | F13. Unavailable; planned repeatable measurements and raw results |
@@ -135,9 +135,9 @@ All 17 provider fixtures passed in Debug and ReleaseSafe on Linux x86_64. The su
 
 **Owner:** tools/process agent. **Dependencies:** F00. **Paths:** `src/tools/**`, `src/platform/process/**`, `tests/tools/**`, `tests/platform-process/**`. **Consumes:** tool, I/O, events, and configuration contracts.
 
-Deliver optional read/write/exact-edit/process tools with explicit schemas and no hidden tool enablement. Edits validate all replacements against one source, reject ambiguous/overlapping edits, preserve unchanged bytes, and report the resulting write truthfully. Process execution owns child handles, streams stdout/stderr under byte limits, preserves exit/signal status, and cancels/reaps descendants using native facilities. Treat uncertain post-write cancellation separately from an operation that never ran.
+F05 supplies an opt-in coding preset with `read`, `write`, `edit`, and `exec`. A host can also enable custom executable tools through the same registry. The registry validates the arguments and applies host permission policy before dispatch. Custom executables receive JSON on stdin. The native adapter owns child handles, captures stdout and stderr separately, and provides cancellation and cleanup. The file tools validate exact replacements against one snapshot and distinguish uncertain writes from effects that never started. [Tool handoff](../../src/tools/README.md). [Process handoff](../../src/platform/process/README.md).
 
-Accept fixtures for binary/UTF-8 files, line endings, stale file observations, invalid batches with no writes, concurrent writers, large output, timeout, cancelled grandchildren, and cleanup after caller exit. Run native process tests on Windows, Linux, and macOS. Handoff describes filesystem atomicity limits, shell/argv semantics, output artifacts, process cleanup guarantees, and the tool schema set.
+Run the `tools` and `platform-process` suites for package acceptance. The native matrix covers Linux, macOS, and Windows in Debug and ReleaseSafe. F12 and F13 still require integrated candidate evidence, including native process cleanup from the supported frontends. The [Code Mode follow-up](../architecture.md#local-code-mode-follow-up) uses the same enabled tools.
 
 ### F06 — MCP client
 

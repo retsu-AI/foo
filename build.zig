@@ -71,7 +71,8 @@ pub fn build(b: *std.Build) void {
         if (builtin.os.tag == .windows) addTransportPath(b, run_wire_tests, prefix);
     }
 
-    const selected = b.option([]const u8, "module", "Test module (contracts, transport, or wire)") orelse "contracts";
+    const native = addProcessSuites(b, foo, support, target, optimize);
+    const selected = b.option([]const u8, "module", "Test module (contracts, transport, wire, tools, or platform-process)") orelse "contracts";
     const module_names = [_][]const u8{
         "contracts",   "transport", "wire", "core",   "providers", "tools", "platform-process",
         "mcp",         "session",   "acp",  "config", "cli",       "tui",   "platform-terminal",
@@ -88,6 +89,10 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(transport_test);
     } else if (std.mem.eql(u8, selected, "wire")) {
         test_step.dependOn(&run_wire_tests.step);
+    } else if (std.mem.eql(u8, selected, "tools")) {
+        test_step.dependOn(native.tools);
+    } else if (std.mem.eql(u8, selected, "platform-process")) {
+        test_step.dependOn(native.process);
     } else if (!std.mem.eql(u8, selected, "contracts")) {
         test_step.dependOn(&b.addFail(b.fmt("Module '{s}' is unavailable: its implementation and test root have not landed", .{selected})).step);
     } else {
@@ -108,11 +113,84 @@ pub fn build(b: *std.Build) void {
     check.dependOn(bootstrap);
     check.dependOn(transport_test);
     check.dependOn(&run_wire_tests.step);
+    check.dependOn(native.tools);
+    check.dependOn(native.process);
     for ([_][]const u8{ "acceptance", "acceptance-live", "bench", "release" }) |name| {
         b.step(name, "Reserved; unavailable until the owning work package lands").dependOn(
             &b.addFail(b.fmt("'{s}' is unavailable in the contracts bootstrap", .{name})).step,
         );
     }
+}
+
+fn addProcessSuites(
+    b: *std.Build,
+    foo: *std.Build.Module,
+    support: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.Optimize,
+) struct { tools: *std.Build.Step, process: *std.Build.Step } {
+    const use_guardian = target.result.os.tag == .linux or target.result.os.tag == .macos;
+    const process = b.addModule("foo-process", .{
+        .root_source_file = b.path("src/platform/process/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = use_guardian,
+    });
+    process.addImport("foo", foo);
+    if (use_guardian) process.addCSourceFile(.{ .file = b.path("src/platform/process/posix_native.c") });
+
+    const tools = b.addModule("foo-tools", .{
+        .root_source_file = b.path("src/tools/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = use_guardian,
+    });
+    tools.addImport("foo", foo);
+    const suite = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("tests/tools/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "foo", .module = foo },
+            .{ .name = "tools", .module = tools },
+            .{ .name = "support", .module = support },
+        },
+    }) });
+    const exec = b.createModule(.{
+        .root_source_file = b.path("src/tools/exec.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "foo", .module = foo }},
+    });
+    const probe = b.addExecutable(.{
+        .name = "process-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/platform-process/probe.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "foo", .module = foo },
+                .{ .name = "process", .module = process },
+                .{ .name = "exec", .module = exec },
+            },
+        }),
+    });
+    const fixtures = b.addSystemCommand(&.{if (builtin.os.tag == .windows) "python" else "python3"});
+    fixtures.addFileArg(b.path("tests/platform-process/fixtures.py"));
+    fixtures.addArtifactArg(probe);
+    if (use_guardian) {
+        const guardian = b.addExecutable(.{
+            .name = "foo-process-guardian",
+            .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
+        });
+        guardian.root_module.addCSourceFiles(.{ .files = &.{
+            "src/platform/process/guardian.c",
+            "src/platform/process/posix_native.c",
+        } });
+        b.installArtifact(guardian);
+        fixtures.addArtifactArg(guardian);
+    }
+    return .{ .tools = &b.addRunArtifact(suite).step, .process = &fixtures.step };
 }
 
 fn addTransportSuite(
