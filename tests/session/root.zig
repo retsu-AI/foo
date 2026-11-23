@@ -314,12 +314,16 @@ test "artifact reference cannot follow a symlink outside the session" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var tmp = testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
-    var store = try journal.Store.create(allocator, native, tmp.dir, fixture.identity, .{});
+    try tmp.dir.writeFile(native, .{ .sub_path = "outside", .data = "x" });
+    try tmp.dir.createDir(native, "session", .default_dir);
+    const dir = try tmp.dir.openDir(native, "session", .{ .iterate = true });
+    defer dir.close(native);
+    var store = try journal.Store.create(allocator, native, dir, fixture.identity, .{});
     defer store.deinit();
     try fixture.begin(&store, operation);
     _ = try store.commit(operation, fixture.intent);
 
-    try tmp.dir.symLink(native, "../outside", "artifact-alias", .{});
+    try dir.symLink(native, "../outside", "artifact-alias", .{});
     var result = fixture.result;
     result.artifact = .{ .relative_path = "artifact-alias", .bytes = 1 };
     try fails(error.InvalidArtifact, store.commit(operation, .{ .tool_result = result }));
