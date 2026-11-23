@@ -1,0 +1,456 @@
+const std = @import("std");
+const builtin = @import("builtin");
+const foo = @import("foo");
+
+const Allocator = std.mem.Allocator;
+const Dir = std.Io.Dir;
+const File = std.Io.File;
+const Sha256 = std.crypto.hash.sha2.Sha256;
+const base64 = std.base64.standard;
+
+pub const Error = foo.io.Error || error{
+    MissingFile,
+    UnsupportedTarget,
+    PermissionDenied,
+    StaleFile,
+    InvalidEncoding,
+    InvalidRange,
+    MissingMatch,
+    AmbiguousMatch,
+    OverlappingMatches,
+    CommitUncertain,
+    CommitCancelled,
+};
+
+pub const Encoding = enum { utf8, base64 };
+pub const Digest = [Sha256.digest_length]u8;
+pub const Replacement = struct { old: []const u8, new: []const u8 };
+pub const Read = struct { encoding: Encoding, offset: usize, max_bytes: usize };
+pub const Edit = struct { expected: Digest, replacements: []const Replacement };
+pub const Mutation = union(enum) { write: []const u8, edit: Edit };
+
+pub const Payload = struct { content: []const u8, truncated: bool = false };
+
+const Target = struct { dir: Dir, name: []const u8 };
+const Snapshot = struct { stat: File.Stat, bytes: []const u8, digest: Digest };
+const ReadResult = struct {
+    encoding: Encoding,
+    offset: usize,
+    bytes: usize = 0,
+    total_bytes: usize,
+    sha256: []const u8,
+    truncated: bool = false,
+    content: []const u8 = "",
+
+    fn format(self: *ReadResult, bytes: []const u8, encoded: []u8, buffer: []u8) error{WriteFailed}![]const u8 {
+        self.bytes = bytes.len;
+        self.truncated = self.offset != 0 or bytes.len != self.total_bytes;
+        self.content = if (self.encoding == .base64) base64.Encoder.encode(encoded, bytes) else bytes;
+        var writer = std.Io.Writer.fixed(buffer);
+        try std.json.Stringify.value(self.*, .{}, &writer);
+        return writer.buffered();
+    }
+};
+
+pub const max_replacements = 64;
+
+pub fn absolute(path: []const u8) bool {
+    if (builtin.os.tag == .windows) {
+        return path.len >= 3 and std.ascii.isAlphabetic(path[0]) and
+            path[1] == ':' and std.fs.path.isSep(path[2]);
+    }
+    return std.fs.path.isAbsolute(path);
+}
+
+pub fn resolve(allocator: Allocator, cwd: []const u8, path: []const u8) Error![]const u8 {
+    if (!absolute(cwd) or path.len == 0 or std.mem.indexOfScalar(u8, path, 0) != null or
+        std.fs.path.isSep(path[path.len - 1])) return error.InvalidInput;
+
+    if (builtin.os.tag == .windows) {
+        const tail = if (absolute(path)) path[3..] else path;
+        if (std.fs.path.isSep(path[0]) or std.mem.indexOfScalar(u8, tail, ':') != null)
+            return error.InvalidInput;
+        var parts = std.mem.tokenizeAny(u8, tail, "/\\");
+        while (parts.next()) |part| {
+            if (std.mem.eql(u8, part, ".") or std.mem.eql(u8, part, "..")) continue;
+            if (part[part.len - 1] == '.' or part[part.len - 1] == ' ') return error.InvalidInput;
+        }
+    }
+
+    const name = std.fs.path.basename(path);
+    if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, ".."))
+        return error.InvalidInput;
+    return std.fs.path.resolveAlloc(allocator, &.{ cwd, path });
+}
+
+pub fn decode(allocator: Allocator, encoding: Encoding, input: []const u8, limit: usize) Error![]const u8 {
+    if (encoding == .utf8) {
+        if (input.len > limit) return error.LimitExceeded;
+        if (!std.unicode.utf8ValidateSlice(input)) return error.InvalidEncoding;
+        return input;
+    }
+    const size = base64.Decoder.calcSizeForSlice(input) catch return error.InvalidEncoding;
+    if (size > limit) return error.LimitExceeded;
+    const bytes = try allocator.alloc(u8, size);
+    base64.Decoder.decode(bytes, input) catch return error.InvalidEncoding;
+    return bytes;
+}
+
+pub fn decodeDigest(value: []const u8) Error!Digest {
+    var out: Digest = undefined;
+    if (value.len != out.len * 2) return error.InvalidInput;
+    _ = std.fmt.hexToBytes(&out, value) catch return error.InvalidInput;
+    return out;
+}
+
+fn digest(bytes: []const u8) Digest {
+    var out: Digest = undefined;
+    Sha256.hash(bytes, &out, .{});
+    return out;
+}
+
+fn fileError(err: anyerror) Error {
+    return switch (err) {
+        error.Canceled => error.Cancelled,
+        error.FileNotFound => error.MissingFile,
+        error.AccessDenied, error.PermissionDenied, error.ReadOnlyFileSystem => error.PermissionDenied,
+        error.IsDir, error.NotDir, error.SymLinkLoop => error.UnsupportedTarget,
+        error.BadPathName, error.NameTooLong => error.InvalidInput,
+        error.FileTooBig, error.DiskQuota, error.NoSpaceLeft => error.LimitExceeded,
+        else => error.IoFailure,
+    };
+}
+
+fn openTarget(op: foo.io.Context, path: []const u8) Error!Target {
+    try op.check();
+    if (!absolute(path)) return error.InvalidInput;
+    const parent = std.fs.path.dirname(path) orelse return error.InvalidInput;
+    const root_len: usize = if (builtin.os.tag == .windows) 3 else 1;
+    var dir = Dir.openDirAbsolute(op.io, path[0..root_len], .{}) catch |err| return fileError(err);
+    errdefer dir.close(op.io);
+    var parts = std.mem.tokenizeScalar(u8, parent[@min(parent.len, root_len)..], std.fs.path.sep);
+    while (parts.next()) |part| {
+        try op.check();
+        const child = dir.openDir(op.io, part, .{ .follow_symlinks = false }) catch |err| return fileError(err);
+        dir.close(op.io);
+        dir = child;
+        if (builtin.os.tag == .windows) {
+            const stat = dir.stat(op.io) catch |err| return fileError(err);
+            if (stat.kind != .directory) return error.UnsupportedTarget;
+        }
+    }
+    return .{ .dir = dir, .name = std.fs.path.basename(path) };
+}
+
+fn targetStat(target: Target, op: foo.io.Context) Error!?File.Stat {
+    const stat = target.dir.statFile(op.io, target.name, .{ .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return fileError(err),
+    };
+    if (stat.kind != .file) return error.UnsupportedTarget;
+    return stat;
+}
+
+fn sameStat(a: File.Stat, b: File.Stat) bool {
+    return a.inode == b.inode and a.size == b.size and a.mtime.nanoseconds == b.mtime.nanoseconds and
+        a.ctime.nanoseconds == b.ctime.nanoseconds and a.permissions == b.permissions;
+}
+
+fn openCheckedFile(target: Target, op: foo.io.Context, mode: Dir.OpenFileOptions.Mode, original: File.Stat) Error!File {
+    const file = switch (builtin.os.tag) {
+        .linux, .macos => try openNonblocking(target, op, mode),
+        else => target.dir.openFile(op.io, target.name, .{
+            .mode = mode,
+            .allow_directory = false,
+            .follow_symlinks = false,
+        }) catch |err| return fileError(err),
+    };
+    errdefer file.close(op.io);
+    const stat = file.stat(op.io) catch |err| return fileError(err);
+    if (stat.kind == .directory) return error.UnsupportedTarget;
+    if (stat.kind != .file or !sameStat(original, stat)) return error.StaleFile;
+    return file;
+}
+
+fn openNonblocking(target: Target, op: foo.io.Context, mode: Dir.OpenFileOptions.Mode) Error!File {
+    const posix = std.posix;
+    const openat = if (posix.lfs64_abi) posix.system.openat64 else posix.system.openat;
+    const path = posix.toPosixPath(target.name) catch |err| return fileError(err);
+    const flags: posix.O = .{
+        .ACCMODE = switch (mode) {
+            .read_only => .RDONLY,
+            .write_only => .WRONLY,
+            .read_write => unreachable,
+        },
+        .CLOEXEC = true,
+        .NOCTTY = true,
+        .NOFOLLOW = true,
+        .NONBLOCK = true,
+    };
+    const permissions: posix.mode_t = 0;
+    while (true) {
+        try op.check();
+        op.io.checkCancel() catch return error.Cancelled;
+        const rc = openat(target.dir.handle, &path, flags, permissions);
+        switch (posix.errno(rc)) {
+            .SUCCESS => return .{ .handle = @intCast(rc), .flags = .{ .nonblocking = true } },
+            .INTR => continue,
+            .NOENT, .SRCH => return error.MissingFile,
+            .NXIO => return error.StaleFile,
+            .ISDIR, .NOTDIR, .LOOP => return error.UnsupportedTarget,
+            .ACCES, .PERM, .ROFS => return error.PermissionDenied,
+            .INVAL, .NAMETOOLONG, .ILSEQ => return error.InvalidInput,
+            .FBIG, .OVERFLOW, .NOSPC => return error.LimitExceeded,
+            else => return error.IoFailure,
+        }
+    }
+}
+
+fn snapshot(allocator: Allocator, op: foo.io.Context, target: Target, limit: usize) Error!?Snapshot {
+    try op.check();
+    const original = try targetStat(target, op) orelse return null;
+    if (original.size > limit) return error.LimitExceeded;
+    const file = openCheckedFile(target, op, .read_only, original) catch |err| switch (err) {
+        error.MissingFile => return error.StaleFile,
+        else => return err,
+    };
+    defer file.close(op.io);
+
+    const bytes = try allocator.alloc(u8, @intCast(original.size));
+    var offset: usize = 0;
+    while (offset < bytes.len) {
+        try op.check();
+        const end = offset + @min(64 * 1024, bytes.len - offset);
+        const n = file.readPositionalAll(op.io, bytes[offset..end], offset) catch |err| return fileError(err);
+        if (n != end - offset) return error.StaleFile;
+        offset = end;
+    }
+    const finished = file.stat(op.io) catch |err| return fileError(err);
+    const path_now = try targetStat(target, op) orelse return error.StaleFile;
+    if (!sameStat(original, finished) or !sameStat(finished, path_now)) return error.StaleFile;
+    try op.check();
+    return .{ .stat = finished, .bytes = bytes, .digest = digest(bytes) };
+}
+
+pub fn read(
+    allocator: Allocator,
+    scratch: Allocator,
+    op: foo.io.Context,
+    path: []const u8,
+    args: Read,
+    file_limit: usize,
+    output_limit: usize,
+) Error!Payload {
+    const target = try openTarget(op, path);
+    defer target.dir.close(op.io);
+    const source = try snapshot(scratch, op, target, file_limit) orelse return error.MissingFile;
+    if (args.offset > source.bytes.len) return error.InvalidRange;
+    if (args.encoding == .utf8) {
+        if (!std.unicode.utf8ValidateSlice(source.bytes)) return error.InvalidEncoding;
+        if (args.offset < source.bytes.len and continuation(source.bytes[args.offset]))
+            return error.InvalidRange;
+    }
+
+    const remaining = source.bytes[args.offset..];
+    const max_bytes = @min(args.max_bytes, remaining.len, output_limit);
+    const sha256 = std.fmt.bytesToHex(source.digest, .lower);
+    const response_buffer = try scratch.alloc(u8, @min(output_limit, 256 +| 6 *| max_bytes));
+    const encoded: []u8 = if (args.encoding == .base64)
+        try scratch.alloc(u8, base64.Encoder.calcSize(max_bytes))
+    else
+        &.{};
+    var result: ReadResult = .{
+        .encoding = args.encoding,
+        .offset = args.offset,
+        .total_bytes = source.bytes.len,
+        .sha256 = &sha256,
+    };
+
+    var low: usize = 0;
+    var high: usize = max_bytes;
+    var best: ?usize = null;
+    while (low <= high) {
+        try op.check();
+        const count = if (best == null and high == max_bytes) high else low + (high - low) / 2;
+        const bytes = remaining[0..prefixLength(args.encoding, remaining, count)];
+        const content = result.format(bytes, encoded, response_buffer) catch {
+            if (count == 0) break;
+            high = count - 1;
+            continue;
+        };
+        if (count == high) return .{ .content = try allocator.dupe(u8, content), .truncated = result.truncated };
+        best = count;
+        low = count + 1;
+    }
+    const fit = best orelse return error.LimitExceeded;
+    const bytes = remaining[0..prefixLength(args.encoding, remaining, fit)];
+    try op.check();
+    const content = result.format(bytes, encoded, response_buffer) catch unreachable;
+    return .{ .content = try allocator.dupe(u8, content), .truncated = result.truncated };
+}
+
+fn continuation(byte: u8) bool {
+    return byte & 0xc0 == 0x80;
+}
+
+fn prefixLength(encoding: Encoding, bytes: []const u8, count: usize) usize {
+    if (encoding != .utf8 or count == bytes.len) return count;
+    var end = count;
+    while (continuation(bytes[end])) end -= 1;
+    return end;
+}
+
+const Match = struct {
+    begin: usize,
+    end: usize,
+    replacement: []const u8,
+
+    fn lessThan(_: void, a: Match, b: Match) bool {
+        return a.begin < b.begin;
+    }
+};
+
+fn applyEdit(scratch: Allocator, op: foo.io.Context, original: Snapshot, edit: Edit, limit: usize) Error![]const u8 {
+    if (!std.mem.eql(u8, &original.digest, &edit.expected)) return error.StaleFile;
+    if (edit.replacements.len == 0 or edit.replacements.len > max_replacements) return error.InvalidInput;
+
+    const bytes = original.bytes;
+    var matches: [max_replacements]Match = undefined;
+    for (edit.replacements, matches[0..edit.replacements.len]) |replacement, *match| {
+        try op.check();
+        if (replacement.old.len == 0) return error.InvalidInput;
+        const first = std.mem.indexOf(u8, bytes, replacement.old) orelse return error.MissingMatch;
+        if (std.mem.indexOfPos(u8, bytes, first + 1, replacement.old) != null)
+            return error.AmbiguousMatch;
+        match.* = .{ .begin = first, .end = first + replacement.old.len, .replacement = replacement.new };
+    }
+    const ordered = matches[0..edit.replacements.len];
+    std.mem.sort(Match, ordered, {}, Match.lessThan);
+
+    var previous_end: usize = 0;
+    var removed: usize = 0;
+    var added: usize = 0;
+    for (ordered) |match| {
+        if (match.begin < previous_end) return error.OverlappingMatches;
+        removed += match.end - match.begin;
+        added = std.math.add(usize, added, match.replacement.len) catch return error.LimitExceeded;
+        previous_end = match.end;
+    }
+    const size = std.math.add(usize, bytes.len - removed, added) catch return error.LimitExceeded;
+    if (size > limit) return error.LimitExceeded;
+    const result = try scratch.alloc(u8, size);
+    var start: usize = 0;
+    var written: usize = 0;
+    for (ordered) |match| {
+        const unchanged = bytes[start..match.begin];
+        @memcpy(result[written..][0..unchanged.len], unchanged);
+        written += unchanged.len;
+        @memcpy(result[written..][0..match.replacement.len], match.replacement);
+        written += match.replacement.len;
+        start = match.end;
+    }
+    @memcpy(result[written..], bytes[start..]);
+    return result;
+}
+
+pub fn mutate(
+    allocator: Allocator,
+    scratch: Allocator,
+    op: foo.io.Context,
+    writer_lock: *std.Io.Mutex,
+    path: []const u8,
+    mutation: Mutation,
+    file_limit: usize,
+    output_limit: usize,
+) Error!Payload {
+    while (!writer_lock.tryLock()) {
+        try op.check();
+        op.io.sleep(.fromMilliseconds(1), .awake) catch return error.Cancelled;
+    }
+    defer writer_lock.unlock(op.io);
+    try op.check();
+    const target = try openTarget(op, path);
+    defer target.dir.close(op.io);
+    const original = try snapshot(scratch, op, target, file_limit);
+    const replacement = switch (mutation) {
+        .write => |bytes| bytes,
+        .edit => |edit| try applyEdit(scratch, op, original orelse return error.MissingFile, edit, file_limit),
+    };
+    if (replacement.len > file_limit) return error.LimitExceeded;
+    if (original) |entry| {
+        if (builtin.os.tag != .windows and entry.stat.permissions.readOnly()) return error.PermissionDenied;
+        // Windows needs read access to query the identity of the writable handle.
+        const mode: Dir.OpenFileOptions.Mode = if (builtin.os.tag == .windows) .read_write else .write_only;
+        const writable = try openCheckedFile(target, op, mode, entry.stat);
+        writable.close(op.io);
+    }
+
+    const sha256 = std.fmt.bytesToHex(digest(replacement), .lower);
+    const result = try std.json.Stringify.valueAlloc(allocator, .{
+        .bytes = replacement.len,
+        .sha256 = sha256[0..],
+    }, .{});
+    errdefer allocator.free(result);
+    if (result.len > output_limit) return error.LimitExceeded;
+
+    try op.check();
+    var temporary = target.dir.createFileAtomic(op.io, target.name, .{
+        .permissions = if (builtin.os.tag == .windows) .default_file else .fromMode(0o600),
+        .replace = original != null,
+    }) catch |err| return fileError(err);
+    defer {
+        const protection = op.io.swapCancelProtection(.blocked);
+        defer _ = op.io.swapCancelProtection(protection);
+        temporary.deinit(op.io);
+    }
+    var offset: usize = 0;
+    while (offset < replacement.len) {
+        try op.check();
+        const end = offset + @min(64 * 1024, replacement.len - offset);
+        temporary.file.writeStreamingAll(op.io, replacement[offset..end]) catch |err| return fileError(err);
+        offset = end;
+    }
+    if (builtin.os.tag != .windows) {
+        if (original) |entry| {
+            const permissions: File.Permissions = .fromMode(entry.stat.permissions.toMode() & 0o777);
+            temporary.file.setPermissions(op.io, permissions) catch |err| return fileError(err);
+        }
+    }
+    temporary.file.sync(op.io) catch |err| return fileError(err);
+
+    const current = try snapshot(scratch, op, target, file_limit);
+    if (original) |entry| {
+        const now = current orelse return error.StaleFile;
+        if (!sameStat(entry.stat, now.stat) or !std.mem.eql(u8, &entry.digest, &now.digest))
+            return error.StaleFile;
+    } else if (current != null) return error.StaleFile;
+
+    const approved = openTarget(op, path) catch |err| switch (err) {
+        error.MissingFile, error.UnsupportedTarget => return error.StaleFile,
+        else => return err,
+    };
+    defer approved.dir.close(op.io);
+    const staged_parent = target.dir.stat(op.io) catch |err| return fileError(err);
+    const approved_parent = approved.dir.stat(op.io) catch |err| return fileError(err);
+    if (!sameStat(staged_parent, approved_parent)) return error.StaleFile;
+
+    try op.check();
+    if (original != null) {
+        temporary.replace(op.io) catch |err| return commitError(err);
+    } else {
+        temporary.link(op.io) catch |err| return commitError(err);
+    }
+    return .{ .content = result };
+}
+
+fn commitError(err: anyerror) Error {
+    return switch (err) {
+        error.Canceled => error.CommitCancelled,
+        error.PathAlreadyExists, error.FileNotFound => error.StaleFile,
+        error.AccessDenied, error.PermissionDenied, error.ReadOnlyFileSystem => error.PermissionDenied,
+        error.IsDir, error.NotDir, error.SymLinkLoop => error.UnsupportedTarget,
+        error.BadPathName, error.NameTooLong => error.InvalidInput,
+        error.FileTooBig, error.DiskQuota, error.NoSpaceLeft => error.LimitExceeded,
+        else => error.CommitUncertain,
+    };
+}

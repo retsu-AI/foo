@@ -217,21 +217,21 @@
         "src/contracts/config.zig"
       ],
       "deliverables": [
-        "Optional read, write, exact-edit, and process tools with explicit schemas.",
-        "Validated disjoint edits and truthful write/uncertain-effect outcomes.",
-        "Bounded stdout/stderr and native child/descendant cancellation, reaping, exit/signal reporting."
+        "An opt-in coding preset with read, write, edit, and exec in an otherwise empty tool catalog.",
+        "Custom executables with validated JSON input, one JSON result, and host-configured arguments, environment, permissions, and limits.",
+        "Validated disjoint edits with explicit outcomes and native process ownership with bounded output, cancellation, and exit reporting."
       ],
       "acceptance": [
-        "Invalid/stale/ambiguous/overlapping edit fixtures cause no unintended writes; unchanged bytes and line endings are preserved.",
-        "Large output, timeout, cancellation, grandchildren, and parent-exit cleanup are tested natively on all three OSes.",
-        "Shell/argv behavior and filesystem atomicity claims are documented and exercised."
+        "File fixtures reject stale, ambiguous, and overlapping edits without modifying the target and preserve untouched bytes.",
+        "Tool fixtures exercise opt-in selection, permissions, invalid JSON, output limits, and exit reporting.",
+        "The tools and platform-process suites cover native Linux, macOS, and Windows in Debug and ReleaseSafe, including cancellation and descendant cleanup."
       ],
       "handoff": [
-        "Tool schemas, failure/outcome examples, filesystem guarantees and limits.",
-        "Process cleanup matrix, artifact/output limits, native commands and results.",
-        "No unrestricted-shell path allowlist is represented as an OS sandbox."
+        "Tool schemas, failure outcomes, and filesystem behavior and limits.",
+        "Process cleanup behavior, output limits, and native verification commands.",
+        "Local Code Mode is a follow-up that calls the same enabled registry from a sandbox."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1478",
         "uuid": "3f9cbd57-42b4-4b87-93f9-7657a1069476",

@@ -1,0 +1,43 @@
+name: Native tools
+on:
+  pull_request:
+    paths:
+      - 'src/platform/process/**'
+      - 'src/tools/**'
+      - 'src/contracts/**'
+      - 'tests/platform-process/**'
+      - 'tests/tools/**'
+      - 'build.zig'
+      - '.zig-version'
+      - '.github/workflows/native-tools.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-tools-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    name: Tools and process (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-zig
+        id: zig
+      - name: Process fixtures
+        run: |
+          zig build test -Dmodule=platform-process --summary all
+          zig build test -Dmodule=platform-process -Doptimize=ReleaseSafe --summary all
+      - name: Tool fixtures
+        if: ${{ !cancelled() && steps.zig.outcome == 'success' }}
+        run: |
+          zig build test -Dmodule=tools --summary all
+          zig build test -Dmodule=tools -Doptimize=ReleaseSafe --summary all
