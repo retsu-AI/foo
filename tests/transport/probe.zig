@@ -3,9 +3,11 @@ const foo = @import("foo");
 const io = foo.io;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
+const large_body_bytes = 2 * 1024 * 1024;
 
 const Mode = enum {
     stream,
+    large,
     replay,
     redirect,
     proxy,
@@ -40,7 +42,9 @@ pub fn main(init: std.process.Init) !void {
 
     const runtime = try foo.transport.Runtime.init();
     defer runtime.deinit();
-    var client = try runtime.client(init.gpa, .{
+    var storage: [8192]u8 = undefined;
+    var bounded = std.heap.FixedBufferAllocator.init(&storage);
+    var client = try runtime.client(if (mode == .large) bounded.allocator() else init.gpa, .{
         .ca_pem = ca_pem,
         .proxy = switch (mode) {
             .proxy, .proxy_rejected, .proxy_limited => .{ .http = .{
@@ -49,17 +53,24 @@ pub fn main(init: std.process.Init) !void {
             } },
             else => .direct,
         },
-        .limits = if (mode == .limits or mode == .proxy_limited) .{
-            .request_bytes = 16,
-            .header_bytes = 128,
-            .header_count = 5,
-        } else .{},
+        .limits = switch (mode) {
+            .limits, .proxy_limited => .{ .request_bytes = 16, .header_bytes = 128, .header_count = 5 },
+            .large => .{ .header_bytes = 256, .header_count = 8 },
+            else => .{},
+        },
     });
     defer client.deinit();
 
     var probe: Probe = .{ .system_io = init.io, .http = client.interface() };
     switch (mode) {
         .stream => try stream(&probe, url),
+        .large => {
+            var req = request(url);
+            req.max_response_bytes = large_body_bytes;
+            const response = try probe.exchange(req, .count_only, null, 5000).expectSuccess();
+            try expectEqual(@as(?u16, 200), response.status);
+            try expectEqual(@as(usize, large_body_bytes), response.body_len);
+        },
         .replay => try replay(&probe, url),
         .redirect => try redirect(&probe, url, extra orelse return error.MissingRedirectUrl),
         .proxy => {
@@ -170,7 +181,7 @@ const Result = struct {
 };
 
 const Response = struct {
-    const Gate = enum { normal, announce, wait_for_input };
+    const Gate = enum { normal, announce, wait_for_input, count_only };
 
     gate: Gate,
     status: ?u16 = null,
@@ -206,9 +217,13 @@ const Response = struct {
     fn write(context: *anyopaque, operation: io.Context, bytes: []const u8) io.Error!void {
         const self: *Response = @ptrCast(@alignCast(context));
         if (self.status == null) return error.InvalidInput;
-        if (bytes.len > self.body.len - self.body_len) return error.LimitExceeded;
         const first = self.body_len == 0;
-        @memcpy(self.body[self.body_len..][0..bytes.len], bytes);
+        if (self.gate == .count_only) {
+            if (!std.mem.allEqual(u8, bytes, 'z')) return error.InvalidInput;
+        } else {
+            if (bytes.len > self.body.len - self.body_len) return error.LimitExceeded;
+            @memcpy(self.body[self.body_len..][0..bytes.len], bytes);
+        }
         self.body_len += bytes.len;
         if (first and self.gate != .normal) {
             std.Io.File.stdout().writeStreamingAll(operation.io, "body\n") catch return error.IoFailure;

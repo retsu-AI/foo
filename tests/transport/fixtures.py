@@ -188,6 +188,17 @@ class Transport(unittest.TestCase):
                     break
             self.assert_no_accept(server)
 
+    def test_streams_large_body_with_fixed_client_allocator(self):
+        with listen() as server, self.probe("large", url(server)) as process:
+            with accept(server) as peer, peer.makefile("rb") as stream:
+                self.assertEqual(read_head(stream)[0], b"GET /fixture HTTP/1.1\r\n")
+                peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2097152\r\n\r\n")
+                block = b"z" * 16384
+                peer.sendall(block)
+                self.body_arrived(process)
+                for _ in range(127):
+                    peer.sendall(block)
+
     def test_redirect_and_http_error_are_caller_visible(self):
         with listen() as first, listen() as second:
             with self.probe("redirect", url(first), url(second)):
