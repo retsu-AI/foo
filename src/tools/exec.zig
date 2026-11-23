@@ -132,13 +132,19 @@ fn observe(op: foo.io.Context, cleanup_ms: u64, child: foo.io.Child, input: []co
     tasks.concurrent(.stdin, feed, .{ child, op, input }) catch return fail(&observation, error.Unavailable);
     tasks.concurrent(.exit, wait, .{ child, op }) catch return fail(&observation, error.Unavailable);
 
+    var input_disconnected = false;
     for (0..responses.len) |_| {
         const completion = tasks.await() catch return fail(&observation, error.Cancelled);
         switch (completion) {
-            .stdin, .stdout, .stderr => |value| value catch |err| return fail(&observation, err),
+            .stdin => |value| value catch |err| {
+                if (err != error.Disconnected) return fail(&observation, err);
+                input_disconnected = true;
+            },
+            .stdout, .stderr => |value| value catch |err| return fail(&observation, err),
             .exit => |value| observation.exit = value catch |err| return fail(&observation, err),
         }
     }
+    if (input_disconnected) observation.failure = error.Disconnected;
     return observation;
 }
 

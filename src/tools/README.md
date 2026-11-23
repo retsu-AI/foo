@@ -1,6 +1,6 @@
-# Custom executable tools
+# Built-in and custom tools
 
-The `tools` module exposes a run-scoped registry of executable tools. The host supplies descriptors and a `foo.io.Spawner`. Only descriptors named in `foo.config.Resolved.enabled_tools` enter the catalog. The default catalog is empty. Unknown enabled names and duplicate names among enabled tools make initialization fail.
+The `foo-tools` build module exposes a run-scoped registry for opt-in built-ins and configured executables. The host supplies descriptors and a `foo.io.Spawner`. Only names selected in `foo.config.Resolved.enabled_tools` enter the catalog. The default catalog is empty. Unknown enabled names and duplicate names among enabled tools make initialization fail.
 
 ## Registry API
 
@@ -60,9 +60,9 @@ All other keywords and types cause registry initialization to fail. References c
 
 Set `Options.builtins` explicitly and select the names in `settings.enabled_tools`. Use
 `tools.coding_preset` to select all four. The preset needs an absolute working
-directory. Configured custom tools can share the same catalog. Each enabled name
-has one definition, with an error if a custom tool collides with an enabled preset
-name. The same schema, permission, cancellation, and revocation checks apply.
+directory. Configured custom tools can share the same catalog. A custom
+descriptor with the same name explicitly replaces a preset tool. The same
+schema, permission, cancellation, and revocation checks apply.
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
@@ -78,7 +78,9 @@ publishing the replacement. New files publish without overwriting a concurrent
 creator. Existing files use same-directory staging and replacement. The registry
 serializes its own writes, and the adapter checks for external changes immediately
 before replacement. A writer outside the registry can still race that last check.
-The tools operate on one file per call.
+The tools operate on one file per call and reject symbolic links, including in
+ancestor directories. New files use mode 0600 on POSIX and replacements preserve
+basic POSIX permission bits. The registry requires local backends for these tools.
 
 `exec` passes literal argv elements with the configured cwd and environment. To
 run shell syntax, call a shell explicitly in argv. This gives the command the

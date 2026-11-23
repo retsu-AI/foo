@@ -111,8 +111,10 @@ pub const Registry = struct {
 
         var budget: foo.io.Budget = .{ .limit = limits.catalog_bytes };
         for (selected, declarations, entries) |maybe_descriptor, *decl, *entry| {
-            const kind = if (options.builtins != null) std.meta.stringToEnum(builtin_tools.Kind, decl.spec.name) else null;
-            if (kind != null and maybe_descriptor != null) return error.InvalidInput;
+            const kind = if (maybe_descriptor == null and options.builtins != null)
+                std.meta.stringToEnum(builtin_tools.Kind, decl.spec.name)
+            else
+                null;
             const action: Action = if (kind) |builtin_kind| builtins: {
                 if (builtin_kind == .exec) {
                     if (settings.process_backend != .local) return error.Unavailable;

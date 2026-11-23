@@ -485,4 +485,9 @@ test "an explicitly installed builtin and a custom descriptor share one catalog"
 
     resolved.files_backend = .client;
     try expectError(error.Unavailable, tools.Registry.init(allocator, resolved, &.{echo}, options));
+    var replacement = echo;
+    replacement.name = "write";
+    var replaced = try tools.Registry.init(allocator, resolved, &.{ replacement, echo }, options);
+    defer replaced.deinit();
+    try expectEqualStrings(tools.backend, replaced.interface().declarations[0].identity.backend);
 }

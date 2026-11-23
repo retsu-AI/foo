@@ -65,6 +65,12 @@ pub fn main(init: std.process.Init) !void {
         try std.Io.File.stdout().writeStreamingAll(io, "{} {}");
         return;
     }
+    if (std.mem.eql(u8, mode, "closed-stdin")) {
+        std.Io.File.stdin().close(io);
+        try io.sleep(.fromMilliseconds(40), .awake);
+        try std.Io.File.stderr().writeStreamingAll(io, "rejected");
+        std.process.exit(31);
+    }
     if (std.mem.eql(u8, mode, "large")) {
         var buffer: [8192]u8 = @splat('X');
         for (0..stream_size / buffer.len) |_| {
@@ -172,6 +178,10 @@ fn checkExec(init: std.process.Init, op: foo.io.Context, spawner: foo.io.Spawner
     try expect(std.mem.indexOf(u8, bounded.content, "\"stdout_bytes\":262144") != null);
     try expect(std.mem.indexOf(u8, bounded.content, "\"stderr_bytes\":262144") != null);
     try checkSpool(allocator, op.io, bounded.artifact.?);
+    const closed = try exec.run(allocator, op, "closed", .{ .argv = &.{ executable, "closed-stdin" }, .input = payload }, options);
+    try expectEqual(.failure, closed.status);
+    try expect(std.mem.indexOf(u8, closed.content, "\"exit_code\":31") != null);
+    try expect(std.mem.indexOf(u8, closed.content, "cmVqZWN0ZWQ=") != null);
     var invalid_options = options;
     invalid_options.spool.?.max_bytes = 4;
     const rejected = try exec.runCommand(allocator, op, "d", &.{ executable, "large" }, invalid_options);
