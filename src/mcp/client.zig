@@ -199,12 +199,13 @@ pub const Client = struct {
                 -32022 => {
                     if (reply.failure.data_json) |raw| {
                         const details = try self.decodeObject(allocator, raw);
-                        if (try supports(details.get("supported"), legacy)) return null;
+                        const supported = details.get("supported");
+                        if (!try supports(supported, modern) and try supports(supported, legacy)) return null;
                     }
                     return error.UnsupportedRevision;
                 },
                 -32020, -32021 => {},
-                else => return null,
+                else => if (self.link_io.kind != .http) return null,
             }
         }
         const discovery = try self.complete(allocator, modern, reply);

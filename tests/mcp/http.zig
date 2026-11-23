@@ -579,6 +579,58 @@ test "modern discovery distinguishes recognized version errors from a legacy pro
     try main.done();
 }
 
+test "HTTP auto does not initialize legacy after a modern discovery error" {
+    const cases = [_]struct { status: u16, body: []const u8, expected: link.Error }{
+        .{
+            .status = 404,
+            .body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"method not found\"}}",
+            .expected = error.RpcFailure,
+        },
+        .{
+            .status = 400,
+            .body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32022,\"message\":\"unsupported\",\"data\":{\"supported\":[\"2026-07-28\",\"2025-11-25\"]}}}",
+            .expected = error.UnsupportedRevision,
+        },
+    };
+    for (cases) |fixture| {
+        var main: Script = .{ .steps = &.{.{
+            .body_part = "\"method\":\"server/discover\"",
+            .status = fixture.status,
+            .response_headers = &json,
+            .chunks = &.{fixture.body},
+        }} };
+        var cancel: io.Cancellation = .{};
+        var http = try Http.init(.{ .transport = main.transport(), .url = url, .scratch_allocator = t.allocator });
+        defer http.deinit();
+        var client = try mcp.Client.init(http.interface(), .{ .server_id = "fixture" });
+        try t.expectError(fixture.expected, client.connect(t.allocator, opFor(&cancel)));
+        try main.done();
+    }
+}
+
+test "HTTP auto initializes legacy after an unrecognized 400 or explicit legacy-only advertisement" {
+    const signals = [_]Step{
+        .{ .body_part = "\"method\":\"server/discover\"", .status = 400, .chunks = &.{"legacy fixture"} },
+        .{
+            .body_part = "\"method\":\"server/discover\"",
+            .status = 400,
+            .response_headers = &json,
+            .chunks = &.{"{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32022,\"message\":\"unsupported\",\"data\":{\"supported\":[\"2025-11-25\"]}}}"},
+        },
+    };
+    var handshake = init_step;
+    handshake.chunks = &.{"{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"protocolVersion\":\"2025-11-25\",\"serverInfo\":{\"name\":\"fixture\",\"version\":\"1\"},\"capabilities\":{}}}"};
+    for (signals) |signal| {
+        var main: Script = .{ .steps = &.{ signal, handshake, initialized_step } };
+        var cancel: io.Cancellation = .{};
+        var http = try Http.init(.{ .transport = main.transport(), .url = url, .scratch_allocator = t.allocator });
+        defer http.deinit();
+        var client = try mcp.Client.init(http.interface(), .{ .server_id = "fixture" });
+        try t.expectEqual(legacy, (try client.connect(t.allocator, opFor(&cancel))).revision);
+        try main.done();
+    }
+}
+
 test "modern auth redirects disconnect and cancellation produce no follow-up request" {
     var cancel: io.Cancellation = .{};
     var main: Script = .{ .cancellation = &cancel, .steps = &.{
