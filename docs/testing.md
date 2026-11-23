@@ -4,13 +4,13 @@ foo is ready for its first release when its CLI, TUI, MCP client, and ACP agent 
 
 This is a proposed qualification specification for the runtime. F00 supplies common test fakes and build registration. Its [native Nightly run](https://github.com/retsu-AI/foo/actions/runs/43960887714) qualified bootstrap commit `5c53fde07c0923ce914f9139dc21f43d3e5779da` with 13 contract tests and bootstrap behavior in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64. Linux Nix checks also passed. This completes F00, not first-release qualification. The test count belongs to that baseline; later contract changes need their own affected checks.
 
-See [the shared contracts](../src/contracts/README.md) for implemented commands and their limits. F01 implements streaming HTTP and TLS with deterministic loopback fixtures. [Transport handoff](../src/transport/README.md). F02 adds wire fixtures and fuzz entrypoints. [Wire handoff](../src/wire/README.md). Remaining runtime modules and their acceptance fixtures remain planned. F13 may author fixtures now, but final qualification depends on the integrated F12 release candidate.
+See [the shared contracts](../src/contracts/README.md) for implemented commands and their limits. F01 implements streaming HTTP and TLS with deterministic loopback fixtures. [Transport handoff](../src/transport/README.md). F02 adds wire fixtures and fuzz entrypoints. [Wire handoff](../src/wire/README.md). F03 passed 26 scripted core tests on Linux in Debug and ReleaseSafe. [Core verification](../src/core/README.md#verification). F13 may author fixtures now, but final qualification depends on the integrated F12 release candidate.
 
 ## Build and test commands
 
 | Command | Purpose and current status |
 | --- | --- |
-| `zig build test -Dmodule=core` | Unavailable until F03 supplies core behavior tests; F00 has registered module selection |
+| `zig build test -Dmodule=core` | Integrator registration pending. Run the landed suite with the [direct Zig command](../src/core/README.md#verification). |
 | `zig build test -Dmodule=transport` | Run native HTTP and TLS loopback fixtures with the pinned transport profile |
 | `zig build test -Dmodule=wire` | Run the framing, JSON-RPC, and correlation fixtures |
 | `zig build check` | Check formatting, compile the executable, and run the contracts, transport, and wire suites |

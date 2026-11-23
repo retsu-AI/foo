@@ -148,9 +148,9 @@
       "handoff": [
         "State-transition examples, contract assumptions, and exact tests.",
         "Cancellation/commit/limit behavior and artifacts for frontend consumers.",
-        "Remaining provider-native integration checks clearly separated from fake results."
+        "The integrator owns public facade and root test registration. Live provider and durable journal checks remain pending."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1476",
         "uuid": "6ff69b87-2595-48df-8e92-23652c83dd06",
