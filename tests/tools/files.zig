@@ -95,9 +95,17 @@ fn sha256(bytes: []const u8) [Sha256.digest_length * 2]u8 {
     return std.fmt.bytesToHex(digest, .lower);
 }
 
+fn expectOutcome(result: foo.tool.Result, status: foo.tool.Status, effect: foo.tool.Effect) !void {
+    errdefer std.debug.print("Tool result ({s}, {s}): {s}\n", .{
+        @tagName(result.status), @tagName(result.effect), result.content,
+    });
+    try testing.expectEqual(status, result.status);
+    try testing.expectEqual(effect, result.effect);
+}
+
 fn expectRejected(result: foo.tool.Result, message: []const u8) !void {
-    try testing.expectEqual(.failure, result.status);
-    try testing.expectEqual(.not_started, result.effect);
+    try expectOutcome(result, .failure, .not_started);
+    errdefer std.debug.print("Expected tool result to contain \"{s}\", found \"{s}\"\n", .{ message, result.content });
     try testing.expect(std.mem.indexOf(u8, result.content, message) != null);
 }
 
@@ -192,7 +200,7 @@ test "binary write, read, and edit preserve bytes" {
         .expected_sha256 = read.sha256,
         .replacements = @as([]const Replacement, &.{.{ .old = "/0E=", .new = "gA==" }}),
     });
-    try testing.expectEqual(.success, (try fixture.run(edit, fixture.operation(), output_limit)).status);
+    try expectOutcome(try fixture.run(edit, fixture.operation(), output_limit), .success, .observed);
     try fixture.expectFile("\x00\x80");
 }
 
@@ -207,8 +215,7 @@ test "edit resolves every unique disjoint replacement against one snapshot" {
         .{ .old = "α", .new = "β" },
     });
     const result = try fixture.run(edit, fixture.operation(), output_limit);
-    try testing.expectEqual(.success, result.status);
-    try testing.expectEqual(.observed, result.effect);
+    try expectOutcome(result, .success, .observed);
     const expected = "head\r\nβ\r\nlast\r\ntail\r\n";
     const metadata = try std.json.parseFromSliceLeaky(struct { bytes: usize, sha256: []const u8 }, fixture.arena.allocator(), result.content, .{});
     try testing.expectEqual(@as(usize, expected.len), metadata.bytes);
@@ -414,8 +421,7 @@ test "cancellation distinguishes pre-commit and uncertain rename" {
     op.io.vtable = &vtable;
 
     const at_rename = try fixture.run(write, op, output_limit);
-    try testing.expectEqual(.cancelled, at_rename.status);
-    try testing.expectEqual(.uncertain, at_rename.effect);
+    try expectOutcome(at_rename, .cancelled, .uncertain);
     try fixture.expectFile("original");
 
     fixture.cancellation.request();

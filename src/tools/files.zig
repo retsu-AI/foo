@@ -379,7 +379,9 @@ pub fn mutate(
     if (replacement.len > file_limit) return error.LimitExceeded;
     if (original) |entry| {
         if (builtin.os.tag != .windows and entry.stat.permissions.readOnly()) return error.PermissionDenied;
-        const writable = try openCheckedFile(target, op, .write_only, entry.stat);
+        // Windows needs read access to query the identity of the writable handle.
+        const mode: Dir.OpenFileOptions.Mode = if (builtin.os.tag == .windows) .read_write else .write_only;
+        const writable = try openCheckedFile(target, op, mode, entry.stat);
         writable.close(op.io);
     }
 
