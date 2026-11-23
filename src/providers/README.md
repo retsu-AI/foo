@@ -15,7 +15,7 @@ F04 implements streaming Responses, Chat Completions, and Anthropic Messages thr
 
 `Adapter.interface()` returns `foo.provider.Provider`. Requests, the environment map, and sink callbacks remain borrowed until `stream_fn` returns. Returned message slices belong to the caller's result allocator. Request, attempt, and per-event arenas reclaim intermediate allocations before return. No callback outlives the call.
 
-The model endpoint is the complete request URL, including its path. The adapter does not append a route or inspect the model name to infer capabilities. The model ID goes to the wire unchanged. F12 owns application composition and the public library facade.
+The model endpoint is the complete request URL, including its path. The adapter uses the configured URL and the selected protocol family. The model ID goes to the wire unchanged. F12 owns application composition and the public library facade. [Provider routes and model settings](routes.md)
 
 ## Credentials and headers
 
@@ -87,4 +87,4 @@ Retries apply only to `Unavailable` or `Disconnected` while delivery is definite
 
 [Provider fixtures and probe commands](../../tests/providers/README.md) cover deterministic codec behavior and local gateway integration. F13 still owns real-provider qualification, current model option compatibility, provider throttling, and native platform coverage. Synthetic fixtures and loopback responses do not establish live model behavior.
 
-The protocol rules follow the official [OpenAI reasoning guide](https://developers.openai.com/api/docs/guides/reasoning), [OpenAI Responses migration guide](https://developers.openai.com/api/docs/guides/migrate-to-responses), [Anthropic streaming guide](https://platform.claude.com/docs/en/build-with-claude/streaming), and [xAI reasoning guide](https://docs.x.ai/developers/model-capabilities/text/reasoning). Provider and gateway routes require the documented family profile, rather than inference from their URL.
+The protocol rules follow the official [OpenAI reasoning guide](https://developers.openai.com/api/docs/guides/reasoning), [OpenAI Responses migration guide](https://developers.openai.com/api/docs/guides/migrate-to-responses), [Anthropic streaming guide](https://platform.claude.com/docs/en/build-with-claude/streaming), and [xAI reasoning guide](https://docs.x.ai/developers/model-capabilities/text/reasoning).
