@@ -72,11 +72,11 @@ pub fn build(b: *std.Build) void {
     }
 
     const native = addProcessSuites(b, foo, support, target, optimize);
-    const selected = b.option([]const u8, "module", "Test module (contracts, transport, wire, tools, or platform-process)") orelse "contracts";
+    const selected = b.option([]const u8, "module", "Test module") orelse "contracts";
     const module_names = [_][]const u8{
         "contracts",   "transport", "wire", "core",   "providers", "tools", "platform-process",
         "mcp",         "session",   "acp",  "config", "cli",       "tui",   "platform-terminal",
-        "integration",
+        "integration", "codemode",
     };
     var known = false;
     for (module_names) |name| {
@@ -93,6 +93,8 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(native.tools);
     } else if (std.mem.eql(u8, selected, "platform-process")) {
         test_step.dependOn(native.process);
+    } else if (std.mem.eql(u8, selected, "codemode")) {
+        test_step.dependOn(native.codemode);
     } else if (!std.mem.eql(u8, selected, "contracts")) {
         test_step.dependOn(&b.addFail(b.fmt("Module '{s}' is unavailable: its implementation and test root have not landed", .{selected})).step);
     } else {
@@ -115,6 +117,7 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&run_wire_tests.step);
     check.dependOn(native.tools);
     check.dependOn(native.process);
+    check.dependOn(native.codemode);
     for ([_][]const u8{ "acceptance", "acceptance-live", "bench", "release" }) |name| {
         b.step(name, "Reserved; unavailable until the owning work package lands").dependOn(
             &b.addFail(b.fmt("'{s}' is unavailable in the contracts bootstrap", .{name})).step,
@@ -128,7 +131,7 @@ fn addProcessSuites(
     support: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.Optimize,
-) struct { tools: *std.Build.Step, process: *std.Build.Step } {
+) struct { tools: *std.Build.Step, process: *std.Build.Step, codemode: *std.Build.Step } {
     const use_guardian = target.result.os.tag == .linux or target.result.os.tag == .macos;
     const process = b.addModule("foo-process", .{
         .root_source_file = b.path("src/platform/process/root.zig"),
@@ -190,7 +193,73 @@ fn addProcessSuites(
         b.installArtifact(guardian);
         fixtures.addArtifactArg(guardian);
     }
-    return .{ .tools = &b.addRunArtifact(suite).step, .process = &fixtures.step };
+    return .{
+        .tools = &b.addRunArtifact(suite).step,
+        .process = &fixtures.step,
+        .codemode = addCodeModeSuite(b, foo, tools, support, target, optimize),
+    };
+}
+
+fn addCodeModeSuite(
+    b: *std.Build,
+    foo: *std.Build.Module,
+    tools: *std.Build.Module,
+    support: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.Optimize,
+) *std.Build.Step {
+    const os = target.result.os.tag;
+    if (os != .linux and os != .macos and os != .windows)
+        return &b.addFail("Code Mode supports Linux, macOS, and Windows").step;
+
+    const interpreter = b.dependency("quickjs", .{});
+    const codemode = b.addModule("foo-codemode", .{
+        .root_source_file = b.path("src/codemode/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "foo", .module = foo }},
+    });
+    codemode.addIncludePath(interpreter.path(""));
+    codemode.addCSourceFiles(.{
+        .root = interpreter.path(""),
+        .files = &.{ "quickjs.c", "dtoa.c", "libregexp.c", "libunicode.c" },
+        .flags = if (os == .windows)
+            &.{ "-std=gnu11", "-O1", "-DWIN32_LEAN_AND_MEAN", "-funsigned-char" }
+        else
+            &.{ "-std=gnu11", "-O1", "-D_GNU_SOURCE", "-funsigned-char" },
+    });
+    codemode.addCSourceFile(.{ .file = b.path("src/codemode/vm.c") });
+    if (os == .linux) {
+        codemode.linkSystemLibrary("m", .{});
+        codemode.linkSystemLibrary("pthread", .{});
+    }
+    const session = b.createModule(.{
+        .root_source_file = b.path("src/session/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "foo", .module = foo }},
+    });
+    const core = b.createModule(.{
+        .root_source_file = b.path("src/core/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "foo", .module = foo }},
+    });
+    const suite = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("tests/codemode/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "foo", .module = foo },
+            .{ .name = "codemode", .module = codemode },
+            .{ .name = "tools", .module = tools },
+            .{ .name = "session", .module = session },
+            .{ .name = "core", .module = core },
+            .{ .name = "support", .module = support },
+        },
+    }) });
+    return &b.addRunArtifact(suite).step;
 }
 
 fn addTransportSuite(

@@ -3,6 +3,11 @@
     .fingerprint = 0x8c736521d2bdb2bf,
     .version = "0.0.0",
     .minimum_zig_version = "0.17.1",
-    .dependencies = .{},
+    .dependencies = .{
+        .quickjs = .{
+            .url = "https://codeload.github.com/quickjs-ng/quickjs/tar.gz/refs/tags/v0.18.0",
+            .hash = "N-V-__8AAEonRQDLGmzE5rsLWtgt8tvcL5ZUZSQFr0vq4ree",
+        },
+    },
     .paths = .{ "build.zig", "build.zig.zon", "src", "tests", ".zig-version" },
 }
