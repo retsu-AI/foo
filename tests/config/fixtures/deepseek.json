@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "model": {
+    "family": "openai_chat",
+    "endpoint": "https://api.deepseek.com/chat/completions",
+    "id": "deepseek-v4-pro",
+    "credential": {"environment": "DEEPSEEK_API_KEY"},
+    "headers": [
+      {"name": "X-Account", "value": "fixture-header-secret"},
+      {"name": "X-Workspace", "value": {"environment": "FOO_WORKSPACE"}}
+    ],
+    "options": {
+      "chat_token_limit": "max_tokens",
+      "chat_reasoning_content": true,
+      "thinking": {"type": "enabled"}
+    },
+    "max_output_tokens": 8192
+  },
+  "system_prompt": {"text": "Use the text supplied by the operator.", "append_files": []},
+  "process": {
+    "environment": [{"name": "DEMO_SECRET", "value": "fixture-process-secret"}]
+  },
+  "mcp_servers": [
+    {
+      "id": "lookup",
+      "revision": "2025-11-25",
+      "transport": {
+        "http": {
+          "url": "https://lookup.invalid/mcp",
+          "headers": [{"name": "X-API-Key", "value": "fixture-mcp-secret"}]
+        }
+      }
+    }
+  ]
+}

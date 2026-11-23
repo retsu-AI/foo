@@ -1,0 +1,35 @@
+{
+  "credential": {
+    "environment": "DEEPSEEK_API_KEY"
+  },
+  "model_headers": [
+    {
+      "name": "X-Account",
+      "value": {
+        "literal": "<redacted>"
+      }
+    },
+    {
+      "name": "X-Workspace",
+      "value": {
+        "environment": "FOO_WORKSPACE"
+      }
+    }
+  ],
+  "mcp_headers": [
+    {
+      "name": "X-API-Key",
+      "value": {
+        "literal": "<redacted>"
+      }
+    }
+  ],
+  "process_environment": [
+    {
+      "name": "DEMO_SECRET",
+      "value": {
+        "literal": "<redacted>"
+      }
+    }
+  ]
+}
