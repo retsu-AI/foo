@@ -28,6 +28,17 @@ jobs:
       - name: Build pinned transport libraries
         if: runner.os != 'Windows'
         run: python .github/scripts/build-transport.py "$FOO_TRANSPORT_PREFIX"
+      - name: Install NASM for OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'nasm-2.16.03-win64.zip'
+          Invoke-WebRequest -Uri 'https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip' -OutFile $archive -MaximumRetryCount 2 -RetryIntervalSec 2
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '3ee4782247bcb874378d02f7eab4e294a84d3d15f3f6ee2de2f47a46aa7226e6') {
+            throw 'NASM archive SHA-256 mismatch'
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP
+          Join-Path $env:RUNNER_TEMP 'nasm-2.16.03' >> $env:GITHUB_PATH
       - name: Build pinned transport libraries (Windows)
         if: runner.os == 'Windows'
         shell: cmd
