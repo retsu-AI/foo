@@ -357,7 +357,7 @@ fn fullPath(arena: Allocator, from: [:0]const u16) io.Error![:0]u16 {
 fn commandLine(arena: Allocator, argv: []const []const u8) io.Error![:0]u16 {
     if (std.mem.findScalar(u8, argv[0], '"') != null) return error.InvalidInput;
     var line: std.ArrayList(u8) = .empty;
-    // Windows parses argv[0] as a pathname with its own quoting rules.
+    // The C runtime applies separate quoting rules to argv[0].
     try line.append(arena, '"');
     try line.appendSlice(arena, argv[0]);
     try line.append(arena, '"');

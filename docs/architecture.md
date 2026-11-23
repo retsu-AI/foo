@@ -152,7 +152,7 @@ The native process adapter provides independent stdin, stdout, and stderr. Tool 
 
 ### Local Code Mode follow-up
 
-A later opt-in Code Mode can run model-authored code in a local sandbox. The sandbox calls tools through the same enabled registry and follows its permission, cancellation, and resource limits. Local calls work without an MCP server. MCP tools can use the same interface once the host exposes them through the registry.
+A later opt-in Code Mode can run model-authored code in a local sandbox. The sandbox calls tools through the same enabled registry and follows its permission, cancellation, and resource limits. Local calls work without an MCP server. MCP tools can use the same interface once the host exposes them through the registry. [Code Mode follow-up](https://linear.app/retsu-ai/issue/ENG-1533/add-opt-in-local-code-mode-over-the-enabled-tool-registry).
 
 ## MCP and ACP
 

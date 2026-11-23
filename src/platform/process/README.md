@@ -20,7 +20,9 @@ On Windows, a kill-on-close Job Object owns each command tree from creation.
 Windows 10 or newer supplies the creation-time Job attribute. The backend resolves
 executables from the configured directory and effective child `PATH`. Use an
 explicit interpreter for shell scripts. The full 32-bit process exit code is
-preserved as an `i32` bit pattern.
+preserved as an `i32` bit pattern. An embedding host must use explicit child
+handle lists for its concurrent Windows launches. Broad inheritance in a
+separate launch can retain a tool pipe outside its Job.
 
 The child owns three independent pipe endpoints. Callers can read stdout and
 stderr while writing stdin and waiting. Use at most one outstanding operation per

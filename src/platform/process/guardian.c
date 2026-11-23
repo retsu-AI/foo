@@ -169,7 +169,6 @@ int main(int argc, char *argv[]) {
     pid_t owner = (pid_t)strtol(argv[1], NULL, 10);
     if (owner <= 0 || getppid() != owner) return 0;
 
-    // The payload must inherit only its three standard streams.
     if (fcntl(FOO_PROCESS_LEASE_FD, F_SETFD, FD_CLOEXEC) == -1 ||
         fcntl(FOO_PROCESS_STATUS_FD, F_SETFD, FD_CLOEXEC) == -1 ||
         signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
