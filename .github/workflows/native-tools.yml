@@ -31,11 +31,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-zig
-      - name: Debug
+        id: zig
+      - name: Process fixtures
         run: |
-          zig build test -Dmodule=tools
-          zig build test -Dmodule=platform-process
-      - name: ReleaseSafe
+          zig build test -Dmodule=platform-process --summary all
+          zig build test -Dmodule=platform-process -Doptimize=ReleaseSafe --summary all
+      - name: Tool fixtures
+        if: ${{ !cancelled() && steps.zig.outcome == 'success' }}
         run: |
-          zig build test -Dmodule=tools -Doptimize=ReleaseSafe
-          zig build test -Dmodule=platform-process -Doptimize=ReleaseSafe
+          zig build test -Dmodule=tools --summary all
+          zig build test -Dmodule=tools -Doptimize=ReleaseSafe --summary all
