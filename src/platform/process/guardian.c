@@ -10,7 +10,12 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#ifdef __linux__
+#ifdef __APPLE__
+#include <libproc.h>
+#include <stdbool.h>
+#include <sys/proc.h>
+#include <time.h>
+#elif defined(__linux__)
 #include <dirent.h>
 #include <limits.h>
 #include <sys/prctl.h>
@@ -121,6 +126,68 @@ static int launch(pid_t *child, pid_t owner, const char *cwd, char *argv[]) {
     return failure;
 }
 
+#ifdef __APPLE__
+static bool group_drained(pid_t group) {
+    int capacity = proc_listpids(PROC_PGRP_ONLY, (uint32_t)group, NULL, 0);
+    if (capacity <= 0) return false;
+    pid_t *members = calloc(2, (size_t)capacity);
+    if (members == NULL) return false;
+    pid_t *confirmed = members + (size_t)capacity / sizeof(*members);
+
+    errno = 0;
+    int bytes = proc_listpids(PROC_PGRP_ONLY, (uint32_t)group, members, capacity);
+    bool drained = errno == 0 && bytes >= 0 && bytes < capacity && (size_t)bytes % sizeof(*members) == 0;
+    for (size_t i = 0; drained && i < (size_t)bytes / sizeof(*members); ++i) {
+        struct proc_bsdshortinfo member;
+        drained = proc_pidinfo(members[i], PROC_PIDT_SHORTBSDINFO, 1, &member, sizeof(member)) == sizeof(member) &&
+            member.pbsi_pgid == (uint32_t)group && member.pbsi_status == SZOMB;
+    }
+
+    // A member can fork before it turns into a zombie. Check the group again after inspecting its members.
+    if (drained) {
+        errno = 0;
+        drained = proc_listpids(PROC_PGRP_ONLY, (uint32_t)group, confirmed, capacity) == bytes &&
+            errno == 0 && memcmp(members, confirmed, (size_t)bytes) == 0;
+    }
+    free(members);
+    return drained;
+}
+
+static pid_t reap_if_exited(pid_t child, int *status) {
+    pid_t waited;
+    do {
+        waited = waitpid(child, status, WNOHANG);
+    } while (waited == -1 && errno == EINTR);
+    return waited;
+}
+
+static int stop_and_reap(pid_t child, int *status) {
+    struct timespec deadline;
+    if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1) {
+        (void)reap_if_exited(child, status);
+        return -1;
+    }
+    deadline.tv_sec += 5;
+
+    for (;;) {
+        // The direct child may have changed groups. Its unreaped PID still reserves the original PGID.
+        (void)kill(child, SIGKILL);
+        // XNU snapshots the group before signalling and can report EPERM for a group of zombies.
+        if (kill(-child, SIGKILL) == -1 && errno != ESRCH && errno != EPERM) break;
+        if (group_drained(child)) {
+            pid_t waited = reap_if_exited(child, status);
+            if (waited != 0) return waited == child ? 0 : -1;
+        }
+
+        struct timespec now;
+        if (clock_gettime(CLOCK_MONOTONIC, &now) == -1 || now.tv_sec > deadline.tv_sec ||
+            (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec)) break;
+        if (poll(NULL, 0, 10) == -1 && errno != EINTR) break;
+    }
+    (void)reap_if_exited(child, status);
+    return -1;
+}
+#else
 static int stop_and_reap(pid_t child, int *status) {
     // Keep the group leader's PID reserved until the group signal has been sent.
     if (kill(-child, SIGKILL) == -1 && errno != ESRCH) return -1;
@@ -140,6 +207,7 @@ static int stop_and_reap(pid_t child, int *status) {
 #endif
     return 0;
 }
+#endif
 
 #ifdef __linux__
 static int close_other_fds(void) {
