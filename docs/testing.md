@@ -16,6 +16,7 @@ F09 passed all 16 configuration fixtures on Linux in Debug and ReleaseSafe. The 
 | `zig build test -Dmodule=providers` | Integrator registration pending. Run the landed suite with the [direct Zig command](../tests/providers/README.md). |
 | `zig build test -Dmodule=session` | Integrator registration pending. Run the landed suite and native crash probe with the [session test command](../src/session/README.md#verification-and-integration). |
 | `zig build test -Dmodule=config` | Integrator registration pending. Run the landed suite with the [direct Zig command](../tests/config/README.md). |
+| `zig build test -Dmodule=cli` | Integrator registration pending. Run the landed [real-pipe CLI suite](../src/cli/README.md#integration-and-verification). |
 | `zig build test -Dmodule=transport` | Run native HTTP and TLS loopback fixtures with the pinned transport profile |
 | `zig build test -Dmodule=wire` | Run the framing, JSON-RPC, and correlation fixtures |
 | `zig build test -Dmodule=tools` | Run the coding and custom executable tool fixtures |
@@ -100,6 +101,10 @@ ACP tests use a scripted editor client as well as at least one real compatible e
 Test editor-provided filesystem and terminal capabilities. An editor denial or missing capability must not silently fall back to unrestricted local execution. Test editor-supplied MCP servers, including the advertised HTTP support and explicit rejection of unsupported transport variants. Session IDs select independent state but do not imply concurrent active loops: the v1 one-active-run contract remains in force.
 
 Advertise optional features only after their exact behavior passes. In particular, session loading, image/audio content, legacy SSE transport, automatic authentication flows, and draft protocol revisions cannot be inferred from text/tools working.
+
+## CLI process fixtures
+
+All 18 CLI subprocess tests passed on native Linux x86_64 in Debug and ReleaseSafe. The fixture cross-built for macOS arm64 and Windows x86_64. Native execution on those platforms remains open. The cases cover piped stdin, config and credentials, journal resume, busy prompts, cancellation under blocked stdout, EOF, output failure, and signals. [CLI verification commands](../src/cli/README.md#integration-and-verification).
 
 ## Native platform and TUI matrix
 
