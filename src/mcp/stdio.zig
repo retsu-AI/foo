@@ -129,7 +129,7 @@ pub const Stdio = struct {
     }
 
     pub fn interface(self: *Stdio) link.Link {
-        return .{ .context = self, .exchange_fn = exchange, .shutdown_fn = shutdownLink };
+        return .{ .context = self, .kind = .stdio, .exchange_fn = exchange, .shutdown_fn = shutdownLink };
     }
 
     /// Like the MCP protocol, the link requires a new ID for each request.

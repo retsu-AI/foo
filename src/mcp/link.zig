@@ -40,6 +40,7 @@ pub const Observer = struct {
 
 pub const Link = struct {
     context: *anyopaque,
+    kind: enum { scripted, stdio, http } = .scripted,
     exchange_fn: *const fn (*anyopaque, std.mem.Allocator, foo.io.Context, Request, ?Observer, *foo.io.Delivery) Error!Reply,
     shutdown_fn: *const fn (*anyopaque, foo.io.Context) Error!void,
 

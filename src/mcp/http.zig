@@ -82,7 +82,7 @@ pub const Http = struct {
     }
 
     pub fn interface(self: *Http) link.Link {
-        return .{ .context = self, .exchange_fn = exchange, .shutdown_fn = shutdown };
+        return .{ .context = self, .kind = .http, .exchange_fn = exchange, .shutdown_fn = shutdown };
     }
 
     fn exchange(raw: *anyopaque, result: Allocator, op: io.Context, request: link.Request, observer: ?link.Observer, delivery: *io.Delivery) link.Error!link.Reply {

@@ -45,9 +45,15 @@ pub fn main(init: std.process.Init) !void {
     if (blocked) return checkBlockedWrite(stdio, allocator, op);
     if (eql(mode, "modern")) return checkModern(stdio, init.gpa, allocator, op);
     if (eql(mode, "legacy")) return checkLegacy(stdio, allocator, op);
+    if (eql(mode, "compose-modern") or eql(mode, "compose-legacy"))
+        return checkComposition(stdio, allocator, op, if (eql(mode, "compose-modern")) modern else legacy);
     if (eql(mode, "slow") or eql(mode, "cancel") or eql(mode, "tree")) return checkInterrupted(stdio, allocator, op, mode);
 
     var delivery: foo.io.Delivery = .unsent;
+    if (eql(mode, "modern-reverse")) {
+        try std.testing.expectError(error.MalformedPeer, exchange(stdio, allocator, op, modern, .{ .number = 1 }, "tools/list", .request, modern_meta, null, &delivery));
+        return;
+    }
     const result = exchange(stdio, allocator, op, legacy, .{ .number = 1 }, "tools/call", .request, "{}", null, &delivery);
     if (eql(mode, "death")) {
         try std.testing.expectError(error.Disconnected, result);
@@ -58,6 +64,44 @@ pub fn main(init: std.process.Init) !void {
         try std.testing.expectError(if (eql(mode, "oversized")) error.LimitExceeded else error.MalformedPeer, result);
         try expectEqual(.possibly_sent, delivery);
     }
+}
+
+fn checkComposition(stdio: *Stdio, allocator: std.mem.Allocator, op: foo.io.Context, revision: foo.config.McpRevision) !void {
+    var client = try mcp.Client.init(stdio.interface(), .{ .server_id = "fixture", .revision = revision });
+    var registry = try mcp.Registry.init(allocator, op, &client, .{
+        .enabled_aliases = &.{"mcp_fixture_echo"},
+        .generation = 1,
+        .session = @fromBackingInt(@intCast(1)),
+        .run = @fromBackingInt(@intCast(1)),
+        .permission_mode = .allow,
+    });
+    defer registry.deinit();
+
+    const tools = registry.interface();
+    try expectEqual(@as(usize, 1), tools.declarations.len);
+    const declaration = tools.declarations[0];
+    const reply = try tools.invoke_fn(tools.context, allocator, op, .{
+        .declaration = declaration,
+        .call = .{
+            .id = "exact-call",
+            .name = declaration.spec.name,
+            .arguments_json = "{\"value\":\"雪\"}",
+        },
+    });
+    try expectEqual(.success, reply.status);
+    try expectEqual(.observed, reply.effect);
+    try expectEqualStrings("exact-call", reply.call_id);
+    try expect(std.mem.indexOf(u8, reply.content, "response 雪") != null);
+    try expect(std.mem.indexOf(u8, reply.content, "structuredContent") != null);
+
+    const source = registry.source();
+    const page = try source.list_fn(source.context, allocator, op, .resource, null);
+    try expectEqual(@as(usize, 1), page.items.len);
+    try expectEqualStrings("fixture", page.items[0].reference.server);
+    try expectEqualStrings("file:///example", page.items[0].reference.id);
+    const resource = try source.get_fn(source.context, allocator, op, page.items[0].reference, "{}");
+    try expectEqualStrings("fixture", resource.reference.server);
+    try expect(std.mem.indexOf(u8, resource.bytes, "explicit data") != null);
 }
 
 fn checkModern(stdio: *Stdio, concurrent_allocator: std.mem.Allocator, allocator: std.mem.Allocator, op: foo.io.Context) !void {

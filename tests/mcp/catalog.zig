@@ -64,7 +64,7 @@ pub const Script = struct {
                 const value = parsed.get("protocolVersion") orelse return error.IoFailure;
                 require(value == .string) catch return error.IoFailure;
                 try checkString("2025-11-25", value.string);
-                return .{ .success = try std.fmt.allocPrint(allocator, "{{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{s}}}", .{self.capabilities}) };
+                return .{ .success = try std.fmt.allocPrint(allocator, "{{\"protocolVersion\":\"2025-11-25\",\"serverInfo\":{{\"name\":\"fixture\",\"version\":\"1\"}},\"capabilities\":{s}}}", .{self.capabilities}) };
             }
             try checkString("notifications/initialized", request.method);
             require(request.id == null) catch return error.IoFailure;
@@ -398,7 +398,7 @@ test "permission approval cannot dispatch a removed, replaced, revoked, or cance
         .{ .change = .deny, .status = .denied },
     }) |item| {
         const steps = [_]Step{ listStep(lookup_list), item.next orelse listStep(empty) };
-        var script: Script = .{ .revision = modern, .steps = steps[0..if (item.next != null) 2 else 1] };
+        var script: Script = .{ .revision = legacy, .steps = steps[0..if (item.next != null) 2 else 1] };
         var op: Op = .{};
         var client = try script.client();
         var approval: Approval = .{ .script = &script, .op = &op, .change = item.change };
@@ -422,7 +422,7 @@ test "permission approval cannot dispatch a removed, replaced, revoked, or cance
 
 test "catalog refresh keeps unchanged declarations active and defers additions to a new run" {
     const addition = "{\"resultType\":\"complete\",\"tools\":[" ++ alternate ++ "," ++ lookup ++ "]}";
-    var script: Script = .{ .revision = modern, .steps = &.{
+    var script: Script = .{ .revision = legacy, .steps = &.{
         listStep(lookup_list),
         listStep(addition),
         callStep(success),
@@ -458,7 +458,7 @@ test "tool results preserve mixed content and exact JSON while separating tool e
         listStep(lookup_list),
         callStep(mixed),
         callStep(is_error),
-        callStep("{\"resultType\":\"input_required\",\"inputRequests\":[],\"requestState\":\"opaque-sensitive-state\"}"),
+        callStep("{\"resultType\":\"input_required\",\"inputRequests\":{},\"requestState\":\"opaque-sensitive-state\"}"),
         .{ .method = "tools/call", .name = "lookup.v1", .reply = .{ .rpc = -32603 } },
         .{ .method = "tools/call", .name = "lookup.v1", .reply = .disconnect },
         .{ .method = "tools/call", .name = "lookup.v1", .reply = .deadline },

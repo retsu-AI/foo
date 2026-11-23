@@ -31,8 +31,17 @@ class Stdio(unittest.TestCase):
     def test_modern(self):
         self.probe("modern")
 
+    def test_modern_refuses_reverse_requests(self):
+        self.probe("modern-reverse", eof=False)
+
     def test_legacy(self):
         self.probe("legacy")
+
+    def test_composed_client_and_registry(self):
+        for mode in ("compose-modern", "compose-legacy"):
+            with self.subTest(mode=mode):
+                (self.cwd / "stdin-eof").unlink(missing_ok=True)
+                self.probe(mode)
 
     def test_cancel_and_late_reply(self):
         self.probe("cancel")

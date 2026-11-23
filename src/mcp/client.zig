@@ -40,6 +40,12 @@ pub const Completion = struct {
     raw: []const u8,
     fields: Object,
     kind: union(enum) { complete, input_required: ?[]const u8 } = .complete,
+    storage: std.heap.ArenaAllocator = .init(.failing),
+
+    pub fn deinit(self: *Completion) void {
+        self.storage.deinit();
+        self.* = undefined;
+    }
 };
 
 pub const Client = struct {
@@ -76,6 +82,7 @@ pub const Client = struct {
         return profile;
     }
 
+    /// Completion bytes live until deinit or teardown of the caller arena.
     pub fn request(
         self: *Client,
         allocator: Allocator,
@@ -88,18 +95,23 @@ pub const Client = struct {
         delivery.* = .unsent;
         const active = self.profile orelse return error.Unavailable;
         if (self.expired.load(.acquire)) return error.SessionExpired;
-        const reply = self.send(allocator, operation, active.revision, method, params, try self.next(), .request, request_info, self.observer(), delivery) catch |err| {
+        var result_storage = std.heap.ArenaAllocator.init(allocator);
+        errdefer result_storage.deinit();
+        const owned = result_storage.allocator();
+        const notifications = if (active.revision == legacy) self.observer() else null;
+        const reply = self.send(owned, operation, active.revision, method, params, try self.next(), .request, request_info, notifications, delivery) catch |err| {
             if (err == error.SessionExpired) {
                 self.expired.store(true, .release);
                 self.markChanged();
             }
             return err;
         };
-        const result = try self.complete(allocator, active.revision, reply);
+        var result = try self.complete(owned, active.revision, reply);
         if (result.kind == .input_required and
             !std.mem.eql(u8, method, "tools/call") and
             !std.mem.eql(u8, method, "resources/read") and
             !std.mem.eql(u8, method, "prompts/get")) return error.MalformedPeer;
+        result.storage = result_storage;
         return result;
     }
 
@@ -109,13 +121,16 @@ pub const Client = struct {
         defer self.markChanged();
         var delivery: foo.io.Delivery = .unsent;
         if (active.revision == legacy) {
-            _ = try self.link_io.exchange(allocator, op, .{
+            _ = self.link_io.exchange(allocator, op, .{
                 .revision = legacy,
                 .id = null,
                 .method = "",
                 .body = "",
                 .mode = .legacy_notifications,
-            }, self.observer(), &delivery);
+            }, self.observer(), &delivery) catch |err| {
+                if (err == error.SessionExpired) self.expired.store(true, .release);
+                return err;
+            };
             return;
         }
 
@@ -167,18 +182,29 @@ pub const Client = struct {
 
     fn discover(self: *Client, allocator: Allocator, op: foo.io.Context, allow_auto: bool) Error!?Profile {
         var delivery: foo.io.Delivery = .unsent;
-        const reply = self.send(allocator, op, modern, "server/discover", .empty, try self.next(), .request, .{}, null, &delivery) catch |err| {
+        var probe = op;
+        const short_stdio_probe = allow_auto and self.link_io.kind == .stdio and self.options.handshake_ms > 1;
+        if (short_stdio_probe)
+            probe.deadline_ms = @min(op.deadline_ms.?, op.clock.now() +| @min(self.options.handshake_ms / 2, 1_000));
+        const reply = self.send(allocator, probe, modern, "server/discover", .empty, try self.next(), .request, .{}, null, &delivery) catch |err| {
             if (err == error.UnsupportedRevision and allow_auto) return null;
+            if (err == error.DeadlineExceeded and short_stdio_probe) {
+                try op.check();
+                return null;
+            }
             return err;
         };
         if (reply == .failure and allow_auto) {
-            if (reply.failure.code == foo.jsonrpc.Code.method_not_found or reply.failure.code == foo.jsonrpc.Code.invalid_request) {
-                return null;
-            }
-            if (reply.failure.code == -32022 and reply.failure.data_json != null) {
-                const details = try self.decodeObject(allocator, reply.failure.data_json.?);
-                if (try supports(details.get("supported"), legacy)) return null;
-                return error.UnsupportedRevision;
+            switch (reply.failure.code) {
+                -32022 => {
+                    if (reply.failure.data_json) |raw| {
+                        const details = try self.decodeObject(allocator, raw);
+                        if (try supports(details.get("supported"), legacy)) return null;
+                    }
+                    return error.UnsupportedRevision;
+                },
+                -32020, -32021 => {},
+                else => return null,
             }
         }
         const discovery = try self.complete(allocator, modern, reply);
@@ -206,6 +232,12 @@ pub const Client = struct {
         const version = outcome.get("protocolVersion") orelse return error.MalformedPeer;
         if (version != .string) return error.MalformedPeer;
         if (!std.mem.eql(u8, version.string, @tagName(legacy))) return error.UnsupportedRevision;
+        const identity = outcome.get("serverInfo") orelse return error.MalformedPeer;
+        if (identity != .object) return error.MalformedPeer;
+        for ([_][]const u8{ "name", "version" }) |key| {
+            const field = identity.object.get(key) orelse return error.MalformedPeer;
+            if (field != .string or field.string.len == 0) return error.MalformedPeer;
+        }
         const capabilities = try capabilitiesOf(outcome.get("capabilities"));
         const initialized = try self.send(allocator, op, legacy, "notifications/initialized", .empty, null, .request, .{}, null, &delivery);
         if (initialized != .accepted) return error.MalformedPeer;
@@ -275,6 +307,9 @@ pub const Client = struct {
                         if (revision != modern) return error.MalformedPeer;
                         const state = fields.get("requestState");
                         if (state) |value| if (value != .string) return error.MalformedPeer;
+                        const inputs = fields.get("inputRequests");
+                        if (inputs) |value| if (value != .object) return error.MalformedPeer;
+                        if (state == null and inputs == null) return error.MalformedPeer;
                         return .{ .raw = raw, .fields = fields, .kind = .{ .input_required = if (state) |value| value.string else null } };
                     }
                     if (!std.mem.eql(u8, kind.string, "complete")) return error.MalformedPeer;

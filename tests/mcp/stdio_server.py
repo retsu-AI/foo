@@ -159,6 +159,58 @@ def bad(mode):
     sys.stdout.buffer.flush()
 
 
+def composition(modern_profile):
+    capabilities = {"tools": {}, "resources": {}}
+    complete = {"resultType": "complete"} if modern_profile else {}
+    handshake = read()
+    if modern_profile:
+        assert handshake["method"] == "server/discover", handshake
+        write(response(handshake, {
+            **complete, "supportedVersions": ["2026-07-28"], "capabilities": capabilities,
+        }))
+    else:
+        assert handshake["method"] == "initialize", handshake
+        write(response(handshake, {"protocolVersion": "2025-11-25", "serverInfo": {"name": "fixture", "version": "1"}, "capabilities": capabilities}))
+        initialized = read()
+        assert initialized["method"] == "notifications/initialized" and "id" not in initialized
+
+    called = False
+    for line in sys.stdin.buffer:
+        request = json.loads(line)
+        args = request["params"]
+        if modern_profile:
+            meta = args["_meta"]
+            assert meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
+            assert meta["io.modelcontextprotocol/clientInfo"]["name"] == "foo"
+        method = request["method"]
+        if method == "tools/list":
+            result = {"tools": [{
+                "name": "echo",
+                "description": "Echo the value",
+                "inputSchema": {
+                    "type": "object", "properties": {"value": {"type": "string"}},
+                    "required": ["value"], "additionalProperties": False,
+                },
+            }]}
+        elif method == "tools/call":
+            assert not called and args["name"] == "echo" and args["arguments"] == {"value": "雪"}
+            called = True
+            result = {
+                "content": [{"type": "text", "text": "response 雪"}],
+                "structuredContent": {"sent": "雪"},
+            }
+        elif method == "resources/list":
+            result = {"resources": [{"uri": "file:///example", "name": "Example", "mimeType": "text/plain"}]}
+        elif method == "resources/read":
+            assert args["uri"] == "file:///example"
+            result = {"contents": [{"uri": "file:///example", "mimeType": "text/plain", "text": "explicit data"}]}
+        else:
+            raise AssertionError(method)
+        write(response(request, {**complete, **result}))
+    assert called
+    Path("stdin-eof").touch()
+
+
 def heartbeat():
     for _ in range(400):
         with Path("heartbeat").open("ab", buffering=0) as file:
@@ -200,6 +252,13 @@ if __name__ == "__main__":
             modern()
         elif mode == "legacy":
             legacy()
+        elif mode in {"compose-modern", "compose-legacy"}:
+            composition(mode == "compose-modern")
+        elif mode == "modern-reverse":
+            request = read()
+            assert request["method"] == "tools/list", request
+            write({"id": "forbidden", "method": "ping"})
+            eof()
         elif mode in {"cancel", "slow"}:
             interrupted(mode == "slow")
         elif mode in {"malformed", "wrong-id", "truncated", "oversized", "death"}:

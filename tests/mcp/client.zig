@@ -22,6 +22,7 @@ const Step = struct {
 const Fixture = struct {
     steps: []const Step,
     calls: usize = 0,
+    kind: @FieldType(mcp.link.Link, "kind") = .scripted,
     token: foo.io.Cancellation = .{},
 
     fn op(self: *Fixture) foo.io.Context {
@@ -33,7 +34,7 @@ const Fixture = struct {
     }
 
     fn wire(self: *Fixture) mcp.link.Link {
-        return .{ .context = self, .exchange_fn = exchange, .shutdown_fn = shutdown };
+        return .{ .context = self, .kind = self.kind, .exchange_fn = exchange, .shutdown_fn = shutdown };
     }
 
     fn shutdown(_: *anyopaque, _: foo.io.Context) mcp.link.Error!void {}
@@ -46,6 +47,11 @@ const Fixture = struct {
         if (!std.mem.eql(u8, step.method, request.method) or step.revision != request.revision)
             return error.InvalidInput;
 
+        if (request.mode == .legacy_notifications) {
+            if (request.id != null or request.body.len != 0 or step.output != .fault) return error.InvalidInput;
+            delivery.* = .possibly_sent;
+            return step.output.fault;
+        }
         const args = std.json.parseFromSlice(std.json.Value, allocator, request.body, .{}) catch return error.MalformedPeer;
         defer args.deinit();
         if (args.value != .object) return error.MalformedPeer;
@@ -110,6 +116,7 @@ test "auto probes legacy only on explicit compatibility signals" {
     const signals = [_]Step{
         .{ .method = "server/discover", .revision = modern, .output = .{ .fault = error.UnsupportedRevision } },
         .{ .method = "server/discover", .revision = modern, .output = .{ .failure = .{ .code = -32601, .message = "unknown method" } } },
+        .{ .method = "server/discover", .revision = modern, .output = .{ .failure = .{ .code = -32602, .message = "invalid until initialized" } } },
         .{ .method = "server/discover", .revision = modern, .output = .{ .failure = .{ .code = -32022, .message = "unsupported", .data_json = "{\"supported\":[\"2025-11-25\"]}" } } },
     };
     for (signals) |signal| {
@@ -223,4 +230,45 @@ test "modern subscription has a separate acknowledgment deadline" {
     deadline.deadline_ms = deadline.clock.now() + 2_000;
     try t.expectError(error.DeadlineExceeded, connection.listen(a.allocator(), deadline));
     try t.expect(!f.token.requested.load(.acquire));
+}
+
+test "silent stdio discovery leaves time for the single legacy handshake" {
+    var f: Fixture = .{ .kind = .stdio, .steps = &.{
+        .{ .method = "server/discover", .revision = modern, .output = .wait_for_ack },
+        .{ .method = "initialize", .revision = legacy, .output = .{ .result = initialize } },
+        .{ .method = "notifications/initialized", .revision = legacy, .output = .accepted },
+    } };
+    var connection = try mcp.Client.init(f.wire(), .{ .server_id = "fixture", .handshake_ms = 600 });
+    try t.expectEqual(legacy, (try connection.connect(t.allocator, f.op())).revision);
+    try t.expectEqual(@as(usize, 3), f.calls);
+}
+
+test "an expired legacy listener invalidates the cached handshake without replay" {
+    var f: Fixture = .{ .kind = .http, .steps = &.{
+        .{ .method = "initialize", .revision = legacy, .output = .{ .result = initialize } },
+        .{ .method = "notifications/initialized", .revision = legacy, .output = .accepted },
+        .{ .method = "", .revision = legacy, .output = .{ .fault = error.SessionExpired } },
+        .{ .method = "initialize", .revision = legacy, .output = .{ .result = initialize } },
+        .{ .method = "notifications/initialized", .revision = legacy, .output = .accepted },
+    } };
+    var connection = try mcp.Client.init(f.wire(), .{ .server_id = "fixture", .revision = legacy });
+    _ = try connection.connect(t.allocator, f.op());
+    try t.expectError(error.SessionExpired, connection.listen(t.allocator, f.op()));
+    _ = try connection.connect(t.allocator, f.op());
+    try t.expectEqual(@as(usize, 5), f.calls);
+}
+
+test "malformed input_required is rejected and reply allocations are released" {
+    var f: Fixture = .{ .steps = &.{
+        .{ .method = "server/discover", .revision = modern, .output = .{ .result = discover } },
+        .{ .method = "tools/call", .revision = modern, .output = .{ .result = "{\"resultType\":\"input_required\"}" } },
+        .{ .method = "tools/call", .revision = modern, .output = .{ .result = "{\"resultType\":\"complete\"}" } },
+    } };
+    var connection = try mcp.Client.init(f.wire(), .{ .server_id = "fixture" });
+    _ = try connection.connect(t.allocator, f.op());
+    var delivery: foo.io.Delivery = .unsent;
+    try t.expectError(error.MalformedPeer, connection.request(t.allocator, f.op(), "tools/call", .empty, .{}, &delivery));
+    var result = try connection.request(t.allocator, f.op(), "tools/call", .empty, .{}, &delivery);
+    defer result.deinit();
+    try t.expectEqual(.complete, result.kind);
 }
