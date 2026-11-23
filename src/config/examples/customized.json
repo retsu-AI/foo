@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "model": {
+    "family": "openai_chat",
+    "endpoint": "https://gateway.invalid/v1/chat/completions",
+    "id": "gateway-model",
+    "credential": {"environment": "GATEWAY_API_KEY"},
+    "headers": [{"name": "x-tenant", "value": "example"}],
+    "options": {"chat_litellm": true, "chat_reasoning_content": true},
+    "max_output_tokens": 4096
+  },
+  "cwd": "../../..",
+  "system_prompt": {"text": "Inspect files before editing. Report the checks you ran.", "append_files": []},
+  "enabled_tools": ["read", "format_check"],
+  "custom_tools": [{
+    "name": "format_check",
+    "description": "Check project formatting.",
+    "schema": {"type": "object", "properties": {}, "additionalProperties": false},
+    "argv": ["project-format-check", "--json"],
+    "environment": [{"name": "CHECK_MODE", "value": "read-only"}],
+    "inherit_environment": false,
+    "timeout_ms": 30000
+  }],
+  "mcp_servers": [{
+    "id": "docs",
+    "revision": "2026-07-28",
+    "transport": {"http": {
+      "url": "https://tools.invalid/mcp",
+      "headers": [{"name": "authorization", "value": {"environment": "DOCS_AUTHORIZATION"}}]
+    }}
+  }],
+  "permissions": "ask",
+  "retry_attempts": 0,
+  "process": {"file_bytes": 8388608, "environment": [], "inherit_environment": false, "timeout_ms": 30000, "cleanup_ms": 2000},
+  "session": {"directory": ".sessions/example", "limits": {"max_journal_bytes": 268435456}},
+  "tui": {"keys": {"cancel": "escape"}, "colors": {"status": "cyan"}},
+  "limits": {"tool_output_bytes": 65536}
+}
