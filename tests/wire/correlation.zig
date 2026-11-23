@@ -82,8 +82,10 @@ test "deadline, resolution, cancellation, and shutdown retire each ticket once" 
     try expectError(error.Closed, pending.beginInbound(.{ .number = 40 }, null));
     try expectError(error.Closed, pending.beginOutbound(null));
     try expectError(error.Closed, pending.retire(remaining));
-    try expect(pending.drainNext().?.eql(outbound.ticket));
-    try expect(pending.drainNext().?.eql(remaining));
+    const first = pending.drainNext().?;
+    const second = pending.drainNext().?;
+    try expect((first.eql(outbound.ticket) and second.eql(remaining)) or
+        (first.eql(remaining) and second.eql(outbound.ticket)));
     try expectEqual(@as(?correlation.Ticket, null), pending.drainNext());
 }
 

@@ -61,7 +61,11 @@ pub fn build(b: *std.Build) void {
     });
     wire_root.addImport("foo", foo);
     wire_root.addImport("support", support);
-    const wire_tests = b.addTest(.{ .root_module = wire_root });
+    const wire_filter = b.option([]const u8, "wire-test-filter", "Run wire tests whose names contain this text");
+    const wire_tests = b.addTest(.{
+        .root_module = wire_root,
+        .filters = if (wire_filter) |filter| &.{filter} else &.{},
+    });
     const run_wire_tests = b.addRunArtifact(wire_tests);
     if (transport_prefix) |prefix| {
         if (builtin.os.tag == .windows) addTransportPath(b, run_wire_tests, prefix);
