@@ -21,14 +21,15 @@ F09 passed all 16 configuration fixtures on Linux in Debug and ReleaseSafe. The 
 | `zig build test -Dmodule=transport` | Run native HTTP and TLS loopback fixtures with the pinned transport profile |
 | `zig build test -Dmodule=wire` | Run the framing, JSON-RPC, and correlation fixtures |
 | `zig build test -Dmodule=tools` | Run the coding and custom executable tool fixtures |
+| `zig build test -Dmodule=codemode` | Run the JavaScript runtime, capability, and real file composition checks |
 | `zig build test -Dmodule=platform-process` | Run the native subprocess and cleanup fixtures |
-| `zig build check` | Check formatting, compile the executable, and run the contracts, transport, wire, tools, and platform-process suites |
+| `zig build check` | Check formatting, compile the executable, and run the contracts, transport, wire, tools, and platform-process suites. Add `-Dcodemode=true` for Code Mode |
 | `zig build check-bootstrap` | Check formatting, compile the executable, and run contract tests without the transport profile |
 | `zig build acceptance` | Unavailable; planned native offline CLI, process, journal, MCP, ACP, and terminal scenarios |
 | `zig build acceptance-live` | Unavailable; planned provider/server/editor interoperability with an allowlist and spend ceiling |
 | `zig build bench` | Unavailable; planned reproducible measurements separate from unit-test assertions |
 
-Module selector names are `contracts`, `transport`, `wire`, `core`, `providers`, `tools`, `platform-process`, `mcp`, `session`, `acp`, `config`, `cli`, `tui`, `platform-terminal`, and `integration`. A missing module implementation is reported as missing; a placeholder or empty test target must not count as acceptance. Build registration changes belong to the integrator so agents do not edit the same build files.
+Module selector names are `contracts`, `transport`, `wire`, `core`, `providers`, `tools`, `platform-process`, `codemode`, `mcp`, `session`, `acp`, `config`, `cli`, `tui`, `platform-terminal`, and `integration`. A missing module implementation is reported as missing; a placeholder or empty test target must not count as acceptance. Build registration changes belong to the integrator so agents do not edit the same build files.
 
 The regular pull-request path runs deterministic checks and focused native tests. Schedule longer fuzzing, soak, and benchmark runs separately. Live endpoints must not be required for ordinary CI. Do not weaken a failed assertion or add a retry merely to obtain a green result.
 

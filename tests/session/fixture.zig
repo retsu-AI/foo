@@ -31,6 +31,32 @@ pub const result: foo.tool.Result = .{
     .content = "marked",
 };
 pub const outcome: foo.session.Record = .{ .finished = .{ .reason = .completed } };
+pub const child_id = "call-1:child-1";
+
+pub fn nestedIntent(parent_id: []const u8, ordinal: u32, id: []const u8) foo.session.Record {
+    var invocation = intent.dispatch_intent;
+    invocation.call.id = id;
+    return .{ .nested_tool = .{
+        .parent_call_id = parent_id,
+        .ordinal = ordinal,
+        .data = .{ .dispatch_intent = invocation },
+    } };
+}
+
+pub fn nestedResult(parent_id: []const u8, ordinal: u32, child: foo.tool.Result) foo.session.Record {
+    return .{ .nested_tool = .{
+        .parent_call_id = parent_id,
+        .ordinal = ordinal,
+        .data = .{ .tool_result = child },
+    } };
+}
+
+pub const child_result: foo.tool.Result = .{
+    .call_id = child_id,
+    .status = .success,
+    .effect = .observed,
+    .content = "nested marker",
+};
 
 pub fn operation(io: std.Io, cancellation: *const foo.io.Cancellation) foo.io.Context {
     return .{

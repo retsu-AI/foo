@@ -1,5 +1,6 @@
 .direnv/
 .zig-cache/
+zig-pkg/
 zig-out/
 __pycache__/
 .agents/**/node_modules/

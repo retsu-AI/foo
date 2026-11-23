@@ -281,6 +281,7 @@ pub const Fixture = struct {
             .message => |message| if (message.role == .user) .user_record else .assistant_record,
             .dispatch_intent => .intent,
             .tool_result => .result_record,
+            .nested_tool => return error.InvalidInput,
             .finished => .terminal_record,
         };
         try self.hit(point);

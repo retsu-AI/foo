@@ -73,7 +73,7 @@ The [work-package board](index.html#packages) computes availability using the ma
 
 ## Build commands and remaining targets
 
-Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` runs the `contracts`, `transport`, `wire`, `tools`, and `platform-process` suites. The core, provider, session, ACP, configuration, and CLI suites use package-local commands pending registration. The qualification targets remain planned. An empty suite must never count as acceptance.
+Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` runs the `contracts`, `transport`, `wire`, `tools`, and `platform-process` suites. Add `-Dcodemode=true` to include Code Mode. The core, provider, session, ACP, configuration, and CLI suites use package-local commands pending registration. The qualification targets remain planned. An empty suite must never count as acceptance.
 
 | Command | Owner and current status |
 | --- | --- |
@@ -137,7 +137,7 @@ All 17 provider fixtures passed in Debug and ReleaseSafe on Linux x86_64. The su
 
 F05 supplies an opt-in coding preset with `read`, `write`, `edit`, and `exec`. A host can also enable custom executable tools through the same registry. The registry validates the arguments and applies host permission policy before dispatch. Custom executables receive JSON on stdin. The native adapter owns child handles, captures stdout and stderr separately, and provides cancellation and cleanup. The file tools validate exact replacements against one snapshot and distinguish uncertain writes from effects that never started. [Tool handoff](../../src/tools/README.md). [Process handoff](../../src/platform/process/README.md).
 
-Run the `tools` and `platform-process` suites for package acceptance. The native matrix covers Linux, macOS, and Windows in Debug and ReleaseSafe. F12 and F13 still require integrated candidate evidence, including native process cleanup from the supported frontends. The [Code Mode follow-up](../architecture.md#local-code-mode-follow-up) uses the same enabled tools.
+Run the `tools` and `platform-process` suites for package acceptance. The native matrix covers Linux, macOS, and Windows in Debug and ReleaseSafe. F12 and F13 still require integrated candidate evidence, including native process cleanup from the supported frontends. The [Code Mode adapter](../architecture.md#local-code-mode) uses the same enabled tools.
 
 ### F06 — MCP client
 
