@@ -4,10 +4,15 @@ on:
     paths:
       - 'src/platform/process/**'
       - 'src/tools/**'
+      - 'src/codemode/**'
+      - 'src/session/**'
       - 'src/contracts/**'
       - 'tests/platform-process/**'
       - 'tests/tools/**'
+      - 'tests/codemode/**'
+      - 'tests/session/**'
       - 'build.zig'
+      - 'build.zig.zon'
       - '.zig-version'
       - '.github/workflows/native-tools.yml'
   workflow_dispatch:
@@ -41,3 +46,8 @@ jobs:
         run: |
           zig build test -Dmodule=tools --summary all
           zig build test -Dmodule=tools -Doptimize=ReleaseSafe --summary all
+      - name: Code Mode fixtures
+        if: ${{ !cancelled() && steps.zig.outcome == 'success' }}
+        run: |
+          zig build test -Dmodule=codemode --summary all
+          zig build test -Dmodule=codemode -Doptimize=ReleaseSafe --summary all

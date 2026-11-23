@@ -26,14 +26,26 @@ const Batch = struct {
     start: usize,
     start_bytes: usize,
     cursor: usize,
-    dispatched: bool = false,
+    dispatch: ?Dispatch = null,
     uncertain: bool = false,
+};
+
+const Dispatch = struct {
+    completed_ordinal: u32 = 0,
+    observed: bool = false,
+    child: ?Child = null,
+
+    const Child = struct {
+        id: []const u8,
+        state: enum { pending, unresolved } = .pending,
+    };
 };
 
 pub fn deinit(self: *History, allocator: Allocator) void {
     self.call_ids.deinit(allocator);
     for (self.messages.items) |*entry| entry.arena.deinit();
     self.messages.deinit(allocator);
+    if (self.pendingChildId()) |id| allocator.free(id);
     for (self.uncertain_ids.items) |id| allocator.free(id);
     self.uncertain_ids.deinit(allocator);
 }
@@ -45,15 +57,16 @@ pub fn accept(self: *History, allocator: Allocator, limit: usize, record: Record
         .dispatch_intent => |intent| {
             const expected = self.currentCall() orelse return error.InvalidRecord;
             const batch = &self.batch.?;
-            if (batch.dispatched or batch.uncertain or
+            if (batch.dispatch != null or batch.uncertain or
                 !std.mem.eql(u8, expected.id, intent.call.id) or
                 !std.mem.eql(u8, expected.name, intent.call.name) or
                 !std.mem.eql(u8, expected.arguments_json, intent.call.arguments_json) or
                 !std.mem.eql(u8, expected.name, intent.declaration.spec.name))
                 return error.InvalidRecord;
-            batch.dispatched = true;
+            batch.dispatch = .{};
         },
         .tool_result => |result| try self.acceptResult(allocator, limit, result),
+        .nested_tool => |nested| try self.acceptNested(allocator, limit, nested),
         .finished => |outcome| {
             if (self.phase != .active) return error.InvalidRecord;
             const incomplete = self.batch != null;
@@ -120,9 +133,12 @@ fn acceptMessage(self: *History, allocator: Allocator, limit: usize, message: pr
 fn acceptResult(self: *History, allocator: Allocator, limit: usize, result: foo.tool.Result) Error!void {
     const expected = self.currentCall() orelse return error.InvalidRecord;
     const batch = &self.batch.?;
-    if (!std.mem.eql(u8, expected.id, result.call_id) or
-        (result.effect != .not_started and !batch.dispatched))
-        return error.InvalidRecord;
+    if (!std.mem.eql(u8, expected.id, result.call_id)) return error.InvalidRecord;
+    if (batch.dispatch) |dispatch| {
+        if ((result.effect != .uncertain and dispatch.child != null) or
+            (result.effect == .not_started and dispatch.observed))
+            return error.InvalidRecord;
+    } else if (result.effect != .not_started) return error.InvalidRecord;
 
     if (result.effect == .uncertain) {
         try self.addUncertainty(allocator, limit, result.call_id);
@@ -144,11 +160,43 @@ fn acceptResult(self: *History, allocator: Allocator, limit: usize, result: foo.
 
     if (nextCall(self.messages.items[batch.start].message.blocks, batch.cursor + 1)) |cursor| {
         batch.cursor = cursor;
-        batch.dispatched = false;
+        batch.dispatch = null;
     } else if (batch.uncertain) {
         self.discardBatch();
     } else {
         self.batch = null;
+    }
+}
+
+fn acceptNested(self: *History, allocator: Allocator, limit: usize, record: foo.session.NestedTool) Error!void {
+    const parent_id = self.pendingIntent() orelse return error.InvalidRecord;
+    if (!std.mem.eql(u8, parent_id, record.parent_call_id)) return error.InvalidRecord;
+    const dispatch = &self.batch.?.dispatch.?;
+    const next_ordinal = std.math.add(u32, dispatch.completed_ordinal, 1) catch return error.InvalidRecord;
+    if (record.ordinal != next_ordinal) return error.InvalidRecord;
+
+    switch (record.data) {
+        .dispatch_intent => |invocation| {
+            const child = invocation.call;
+            if (dispatch.child != null or child.id.len == 0 or self.call_ids.contains(child.id) or
+                !std.mem.eql(u8, child.name, invocation.declaration.spec.name))
+                return error.InvalidRecord;
+            const bytes = uncertaintyBytes(parent_id) +| uncertaintyBytes(child.id);
+            if (bytes > limit -| self.context_bytes -| self.uncertain_bytes) return error.LimitExceeded;
+            dispatch.child = .{ .id = try allocator.dupe(u8, child.id) };
+        },
+        .tool_result => |result| {
+            const child = if (dispatch.child) |*child| child else return error.InvalidRecord;
+            if (child.state != .pending or !std.mem.eql(u8, child.id, result.call_id)) return error.InvalidRecord;
+            if (result.effect == .uncertain) {
+                child.state = .unresolved;
+            } else {
+                dispatch.observed = dispatch.observed or result.effect == .observed;
+                dispatch.completed_ordinal = record.ordinal;
+                allocator.free(child.id);
+                dispatch.child = null;
+            }
+        },
     }
 }
 
@@ -166,20 +214,36 @@ fn currentCall(self: *const History) ?provider.ToolCall {
 
 fn pendingIntent(self: *const History) ?[]const u8 {
     const batch = self.batch orelse return null;
-    return if (batch.dispatched) self.currentCall().?.id else null;
+    return if (batch.dispatch != null) self.currentCall().?.id else null;
+}
+
+fn pendingChildId(self: *const History) ?[]const u8 {
+    const batch = self.batch orelse return null;
+    const dispatch = batch.dispatch orelse return null;
+    return if (dispatch.child) |child| child.id else null;
 }
 
 fn addUncertainty(self: *History, allocator: Allocator, limit: usize, id: []const u8) Error!void {
-    const bytes = @sizeOf([]const u8) +| id.len;
+    const dispatch = &self.batch.?.dispatch.?;
+    const child = if (dispatch.child) |child| child.id else null;
+    const bytes = uncertaintyBytes(id) +| if (child) |pending| uncertaintyBytes(pending) else 0;
     if (bytes > limit -| self.context_bytes -| self.uncertain_bytes) return error.LimitExceeded;
     const owned = try allocator.dupe(u8, id);
     errdefer allocator.free(owned);
-    try self.uncertain_ids.append(allocator, owned);
+    try self.uncertain_ids.ensureUnusedCapacity(allocator, if (child == null) 1 else 2);
+    self.uncertain_ids.appendAssumeCapacity(owned);
+    if (child) |pending| self.uncertain_ids.appendAssumeCapacity(pending);
+    dispatch.child = null;
     self.uncertain_bytes += bytes;
+}
+
+fn uncertaintyBytes(id: []const u8) usize {
+    return @sizeOf([]const u8) +| id.len;
 }
 
 fn discardBatch(self: *History) void {
     const batch = self.batch orelse return;
+    std.debug.assert(self.pendingChildId() == null);
     for (self.messages.items[batch.start].message.blocks) |block| {
         if (block == .tool_call) _ = self.call_ids.remove(block.tool_call.id);
     }
@@ -217,11 +281,15 @@ pub fn recovery(self: *const History, allocator: Allocator, sequence: u64) error
         message.* = try provider.copyMessage(allocator, entry.message);
     }
     const pending = self.pendingIntent();
-    const ids = try allocator.alloc([]const u8, self.uncertain_ids.items.len + @intFromBool(pending != null));
-    for (self.uncertain_ids.items, ids[0..self.uncertain_ids.items.len]) |source, *dest| {
+    const child = self.pendingChildId();
+    const count = self.uncertain_ids.items.len;
+    const pending_count: usize = if (child != null) 2 else @intFromBool(pending != null);
+    const ids = try allocator.alloc([]const u8, count + pending_count);
+    for (self.uncertain_ids.items, ids[0..count]) |source, *dest| {
         dest.* = try allocator.dupe(u8, source);
     }
-    if (pending) |id| ids[ids.len - 1] = try allocator.dupe(u8, id);
+    if (pending) |id| ids[count] = try allocator.dupe(u8, id);
+    if (child) |id| ids[count + 1] = try allocator.dupe(u8, id);
     return .{
         .messages = messages,
         .uncertain_call_ids = ids,

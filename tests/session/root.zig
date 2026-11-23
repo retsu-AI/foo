@@ -85,6 +85,165 @@ test "durable uncertain result stays unresolved past a terminal record" {
     try expect(history.interrupted);
 }
 
+test "nested results persist with artifacts and stay out of the provider transcript" {
+    var tmp = testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    {
+        var store = try journal.Store.create(allocator, native, tmp.dir, fixture.identity, .{});
+        defer store.deinit();
+        try fixture.begin(&store, operation);
+        _ = try store.commit(operation, fixture.intent);
+        var id = fixture.child_id.*;
+        try equal(@as(u64, 5), try store.commit(operation, fixture.nestedIntent(fixture.call.id, 1, &id)));
+        @memset(&id, 'x');
+
+        var child = fixture.child_result;
+        child.artifact = .{ .relative_path = "artifact-nested", .bytes = 6 };
+        try fails(error.InvalidArtifact, store.commit(operation, fixture.nestedResult(fixture.call.id, 1, child)));
+        child.artifact = try store.writeArtifact(operation, "artifact-nested", "output");
+        try equal(@as(u64, 6), try store.commit(operation, fixture.nestedResult(fixture.call.id, 1, child)));
+        var parent = fixture.result;
+        parent.effect = .not_started;
+        try fails(error.InvalidRecord, store.commit(operation, .{ .tool_result = parent }));
+
+        const skipped: foo.tool.Result = .{ .call_id = "child-2", .status = .cancelled, .effect = .not_started, .content = "" };
+        try equal(@as(u64, 7), try store.commit(operation, fixture.nestedIntent(fixture.call.id, 2, skipped.call_id)));
+        try equal(@as(u64, 8), try store.commit(operation, fixture.nestedResult(fixture.call.id, 2, skipped)));
+        _ = try store.commit(operation, .{ .tool_result = fixture.result });
+        _ = try store.commit(operation, fixture.outcome);
+    }
+    {
+        var store = try journal.Store.open(allocator, native, tmp.dir, fixture.identity, .{});
+        defer store.deinit();
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const history = try store.load(arena.allocator(), operation);
+        try equal(@as(u64, 10), history.last_sequence);
+        try equal(@as(usize, 3), history.messages.len);
+        try equal(@as(usize, 0), history.uncertain_call_ids.len);
+        try strings(fixture.call.id, history.messages[2].blocks[0].tool_result.call_id);
+        try strings(fixture.result.content, history.messages[2].blocks[0].tool_result.content);
+        try expect(!history.interrupted);
+    }
+    try tmp.dir.deleteFile(native, "artifact-nested");
+    try fails(error.CorruptHistory, journal.Store.open(allocator, native, tmp.dir, fixture.identity, .{}));
+}
+
+test "nested uncertainty survives reopen before and after terminal records" {
+    const End = enum { pending, child_uncertain, parent_uncertain_pending, parent_uncertain, finished_pending, finished_uncertain };
+    for (std.enums.values(End)) |end| {
+        var tmp = testing.tmpDir(.{ .iterate = true });
+        defer tmp.cleanup();
+        var last: u64 = 5;
+        {
+            var store = try journal.Store.create(allocator, native, tmp.dir, fixture.identity, .{});
+            defer store.deinit();
+            try fixture.begin(&store, operation);
+            _ = try store.commit(operation, fixture.intent);
+            _ = try store.commit(operation, fixture.nestedIntent(fixture.call.id, 1, fixture.child_id));
+            if (end == .child_uncertain or end == .parent_uncertain or end == .finished_uncertain) {
+                var child = fixture.child_result;
+                child.effect = .uncertain;
+                child.status = .failure;
+                last = try store.commit(operation, fixture.nestedResult(fixture.call.id, 1, child));
+            }
+            var parent = fixture.result;
+            try fails(error.InvalidRecord, store.commit(operation, .{ .tool_result = parent }));
+            parent.effect = .not_started;
+            try fails(error.InvalidRecord, store.commit(operation, .{ .tool_result = parent }));
+            if (end == .parent_uncertain or end == .parent_uncertain_pending) {
+                parent.effect = .uncertain;
+                parent.status = .failure;
+                last = try store.commit(operation, .{ .tool_result = parent });
+            }
+            if (end == .parent_uncertain or end == .parent_uncertain_pending or end == .finished_pending or end == .finished_uncertain) {
+                last = try store.commit(operation, .{ .finished = .{ .reason = .interrupted, .uncertain_effects = true } });
+            }
+        }
+        var store = try journal.Store.open(allocator, native, tmp.dir, fixture.identity, .{});
+        defer store.deinit();
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const history = try store.load(arena.allocator(), operation);
+        try equal(last, history.last_sequence);
+        try equal(@as(usize, 1), history.messages.len);
+        try strings("hello", history.messages[0].blocks[0].text);
+        try equal(@as(usize, 2), history.uncertain_call_ids.len);
+        try strings(fixture.call.id, history.uncertain_call_ids[0]);
+        try strings(fixture.child_id, history.uncertain_call_ids[1]);
+        try expect(history.interrupted);
+        try fails(error.InvalidRecord, store.commit(operation, fixture.prompt));
+    }
+}
+
+test "nested records require a dispatched parent and matched child at the next ordinal" {
+    var store = try journal.Store.initMemory(allocator, fixture.identity, .{});
+    defer store.deinit();
+    try fixture.begin(&store, operation);
+    const child_intent = fixture.nestedIntent(fixture.call.id, 1, fixture.child_id);
+    const child_result = fixture.nestedResult(fixture.call.id, 1, fixture.child_result);
+    try fails(error.InvalidRecord, store.commit(operation, child_intent));
+    _ = try store.commit(operation, fixture.intent);
+    try fails(error.InvalidRecord, store.commit(operation, child_result));
+    try fails(error.InvalidRecord, store.commit(operation, fixture.nestedIntent("another-parent", 1, fixture.child_id)));
+    try fails(error.InvalidRecord, store.commit(operation, fixture.nestedIntent(fixture.call.id, 0, fixture.child_id)));
+    try fails(error.InvalidRecord, store.commit(operation, fixture.nestedIntent(fixture.call.id, 2, fixture.child_id)));
+    try fails(error.InvalidRecord, store.commit(operation, fixture.nestedIntent(fixture.call.id, 1, fixture.call.id)));
+    try equal(@as(u64, 5), try store.commit(operation, child_intent));
+    try fails(error.InvalidRecord, store.commit(operation, child_intent));
+    try fails(error.InvalidRecord, store.commit(operation, fixture.nestedResult(fixture.call.id, 2, fixture.child_result)));
+    var wrong_child = fixture.child_result;
+    wrong_child.call_id = "wrong-child";
+    try fails(error.InvalidRecord, store.commit(operation, fixture.nestedResult(fixture.call.id, 1, wrong_child)));
+    var skipped = fixture.child_result;
+    skipped.effect = .not_started;
+    skipped.status = .denied;
+    try equal(@as(u64, 6), try store.commit(operation, fixture.nestedResult(fixture.call.id, 1, skipped)));
+    try fails(error.InvalidRecord, store.commit(operation, child_result));
+    var parent = fixture.result;
+    parent.effect = .not_started;
+    parent.status = .denied;
+    try equal(@as(u64, 7), try store.commit(operation, .{ .tool_result = parent }));
+}
+
+test "nested intent reserves bounded space for parent and child recovery IDs" {
+    var store = try journal.Store.initMemory(allocator, fixture.identity, .{
+        .max_record_bytes = 4096,
+        .max_context_bytes = 1024,
+    });
+    defer store.deinit();
+    try fixture.begin(&store, operation);
+    _ = try store.commit(operation, fixture.intent);
+    const too_large: [2048]u8 = @splat('x');
+    try fails(error.LimitExceeded, store.commit(operation, fixture.nestedIntent(fixture.call.id, 1, &too_large)));
+    try equal(@as(u64, 5), try store.commit(operation, fixture.nestedIntent(fixture.call.id, 1, fixture.child_id)));
+    try equal(@as(u64, 6), try store.commit(operation, .{ .finished = .{ .reason = .interrupted, .uncertain_effects = true } }));
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const history = try store.load(arena.allocator(), operation);
+    try equal(@as(usize, 2), history.uncertain_call_ids.len);
+    try strings(fixture.child_id, history.uncertain_call_ids[1]);
+}
+
+test "nested ordinals restart at the next dispatched parent in the batch" {
+    var store = try journal.Store.initMemory(allocator, fixture.identity, .{});
+    defer store.deinit();
+    var second_intent = fixture.intent.dispatch_intent;
+    second_intent.call.id = "call-2";
+    _ = try store.commit(operation, fixture.prompt);
+    _ = try store.commit(operation, .{ .message = .{ .role = .assistant, .blocks = &.{
+        .{ .tool_call = fixture.call },
+        .{ .tool_call = second_intent.call },
+    } } });
+    _ = try store.commit(operation, fixture.intent);
+    _ = try store.commit(operation, fixture.nestedIntent(fixture.call.id, 1, fixture.child_id));
+    _ = try store.commit(operation, fixture.nestedResult(fixture.call.id, 1, fixture.child_result));
+    _ = try store.commit(operation, .{ .tool_result = fixture.result });
+    _ = try store.commit(operation, .{ .dispatch_intent = second_intent });
+    try fails(error.InvalidRecord, store.commit(operation, fixture.nestedIntent(fixture.call.id, 2, "call-2:child-1")));
+    try equal(@as(u64, 9), try store.commit(operation, fixture.nestedIntent(second_intent.call.id, 1, "call-2:child-1")));
+}
+
 test "local writer repairs a torn tail, preserves replay bytes, and stays appendable" {
     var tmp = testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
@@ -432,6 +591,31 @@ fn updateChecksum(line: []u8) !void {
     const payload = (std.mem.find(u8, line, payload_marker) orelse return error.MissingPayload) + payload_marker.len;
     const checksum = std.hash.Crc32.hash(line[payload .. line.len - 1]);
     _ = try std.fmt.bufPrint(line[checksum_prefix.len .. checksum_prefix.len + 8], "{x:0>8}", .{checksum});
+}
+
+test "replay rejects a nested ordinal gap even with a valid checksum" {
+    var tmp = testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    {
+        var store = try journal.Store.create(allocator, native, tmp.dir, fixture.identity, .{});
+        defer store.deinit();
+        try fixture.begin(&store, operation);
+        _ = try store.commit(operation, fixture.intent);
+        _ = try store.commit(operation, fixture.nestedIntent(fixture.call.id, 1, fixture.child_id));
+    }
+    const bytes = try tmp.dir.readFileAlloc(native, journal_path, allocator, .limited(8192));
+    defer allocator.free(bytes);
+    const start = (std.mem.lastIndexOfScalar(u8, bytes[0 .. bytes.len - 1], '\n') orelse return error.MissingFrame) + 1;
+    const frame = bytes[start .. bytes.len - 1];
+    const field = "\"ordinal\":";
+    const ordinal = (std.mem.find(u8, frame, field) orelse return error.MissingOrdinal) + field.len;
+    frame[ordinal] = '2';
+    try updateChecksum(frame);
+    try tmp.dir.writeFile(native, .{ .sub_path = journal_path, .data = bytes });
+    try fails(error.CorruptHistory, journal.Store.open(allocator, native, tmp.dir, fixture.identity, .{}));
+    const remaining = try tmp.dir.readFileAlloc(native, journal_path, allocator, .limited(8192));
+    defer allocator.free(remaining);
+    try strings(bytes, remaining);
 }
 
 test "unsupported version and duplicate sequence fail even with valid checksums" {

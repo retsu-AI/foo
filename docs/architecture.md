@@ -150,9 +150,9 @@ Custom executable tools receive validated JSON on stdin and return one JSON resu
 
 The native process adapter provides independent stdin, stdout, and stderr. Tool execution drains output under an excerpt limit and can write a bounded spool. The invocation returns after exit or cancellation cleanup, with the available exit status and effect outcome. POSIX process groups and Windows job objects own ordinary descendants. Processes run with the launching account's privileges. A caller that needs containment must supply isolation through its account, container, or VM. [Native process behavior and limits](../src/platform/process/README.md).
 
-### Local Code Mode follow-up
+### Local Code Mode
 
-A later opt-in Code Mode can run model-authored code in a local sandbox. The sandbox calls tools through the same enabled registry and follows its permission, cancellation, and resource limits. Local calls work without an MCP server. MCP tools can use the same interface once the host exposes them through the registry. [Code Mode follow-up](https://linear.app/retsu-ai/issue/ENG-1533/add-opt-in-local-code-mode-over-the-enabled-tool-registry).
+An opt-in registry decorator exposes an async JavaScript tool. A script calls the same enabled tools and follows their schema, permission, cancellation, and resource limits. One nested call runs at a time. With persistence enabled, nested records preserve exact effect tracking and stay out of the model transcript. The runtime exposes host effects through tool calls. MCP tools can use the same interface when the host adds them to the registry. [Code Mode usage and limits](../src/codemode/README.md).
 
 ## MCP and ACP
 

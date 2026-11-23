@@ -354,11 +354,11 @@
         "Native stdio behavior is tested on Linux/macOS/Windows; no draft-v2 dependence or ACP-specific agent engine."
       ],
       "handoff": [
-        "Method/capability/stop-reason matrix and framed transcripts.",
-        "Native pipe results, host operation lifecycles, and known optional exclusions.",
-        "Target-client live interoperability checklist for F13."
+        "Method, capability, and stop-reason matrix. The pipe suite can save framed transcripts.",
+        "Native ACP pipe checks cover the supported host operation lifecycles on Linux, macOS, and Windows.",
+        "F12 wires the shared runner and F06 into the executable. F13 verifies live interoperability with target editors."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1481",
         "uuid": "839c4b0d-a78a-4bac-8715-a17bb0409227",
@@ -391,11 +391,11 @@
         "Complete schema and examples correspond to supported first-release behavior."
       ],
       "handoff": [
-        "Schema, redacted effective-config fixture, and provenance/override examples.",
-        "Exact parser/validation commands and outcomes.",
-        "CLI argument parsing remains with F10."
+        "Landed in PR #10 at 89522cc. See src/config/README.md for the JSON schema, examples, and redaction policy.",
+        "All 16 resolver tests passed on Linux in Debug and ReleaseSafe. See tests/config/README.md for the standalone test command.",
+        "F10 owns CLI flag parsing. F11 consumes the TUI settings. F12 owns root test registration and runtime wiring."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1482",
         "uuid": "9c864c23-bc0e-48cf-8c25-2b01c61409b9",
@@ -433,11 +433,12 @@
         "Command startup creates no hidden server, updater, planner, or background task."
       ],
       "handoff": [
-        "Help text and concrete CLI examples.",
-        "Exit/output fixtures and exact test results.",
-        "Black-box candidate scenarios and remaining production adapter checks."
+        "Landed in PR #11 at f09ef84. See src/cli/README.md for help, protocol, exit codes, and commands.",
+        "All 18 subprocess tests passed on Linux x86_64 in Debug and ReleaseSafe. They include cancellation while stdout is blocked.",
+        "The fixture cross-built for macOS arm64 and Windows x86_64. Native process qualification remains open.",
+        "F12 owns production wiring and root test registration. F13 qualifies the integrated executable."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1483",
         "uuid": "0d08af9a-9210-4c64-8e31-f6d38e043288",

@@ -6,6 +6,8 @@ This is a proposed qualification specification for the runtime. F00 supplies com
 
 See [the shared contracts](../src/contracts/README.md) for implemented commands and their limits. F01 implements streaming HTTP and TLS with deterministic loopback fixtures. [Transport handoff](../src/transport/README.md). F02 adds wire fixtures and fuzz entrypoints. [Wire handoff](../src/wire/README.md). F03 passed 26 scripted core tests on Linux in Debug and ReleaseSafe. [Core verification](../src/core/README.md#verification). F04 passed 17 provider tests on Linux in Debug and ReleaseSafe and cross-compiled the suite for macOS arm64 and Windows x86_64. The local LiteLLM probe completed a signed tool continuation against a simulated Gemini upstream. Final native and hosted qualification depends on the integrated F12 release candidate. [Provider verification and commands](../tests/providers/README.md).
 
+F09 passed all 16 configuration fixtures on Linux in Debug and ReleaseSafe. The tests cover layer order, explicit files, provenance, settings validation, and redaction. [Configuration test commands](../tests/config/README.md).
+
 ## Build and test commands
 
 | Command | Purpose and current status |
@@ -13,17 +15,21 @@ See [the shared contracts](../src/contracts/README.md) for implemented commands 
 | `zig build test -Dmodule=core` | Integrator registration pending. Run the landed suite with the [direct Zig command](../src/core/README.md#verification). |
 | `zig build test -Dmodule=providers` | Integrator registration pending. Run the landed suite with the [direct Zig command](../tests/providers/README.md). |
 | `zig build test -Dmodule=session` | Integrator registration pending. Run the landed suite and native crash probe with the [session test command](../src/session/README.md#verification-and-integration). |
+| `zig build test -Dmodule=acp` | Integrator registration pending. Run the [native ACP pipe suite](../tests/acp/README.md). |
+| `zig build test -Dmodule=config` | Integrator registration pending. Run the landed suite with the [direct Zig command](../tests/config/README.md). |
+| `zig build test -Dmodule=cli` | Integrator registration pending. Run the landed [real-pipe CLI suite](../src/cli/README.md#integration-and-verification). |
 | `zig build test -Dmodule=transport` | Run native HTTP and TLS loopback fixtures with the pinned transport profile |
 | `zig build test -Dmodule=wire` | Run the framing, JSON-RPC, and correlation fixtures |
 | `zig build test -Dmodule=tools` | Run the coding and custom executable tool fixtures |
+| `zig build test -Dmodule=codemode` | Run the JavaScript runtime, capability, and real file composition checks |
 | `zig build test -Dmodule=platform-process` | Run the native subprocess and cleanup fixtures |
-| `zig build check` | Check formatting, compile the executable, and run the contracts, transport, wire, tools, and platform-process suites |
+| `zig build check` | Check formatting, compile the executable, and run the contracts, transport, wire, tools, and platform-process suites. Add `-Dcodemode=true` for Code Mode |
 | `zig build check-bootstrap` | Check formatting, compile the executable, and run contract tests without the transport profile |
 | `zig build acceptance` | Unavailable; planned native offline CLI, process, journal, MCP, ACP, and terminal scenarios |
 | `zig build acceptance-live` | Unavailable; planned provider/server/editor interoperability with an allowlist and spend ceiling |
 | `zig build bench` | Unavailable; planned reproducible measurements separate from unit-test assertions |
 
-Module selector names are `contracts`, `transport`, `wire`, `core`, `providers`, `tools`, `platform-process`, `mcp`, `session`, `acp`, `config`, `cli`, `tui`, `platform-terminal`, and `integration`. A missing module implementation is reported as missing; a placeholder or empty test target must not count as acceptance. Build registration changes belong to the integrator so agents do not edit the same build files.
+Module selector names are `contracts`, `transport`, `wire`, `core`, `providers`, `tools`, `platform-process`, `codemode`, `mcp`, `session`, `acp`, `config`, `cli`, `tui`, `platform-terminal`, and `integration`. A missing module implementation is reported as missing; a placeholder or empty test target must not count as acceptance. Build registration changes belong to the integrator so agents do not edit the same build files.
 
 The regular pull-request path runs deterministic checks and focused native tests. Schedule longer fuzzing, soak, and benchmark runs separately. Live endpoints must not be required for ordinary CI. Do not weaken a failed assertion or add a retry merely to obtain a green result.
 
@@ -97,6 +103,10 @@ ACP tests use a scripted editor client as well as at least one real compatible e
 Test editor-provided filesystem and terminal capabilities. An editor denial or missing capability must not silently fall back to unrestricted local execution. Test editor-supplied MCP servers, including the advertised HTTP support and explicit rejection of unsupported transport variants. Session IDs select independent state but do not imply concurrent active loops: the v1 one-active-run contract remains in force.
 
 Advertise optional features only after their exact behavior passes. In particular, session loading, image/audio content, legacy SSE transport, automatic authentication flows, and draft protocol revisions cannot be inferred from text/tools working.
+
+## CLI process fixtures
+
+All 18 CLI subprocess tests passed on native Linux x86_64 in Debug and ReleaseSafe. The fixture cross-built for macOS arm64 and Windows x86_64. Native execution on those platforms remains open. The cases cover piped stdin, config and credentials, journal resume, busy prompts, cancellation under blocked stdout, EOF, output failure, and signals. [CLI verification commands](../src/cli/README.md#integration-and-verification).
 
 ## Native platform and TUI matrix
 
