@@ -4,14 +4,16 @@ foo is ready for its first release when its CLI, TUI, MCP client, and ACP agent 
 
 This is a proposed qualification specification for the runtime. F00 supplies common test fakes and build registration. Its [native Nightly run](https://github.com/retsu-AI/foo/actions/runs/43960887714) qualified bootstrap commit `5c53fde07c0923ce914f9139dc21f43d3e5779da` with 13 contract tests and bootstrap behavior in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64. Linux Nix checks also passed. This completes F00, not first-release qualification. The test count belongs to that baseline; later contract changes need their own affected checks.
 
-See [the shared contracts](../src/contracts/README.md) for implemented commands and their limits. F01 transport work is in progress, beginning with an integrator-owned upload contract prerequisite. No production transport exists yet. Remaining runtime modules and their acceptance fixtures remain planned. F13 may author fixtures now, but final qualification depends on the integrated F12 release candidate.
+See [the shared contracts](../src/contracts/README.md) for implemented commands and their limits. F01 implements streaming HTTP and TLS with deterministic loopback fixtures. [Transport handoff](../src/transport/README.md). Remaining runtime modules and their acceptance fixtures remain planned. F13 may author fixtures now, but final qualification depends on the integrated F12 release candidate.
 
 ## Build and test commands
 
 | Command | Purpose and current status |
 | --- | --- |
 | `zig build test -Dmodule=core` | Unavailable until F03 supplies core behavior tests; F00 has registered module selection |
-| `zig build check` | Implemented formatting, executable compilation, and the contracts suite; integrator registers later suites |
+| `zig build test -Dmodule=transport` | Run native HTTP and TLS loopback fixtures with the pinned transport profile |
+| `zig build check` | Check formatting, compile the executable, and run the contracts and transport suites |
+| `zig build check-bootstrap` | Check formatting, compile the executable, and run contract tests without the transport profile |
 | `zig build acceptance` | Unavailable; planned native offline CLI, process, journal, MCP, ACP, and terminal scenarios |
 | `zig build acceptance-live` | Unavailable; planned provider/server/editor interoperability with an allowlist and spend ceiling |
 | `zig build bench` | Unavailable; planned reproducible measurements separate from unit-test assertions |

@@ -35,13 +35,13 @@ main{margin-left:var(--nav);max-width:1500px;padding:55px clamp(25px,5vw,80px) 8
     <li><a href="#doc-execution">Parallel implementation</a></li><li><a href="#doc-testing">Testing and release</a></li>
     <li><a href="#doc-evidence">Project evidence</a></li><li><a href="#doc-decisions">Architecture decisions</a></li>
   </ul></nav>
-  <div class="sidebar-foot"><span class="planned">Bootstrap qualified · F01 active</span><p>16 November 2026</p><p>One core. Three platforms.<br>Several builders.</p><p><a href="{{PROJECT_URL}}">Open foo in Linear ↗</a></p><a href="../README.md">Open the documentation index ↗</a></div>
+  <div class="sidebar-foot"><span class="planned">Bootstrap qualified · F01 review</span><p>23 November 2026</p><p>One core. Three platforms.<br>Several builders.</p><p><a href="{{PROJECT_URL}}">Open foo in Linear ↗</a></p><a href="../README.md">Open the documentation index ↗</a></div>
 </aside>
 <main id="main">
 <header class="hero">
   <div class="topline"><span class="eyebrow">Engineering plan · v1 scope</span><button type="button" id="print-page">Print / save PDF</button></div>
   <h1>foo implementation plan</h1>
-  <p class="intro">The v1 target is one configurable model and tool loop shared by a CLI, a simple TUI, MCP connections, and an ACP editor interface. The bootstrap is qualified on all three native targets. F01 transport work has started; production runtime modules remain planned.</p>
+  <p class="intro">The v1 target is one configurable model and tool loop shared by a CLI, a simple TUI, MCP connections, and an ACP editor interface. The bootstrap is qualified on all three native targets. F01 implements HTTP and TLS transport and is in native qualification. The other runtime modules remain planned.</p>
   <div class="facts" aria-label="Plan scope"><div class="fact"><strong>3 platforms</strong><small>Linux · macOS · Windows</small></div><div class="fact"><strong>3 API families</strong><small>Responses · Chat · Messages</small></div><div class="fact"><strong>MCP + ACP</strong><small>Required in the first release</small></div><div class="fact"><strong>{{PACKAGE_COUNT}} work packages</strong><small>Explicit owners and dependencies</small></div></div>
 </header>
 <noscript><p class="noscript">All documents and task details are available below. Browser find works throughout; interactive filtering requires JavaScript.</p></noscript>
@@ -63,7 +63,7 @@ main{margin-left:var(--nav);max-width:1500px;padding:55px clamp(25px,5vw,80px) 8
 </section>
 <section id="packages" class="section" aria-labelledby="packages-title">
   <div class="section-top"><div><span class="section-number">03 / WORK</span><h2 id="packages-title">Work packages</h2></div><button type="button" id="expand-all">Expand all</button></div>
-  <p class="section-intro">Every package has exclusive write paths, prerequisites, acceptance criteria, a handoff, and a linked Linear issue. This dated snapshot records F00 as complete, F01 as in progress, and F02 through F13 as planned. Native Nightly qualified the bootstrap at <code>5c53fde</code> with 13 contract tests in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64. <a href="#doc-testing">Read the qualification evidence and limits</a>. <a href="{{PROJECT_URL}}">Linear holds live assignments and status</a>.</p>
+  <p class="section-intro">Every package has exclusive write paths, prerequisites, acceptance criteria, a handoff, and a linked Linear issue. This dated snapshot records F00 as complete, F01 as in review, and F02 through F13 as planned. Native Nightly qualified the bootstrap at <code>5c53fde</code> with 13 contract tests in Debug and ReleaseSafe on Linux x86_64, macOS arm64, and Windows x86_64. <a href="#doc-testing">Read the qualification evidence and limits</a>. <a href="{{PROJECT_URL}}">Linear holds live assignments and status</a>.</p>
   <div class="filters"><label>Search packages<input id="task-search" type="search" placeholder="Find MCP, cancellation, Windows, a path…" autocomplete="off"></label><label>Availability<select id="task-filter"><option value="all">All packages</option><option value="ready">Ready to start</option><option value="blocked">Needs prerequisites</option></select></label><button type="button" id="clear-filters">Clear</button></div>
   <p id="task-count" class="result-count" aria-live="polite">{{PACKAGE_COUNT}} packages</p>
   <div id="task-list">{{TASKS}}</div><p id="no-tasks" class="empty" hidden>No matching packages. Clear the filters to see the complete plan.</p>
