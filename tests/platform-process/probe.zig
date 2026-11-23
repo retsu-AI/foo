@@ -187,6 +187,12 @@ fn checkExec(init: std.process.Init, op: foo.io.Context, spawner: foo.io.Spawner
     const rejected = try exec.runCommand(allocator, op, "d", &.{ executable, "large" }, invalid_options);
     try expectEqual(.not_started, rejected.effect);
     try expectEqual(null, rejected.artifact);
+    var tiny_options = options;
+    tiny_options.output_bytes = 1;
+    tiny_options.spool = null;
+    const tiny = try exec.runCommand(allocator, op, "tiny", &.{ executable, "large" }, tiny_options);
+    try expectEqual(.success, tiny.status);
+    try expect(tiny.truncated and tiny.content.len <= 1);
 }
 
 fn checkSpool(allocator: std.mem.Allocator, io: std.Io, artifact: foo.tool.Artifact) !void {

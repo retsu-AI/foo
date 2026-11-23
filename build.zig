@@ -143,6 +143,7 @@ fn addProcessSuites(
         .root_source_file = b.path("src/tools/root.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = use_guardian,
     });
     tools.addImport("foo", foo);
     const suite = b.addTest(.{ .root_module = b.createModule(.{

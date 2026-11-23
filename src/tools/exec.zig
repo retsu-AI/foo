@@ -182,16 +182,17 @@ pub fn runCommand(allocator: Allocator, operation: foo.io.Context, call_id: []co
 fn execute(allocator: Allocator, operation: foo.io.Context, call_id: []const u8, args: Args, options: Options, mode: Mode) foo.io.Error!foo.tool.Result {
     const result_id = try allocator.dupe(u8, call_id);
     errdefer allocator.free(result_id);
-    operation.check() catch |err| return rejected(result_id, err);
-    if (options.output_bytes < report_reserve or options.timeout_ms == 0 or options.cleanup_ms == 0 or
+    operation.check() catch |err| return rejected(allocator, result_id, err, options.output_bytes);
+    if (options.output_bytes == 0 or options.timeout_ms == 0 or options.cleanup_ms == 0 or
         args.argv.len == 0 or args.argv[0].len == 0 or options.cwd.len == 0)
-        return rejected(result_id, error.InvalidInput);
-    for (args.argv) |arg| if (std.mem.indexOfScalar(u8, arg, 0) != null) return rejected(result_id, error.InvalidInput);
+        return rejected(allocator, result_id, error.InvalidInput, options.output_bytes);
+    for (args.argv) |arg| if (std.mem.indexOfScalar(u8, arg, 0) != null)
+        return rejected(allocator, result_id, error.InvalidInput, options.output_bytes);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const scratch = arena.allocator();
-    const diagnostic_bytes = ((options.output_bytes - report_reserve) / 8) * 3;
+    const diagnostic_bytes = ((options.output_bytes -| report_reserve) / 8) * 3;
     const stdout_bytes = if (mode == .tool) options.output_bytes else diagnostic_bytes;
     var stdout: Capture = .{ .bytes = try scratch.alloc(u8, stdout_bytes) };
     var stderr: Capture = .{ .bytes = try scratch.alloc(u8, diagnostic_bytes) };
@@ -202,13 +203,14 @@ fn execute(allocator: Allocator, operation: foo.io.Context, call_id: []const u8,
     var spool: SpoolFile = .{};
     var spool_name: ?[]const u8 = null;
     if (options.spool) |limits| {
-        if (limits.max_bytes < frame_header_bytes + 1) return rejected(result_id, error.InvalidInput);
+        if (limits.max_bytes < frame_header_bytes + 1)
+            return rejected(allocator, result_id, error.InvalidInput, options.output_bytes);
         var nonce: [16]u8 = undefined;
         op.io.random(&nonce);
         spool_name = try std.fmt.allocPrint(allocator, "exec-{s}.frames", .{std.fmt.bytesToHex(nonce, .lower)});
         spool = SpoolFile.open(op, limits, spool_name.?) catch |err| {
             allocator.free(spool_name.?);
-            return rejected(result_id, err);
+            return rejected(allocator, result_id, err, options.output_bytes);
         };
     }
     var keep_spool_name = false;
@@ -218,6 +220,9 @@ fn execute(allocator: Allocator, operation: foo.io.Context, call_id: []const u8,
     defer if (spool.file != null) {
         _ = spool.close(op, false);
     };
+    const fallback = try boundedCopy(allocator, "Process diagnostics unavailable", options.output_bytes);
+    var keep_fallback = false;
+    defer if (!keep_fallback) allocator.free(fallback);
 
     const child = options.spawner.spawn_fn(options.spawner.context, scratch, op, .{
         .argv = args.argv,
@@ -225,7 +230,7 @@ fn execute(allocator: Allocator, operation: foo.io.Context, call_id: []const u8,
         .environment = options.environment,
         .inherit_environment = options.inherit_environment,
     }) catch |err| {
-        var result = rejected(result_id, err);
+        var result = try rejected(allocator, result_id, err, options.output_bytes);
         switch (err) {
             error.Cancelled, error.DeadlineExceeded, error.IoFailure, error.Disconnected => result.effect = .uncertain,
             else => {},
@@ -251,12 +256,16 @@ fn execute(allocator: Allocator, operation: foo.io.Context, call_id: []const u8,
     const Reply = struct { content: []const u8, is_error: bool = false };
     if (mode == .tool and process_ok and stdout.total == stdout.used and std.unicode.utf8ValidateSlice(stdout.bytes[0..stdout.used])) {
         if (std.json.parseFromSlice(Reply, scratch, stdout.bytes[0..stdout.used], .{})) |reply| {
-            const content = allocator.dupe(u8, reply.value.content) catch return .{
-                .call_id = result_id,
-                .status = .failure,
-                .effect = .observed,
-                .content = "Process reply could not be retained",
-                .artifact = artifact,
+            const content = allocator.dupe(u8, reply.value.content) catch {
+                keep_fallback = true;
+                return .{
+                    .call_id = result_id,
+                    .status = .failure,
+                    .effect = .observed,
+                    .content = fallback,
+                    .artifact = artifact,
+                    .truncated = true,
+                };
             };
             return .{
                 .call_id = result_id,
@@ -270,7 +279,15 @@ fn execute(allocator: Allocator, operation: foo.io.Context, call_id: []const u8,
     }
     const exited = observation.exit != null and observation.exit.? == .exited;
     const signalled = observation.exit != null and observation.exit.? == .signalled;
-    const content = std.json.Stringify.valueAlloc(allocator, .{
+    var result: foo.tool.Result = .{
+        .call_id = result_id,
+        .status = if (cancelled) .cancelled else if (mode == .command and process_ok) .success else .failure,
+        .effect = if (observed) .observed else .uncertain,
+        .content = fallback,
+        .truncated = true,
+        .artifact = artifact,
+    };
+    const encoded = std.json.Stringify.valueAlloc(allocator, .{
         .exit_code = if (exited) observation.exit.?.exited else null,
         .signal = if (signalled) observation.exit.?.signalled else null,
         .error_name = if (observation.failure) |err| @as(?[]const u8, @errorName(err)) else if (process_ok)
@@ -288,22 +305,18 @@ fn execute(allocator: Allocator, operation: foo.io.Context, call_id: []const u8,
         .stderr_bytes = stderr.total,
         .spool_truncated = spool.truncated,
         .spool_failed = spool.failed,
-    }, .{}) catch return .{
-        .call_id = result_id,
-        .status = .failure,
-        .effect = if (observed) .observed else .uncertain,
-        .content = "Process finished but the result could not be encoded",
-        .truncated = true,
-        .artifact = artifact,
+    }, .{}) catch {
+        keep_fallback = true;
+        return result;
     };
-    return .{
-        .call_id = result_id,
-        .status = if (cancelled) .cancelled else if (mode == .command and process_ok) .success else .failure,
-        .effect = if (observed) .observed else .uncertain,
-        .content = content,
-        .truncated = truncated,
-        .artifact = artifact,
-    };
+    if (encoded.len > options.output_bytes) {
+        allocator.free(encoded);
+        keep_fallback = true;
+    } else {
+        result.content = encoded;
+        result.truncated = truncated;
+    }
+    return result;
 }
 
 fn base64(allocator: Allocator, bytes: []const u8) error{OutOfMemory}![]const u8 {
@@ -311,11 +324,17 @@ fn base64(allocator: Allocator, bytes: []const u8) error{OutOfMemory}![]const u8
     return encoder.encode(try allocator.alloc(u8, encoder.calcSize(bytes.len)), bytes);
 }
 
-fn rejected(id: []const u8, err: foo.io.Error) foo.tool.Result {
+fn boundedCopy(allocator: Allocator, text: []const u8, limit: usize) error{OutOfMemory}![]const u8 {
+    return allocator.dupe(u8, text[0..@min(text.len, limit)]);
+}
+
+fn rejected(allocator: Allocator, id: []const u8, err: foo.io.Error, limit: usize) foo.io.Error!foo.tool.Result {
+    const message = @errorName(err);
     return .{
         .call_id = id,
         .status = if (err == error.Cancelled) .cancelled else .failure,
         .effect = .not_started,
-        .content = @errorName(err),
+        .content = try boundedCopy(allocator, message, limit),
+        .truncated = message.len > limit,
     };
 }

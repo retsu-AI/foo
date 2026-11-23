@@ -11,10 +11,11 @@ pass its absolute path as `Native.guardian_path`. The guardian starts the comman
 in its own process group and owns its direct child. Owner death closes the lease.
 On cancellation, leader exit, or lease closure the guardian signals the entire
 command group and reaps the group leader before reporting its exit. Linux also
-reaps adopted members in the command group. On macOS, the OS reaps orphaned
-descendants. The reported exit on macOS attests to the group signal and leader
-reaping. A descendant that deliberately moves to another group can escape this
-ownership mechanism.
+reaps adopted members in the command group. On macOS, the guardian verifies that
+the group has no live members before reaping its leader. The OS reaps orphaned
+descendants. The adapter reports a failure if it cannot confirm group cleanup.
+A descendant that deliberately moves to another group can escape this ownership
+mechanism.
 
 On Windows, a kill-on-close Job Object owns each command tree from creation.
 Windows 10 or newer supplies the creation-time Job attribute. The backend resolves
