@@ -119,7 +119,8 @@ def verify_archive(archive, destination, binary_name, prefix):
 def package(binary, install_prefix, prefix, triple):
     system = platform.system()
     target, names = TARGETS[(system, platform.machine())]
-    if triple != target and not triple.startswith(f"{target}-"):
+    architecture, operating_system, *_ = triple.split("-")
+    if f"{architecture}-{operating_system.split('.')[0]}" != target:
         raise ValueError(f"Candidate target {triple} must match native host {target}")
 
     subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=ROOT, check=True)
