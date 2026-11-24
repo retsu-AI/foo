@@ -287,7 +287,7 @@ pub const Session = struct {
                 .cleanup_ms = launch_process.cleanup_ms,
                 .builtins = .{
                     .file_bytes = launch_process.file_bytes,
-                    .environment = if (local_exec) try environment(scratch, self.app.environ, launch_process.environment) else &.{},
+                    .environment = if (use_builtin_exec) try environment(scratch, self.app.environ, launch_process.environment) else &.{},
                     .inherit_environment = launch_process.inherit_environment,
                     .timeout_ms = launch_process.timeout_ms,
                 },

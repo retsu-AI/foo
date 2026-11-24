@@ -75,14 +75,18 @@ def chat_reply(request):
     tools = [item["function"]["name"] for item in request.get("tools", [])]
     if content["role"] == "tool":
         result = content["content"]
-        if prompt == "call read":
-            result = json.loads(result)["content"]
+        if prompt in ("call read", "call exec"):
+            key = "content" if prompt == "call read" else "output"
+            result = json.loads(result)[key]
         delta = {"role": "assistant", "content": "Observed " + result}
         finish = "stop"
     elif prompt.startswith("call "):
         name = prompt.split()[1]
         assert name in tools, (name, tools)
-        arguments = {"path": "sample.txt"} if name == "read" else {}
+        arguments = {
+            "read": {"path": "sample.txt"},
+            "exec": {"argv": ["fixture", "--flag"]},
+        }.get(name, {})
         delta = {"role": "assistant", "tool_calls": [{
             "index": 0, "id": "call-fixture", "type": "function",
             "function": {"name": name, "arguments": json.dumps(arguments)},
@@ -325,6 +329,31 @@ class Production(unittest.TestCase):
         self.assertEqual(Path(reading["params"]["path"]), self.directory / "sample.txt")
         peer.reply(reading, {"content": "unsaved editor text"})
         self.assertEqual(agent_text(peer.wait_for_turn(request, session)), "Observed unsaved editor text")
+        peer.close_input()
+        self.assertEqual(peer.join(), b"")
+
+    def test_acp_terminal_receives_explicit_process_environment(self):
+        environment = [{"name": "FIXTURE_ONLY", "value": "fixture-value"}]
+        self.config(enabled_tools=["exec"], process_backend="client", permissions="allow",
+                    process={"environment": environment})
+        peer = self.acp({"terminal": True})
+        session = peer.session(self.directory)
+        turn = peer.prompt(session, "call exec")
+        create = peer.expect_request("terminal/create", session)
+        self.assertEqual(create["params"]["command"], "fixture")
+        self.assertEqual(create["params"]["args"], ["--flag"])
+        self.assertEqual(create["params"]["env"], environment)
+        terminal = "editor-terminal"
+        peer.reply(create, {"terminalId": terminal})
+        for method, response in [
+            ("terminal/wait_for_exit", {"exitCode": 0}),
+            ("terminal/output", {"output": "editor output", "truncated": False}),
+            ("terminal/release", {}),
+        ]:
+            request = peer.expect_request(method, session)
+            self.assertEqual(request["params"]["terminalId"], terminal)
+            peer.reply(request, response)
+        self.assertEqual(agent_text(peer.wait_for_turn(turn, session)), "Observed editor output")
         peer.close_input()
         self.assertEqual(peer.join(), b"")
 

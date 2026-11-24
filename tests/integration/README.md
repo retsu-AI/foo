@@ -14,7 +14,8 @@ a native PTY or ConPTY, the native process guardian on POSIX, and local
 provider, MCP, and ACP fixtures. It checks the provider requests, tool results,
 journal replay, command exit status, terminal restoration, and stdout framing.
 
-For HTTPS, set `FOO_CA_FILE` to the path of a PEM trust bundle under 1 MiB.
+Use `--config PATH` to load a profile. `FOO_CONFIG_JSON` adds an explicit
+environment layer. For HTTPS, set `FOO_CA_FILE` to the path of a PEM trust bundle under 1 MiB.
 Only configured tools are available to the model. ACP accepts editor MCP
 descriptors that match a server explicitly configured on the agent. Client
 file and terminal tools require the configured client backend and the
