@@ -9,6 +9,7 @@ on:
       - 'build.zig'
       - 'build.zig.zon'
       - '.zig-version'
+      - '.gitattributes'
       - 'nix/transport*'
       - '.github/**'
   workflow_dispatch:
@@ -30,7 +31,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.os == 'windows-2022' && 45 || 30 }}
     steps:
       - uses: actions/checkout@v4
         with:
