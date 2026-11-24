@@ -153,7 +153,7 @@ class Production(unittest.TestCase):
     def setUp(self):
         work = tempfile.TemporaryDirectory(prefix="foo-runtime-")
         self.addCleanup(work.cleanup)
-        self.directory = Path(work.name)
+        self.directory = Path(work.name).resolve()
         self.profile = self.directory / "profile.json"
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.requests = []
