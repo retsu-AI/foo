@@ -20,7 +20,7 @@ To save the exchanged frames, add `--trace /tmp/acp.jsonl`. The script writes on
 | Agent to editor | `session/update`, `session/request_permission`, `$/cancel_request` |
 | Agent to editor with matching capability | `fs/read_text_file`, `fs/write_text_file`, `terminal/create`, `terminal/output`, `terminal/wait_for_exit`, `terminal/kill`, `terminal/release` |
 
-The adapter accepts text and resource links. Linked names and URIs reach the runner as text, and the adapter leaves resource access to the configured tools. [Pinned ACP schema](../contracts/protocol-pins.json). Session loading, media, interactive authentication, and MCP HTTP support require additional capabilities. For stdio MCP, the injected session factory receives the editor's server declarations and applies the executable and environment policy.
+The adapter accepts text and resource links. Linked names and URIs reach the runner as text. The adapter leaves resource access to the configured tools. The injected session factory applies the process and endpoint policy to editor MCP declarations. Set `Options.mcp_http` to advertise and accept Streamable HTTP descriptors alongside stdio. The pipe suite checks both capability settings, descriptor validation, and the URL and headers passed to the factory. [Pinned ACP schema](../contracts/protocol-pins.json).
 
 | Runner outcome | Prompt response |
 | --- | --- |
@@ -32,7 +32,7 @@ The adapter accepts text and resource links. Linked names and URIs reach the run
 
 The agent sends the active prompt's final response after its updates. Refused turns are excluded from subsequent prompts. Cancellation retires in-flight editor requests so a late response cannot approve a later tool operation. Approval applies to one prepared operation.
 
-File read and write are independently negotiated. Reads can use unsaved editor content. Writes offer plain replacement semantics without a compare-and-swap guarantee. When a configured client operation fails, the adapter returns the failure to the runner. The adapter asks the editor to kill and release live terminals when the connection permits it. The shutdown report records terminals whose remote cleanup could not be confirmed.
+File read and write are independently negotiated. Reads can use unsaved editor content. Writes offer plain replacement semantics without a compare-and-swap guarantee. When a configured client operation fails, the adapter returns the failure to the runner. The adapter asks the editor to kill and release live terminals when the connection permits it. The shutdown report records terminals whose remote cleanup could not be confirmed. The pipe suite also cancels the server's `std.Io` future during a turn while stdin stays open and checks that the turn ends before the session closes.
 
 ## Release qualification
 

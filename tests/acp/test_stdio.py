@@ -116,7 +116,7 @@ class Peer:
             self.test.assertEqual(message["params"]["sessionId"], session, message)
             return message
 
-    def initialize(self, capabilities=None, version=1):
+    def initialize(self, capabilities=None, version=1, *, mcp_http=False):
         params = {"protocolVersion": version, "clientInfo": {"name": "pipe-peer", "version": "1"}}
         if capabilities is not None:
             params["clientCapabilities"] = capabilities
@@ -128,7 +128,7 @@ class Peer:
         for kind in ("image", "audio", "embeddedContext"):
             self.test.assertFalse(prompt.get(kind, False), advertised)
         mcp = advertised.get("mcpCapabilities", {})
-        self.test.assertFalse(mcp.get("http", False), mcp)
+        self.test.assertIs(mcp.get("http", False), mcp_http, mcp)
         self.test.assertFalse(mcp.get("sse", False), mcp)
         self.test.assertFalse(result.get("authMethods", []))
         return result
@@ -295,9 +295,34 @@ class AcpStdio(unittest.TestCase):
         session = peer.session(servers=[mcp])
         updates = peer.wait_for_turn(peer.prompt(session, "mcp"), session)
         self.assertEqual(agent_text(updates), "editor MCP delegated")
-        for servers in ([mcp, mcp], [{"type": "http", "name": "remote", "url": "https://mcp.invalid"}]):
+        for servers in ([mcp, mcp], [{"type": "http", "name": "remote", "url": "https://mcp.invalid", "headers": []}]):
             request = peer.request("session/new", {"cwd": str(Path.cwd()), "mcpServers": servers})
             peer.result(request, error=True)
+
+    def test_advertised_editor_http_mcp_passes_validated_descriptor_to_factory(self):
+        peer = self.peer("--mcp-http")
+        peer.initialize(mcp_http=True)
+        mcp = {
+            "type": "http", "name": "remote", "url": "HTTPS://mcp.invalid/rpc",
+            "headers": [{"name": "X-MCP-Test", "value": "fixture"}],
+        }
+        session = peer.session(servers=[mcp])
+        updates = peer.wait_for_turn(peer.prompt(session, "mcp"), session)
+        self.assertEqual(agent_text(updates), "editor HTTP MCP URL and header delegated")
+        for invalid in (
+            {**mcp, "type": "sse"},
+            {**mcp, "type": 1},
+            {**mcp, "url": "ftp://mcp.invalid"},
+            {**mcp, "url": "https://name@host.invalid"},
+            {**mcp, "url": "https://host.invalid/path#fragment"},
+            {**mcp, "headers": [{"name": "bad header", "value": "value"}]},
+            {**mcp, "headers": [{"name": "Header", "value": "value\r\nInjected: value"}]},
+            {**mcp, "headers": [*mcp["headers"], {"name": "x-mcp-test", "value": "duplicate"}]},
+            {**mcp, "command": "unexpected-command"},
+        ):
+            with self.subTest(descriptor=invalid):
+                request = peer.request("session/new", {"cwd": str(Path.cwd()), "mcpServers": [invalid]})
+                self.assertEqual(peer.result(request, error=True)["code"], -32602)
 
     def test_resource_link_reaches_runner(self):
         peer, session = self.initialized()
@@ -464,6 +489,12 @@ class AcpStdio(unittest.TestCase):
         peer.expect_request("terminal/output", session)
         peer.close_input()
         self.assertIn(b"unconfirmed remote terminal cleanup", peer.join())
+        self.assertIs(peer.messages.get(timeout=TIMEOUT), EOF)
+
+    def test_cancelled_server_joins_turn_and_closes_session(self):
+        peer, session = self.initialized(args=("--cancel-serve",))
+        peer.prompt(session, "cancel-serve")
+        self.assertIn(b"cancelled and closed session", peer.join())
         self.assertIs(peer.messages.get(timeout=TIMEOUT), EOF)
 
     def test_eof_during_permission(self):

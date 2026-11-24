@@ -10,6 +10,8 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     var factory: Fixture = .{};
     var limits: acp.Limits = .{};
+    var cancel_serve: std.Io.Event = .unset;
+    var mcp_http = false;
     for (args[1..]) |arg| {
         if (same(arg, "--short")) {
             limits.reverse_ms = 150;
@@ -25,12 +27,27 @@ pub fn main(init: std.process.Init) !void {
             factory.slow_open = true;
         } else if (same(arg, "--auth")) {
             factory.auth_required = true;
+        } else if (same(arg, "--cancel-serve")) {
+            factory.cancel_serve = &cancel_serve;
+        } else if (same(arg, "--mcp-http")) {
+            mcp_http = true;
         } else return error.InvalidArguments;
     }
-    const report = try acp.serveStdio(init.gpa, init.io, .{
+    const options: acp.Options = .{
         .factory = .{ .context = &factory, .open_fn = Fixture.open },
         .limits = limits,
-    });
+        .mcp_http = mcp_http,
+    };
+    const report = if (factory.cancel_serve != null) cancelled: {
+        var server = try init.io.concurrent(acp.serveStdio, .{ init.gpa, init.io, options });
+        errdefer _ = server.cancel(init.io) catch {};
+        try cancel_serve.wait(init.io);
+        const result = try server.cancel(init.io);
+        if (result.reason != .cancelled or result.runtime_cleanup_failures != 0 or !factory.session_closed)
+            return error.CancellationDidNotCloseSession;
+        try std.Io.File.stderr().writeStreamingAll(init.io, "cancelled and closed session\n");
+        break :cancelled result;
+    } else try acp.serveStdio(init.gpa, init.io, options);
     if (report.remote_cleanup_unconfirmed != 0) {
         try std.Io.File.stderr().writeStreamingAll(init.io, "unconfirmed remote terminal cleanup\n");
     }
@@ -39,22 +56,32 @@ pub fn main(init: std.process.Init) !void {
 const Fixture = struct {
     slow_open: bool = false,
     auth_required: bool = false,
+    cancel_serve: ?*std.Io.Event = null,
+    turn_finished: std.atomic.Value(bool) = .init(false),
+    session_closed: bool = false,
 
     fn open(context: *anyopaque, allocator: std.mem.Allocator, op: io.Context, args: acp.OpenInput) acp.OpenError!acp.Runtime {
         const self: *Fixture = @ptrCast(@alignCast(context));
         try op.check();
         if (self.auth_required) return error.AuthenticationRequired;
         if (self.slow_open) try pause(op);
-        if (args.editor_servers.len != 0) {
-            if (args.editor_servers.len != 1) return error.InvalidInput;
-            const descriptor = args.editor_servers[0];
-            if (descriptor.transport != .stdio or !same(descriptor.id, "fixture")) return error.InvalidInput;
-            const stdio = descriptor.transport.stdio;
-            if (stdio.argv.len != 2 or !same(stdio.argv[0], "mock-mcp") or !same(stdio.argv[1], "--mock"))
-                return error.InvalidInput;
-        }
+        var mcp_text: []const u8 = "no editor MCP";
+        for (args.editor_servers) |descriptor| switch (descriptor.transport) {
+            .stdio => |stdio| {
+                if (!same(descriptor.id, "fixture") or stdio.argv.len != 2 or
+                    !same(stdio.argv[0], "mock-mcp") or !same(stdio.argv[1], "--mock")) return error.InvalidInput;
+                mcp_text = "editor MCP delegated";
+            },
+            .http => |http| {
+                mcp_text = "editor HTTP MCP delegated";
+                if (same(descriptor.id, "remote") and same(http.url, "https://mcp.invalid/rpc") and
+                    http.headers.len == 1 and same(http.headers[0].name, "X-MCP-Test") and
+                    http.headers[0].value == .literal and same(http.headers[0].value.literal, "fixture"))
+                    mcp_text = "editor HTTP MCP URL and header delegated";
+            },
+        };
         const session = try allocator.create(FakeSession);
-        session.* = .{ .host = args.client, .mcp = args.editor_servers.len != 0 };
+        session.* = .{ .host = args.client, .mcp_text = mcp_text, .factory = self };
         return .{
             .context = session,
             .runner = .{ .context = session, .run_fn = FakeSession.run },
@@ -65,13 +92,24 @@ const Fixture = struct {
                 .process_backend = .client,
             },
             .prepare_fn = FakeSession.prepare,
+            .close_fn = FakeSession.close,
         };
     }
 };
 
 const FakeSession = struct {
     host: host.Host,
-    mcp: bool,
+    mcp_text: []const u8,
+    factory: *Fixture,
+
+    fn close(context: *anyopaque, op: io.Context) io.Error!void {
+        const self: *FakeSession = @ptrCast(@alignCast(context));
+        try op.check();
+        op.io.checkCancel() catch return error.Cancelled;
+        if (self.factory.cancel_serve != null and !self.factory.turn_finished.load(.acquire))
+            return error.Unavailable;
+        self.factory.session_closed = true;
+    }
 
     fn prepare(context: *anyopaque, _: std.mem.Allocator, op: io.Context, _: events.RunId) io.Error!acp.RunServices {
         try op.check();
@@ -93,6 +131,11 @@ const FakeSession = struct {
         const prompt = latest.blocks[0].text;
         if (same(prompt, "wait")) {
             try turn.delta("ready");
+            try pause(op);
+        } else if (same(prompt, "cancel-serve")) {
+            const cancel_serve = self.factory.cancel_serve orelse return error.InvalidInput;
+            defer self.factory.turn_finished.store(true, .release);
+            cancel_serve.set(op.io);
             try pause(op);
         } else if (same(prompt, "history")) {
             var count: usize = 0;
@@ -168,7 +211,7 @@ const FakeSession = struct {
         } else if (same(prompt, "other-limit")) {
             return turn.finish(.{ .reason = .limit_reached });
         } else if (same(prompt, "mcp")) {
-            try turn.text(if (self.mcp) "editor MCP delegated" else "no editor MCP");
+            try turn.text(self.mcp_text);
         } else if (same(prompt, "spam")) {
             var payload: [2048]u8 = undefined;
             @memset(&payload, 'A');

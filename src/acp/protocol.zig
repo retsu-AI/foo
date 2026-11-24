@@ -44,8 +44,14 @@ pub const Initialize = struct {
     } = .{},
 };
 
-pub const initialize_result =
-    "{\"protocolVersion\":1,\"agentCapabilities\":{},\"authMethods\":[],\"agentInfo\":{\"name\":\"foo\",\"version\":\"" ++ foo.version ++ "\"}}";
+pub fn initializeResult(mcp_http: bool) []const u8 {
+    const prefix = "{\"protocolVersion\":1,\"agentCapabilities\":";
+    const suffix = ",\"authMethods\":[],\"agentInfo\":{\"name\":\"foo\",\"version\":\"" ++ foo.version ++ "\"}}";
+    return if (mcp_http)
+        prefix ++ "{\"mcpCapabilities\":{\"http\":true}}" ++ suffix
+    else
+        prefix ++ "{}" ++ suffix;
+}
 
 pub const SessionRef = struct { sessionId: []const u8 };
 pub const SessionInput = struct {
@@ -53,17 +59,21 @@ pub const SessionInput = struct {
     mcp_servers: []const foo.config.McpServer,
 };
 
-const Env = struct { name: []const u8, value: []const u8 };
-const Stdio = struct {
+const Pair = struct { name: []const u8, value: []const u8 };
+const ServerKind = enum { stdio, http };
+const Server = struct {
     type: ?[]const u8 = null,
     name: []const u8,
-    command: []const u8,
-    args: ?[]const []const u8,
-    env: ?[]const Env,
+    command: ?[]const u8 = null,
+    args: ?[]const []const u8 = null,
+    env: ?[]const Pair = null,
+    url: ?[]const u8 = null,
+    headers: ?[]const Pair = null,
 };
+const McpTransport = @FieldType(foo.config.McpServer, "transport");
 const New = struct {
     cwd: []const u8,
-    mcpServers: ?[]const Stdio,
+    mcpServers: ?[]const Server,
     additionalDirectories: ?[]const []const u8 = null,
     systemPrompt: ?std.json.Value = null,
 };
@@ -87,42 +97,91 @@ pub fn parse(comptime T: type, allocator: std.mem.Allocator, raw: []const u8) fo
     };
 }
 
-pub fn newSession(allocator: std.mem.Allocator, raw: []const u8, limits: Limits) foo.io.Error!SessionInput {
+pub fn newSession(allocator: std.mem.Allocator, raw: []const u8, limits: Limits, mcp_http: bool) foo.io.Error!SessionInput {
     const input = try parse(New, allocator, raw);
     if (!absolutePath(input.cwd) or input.systemPrompt != null) return error.InvalidInput;
     if (input.additionalDirectories) |roots| if (roots.len != 0) return error.InvalidInput;
 
-    const servers: []const Stdio = input.mcpServers orelse &.{};
+    const servers: []const Server = input.mcpServers orelse &.{};
     if (servers.len > limits.editor_servers) return error.LimitExceeded;
     const result = try allocator.alloc(foo.config.McpServer, servers.len);
     for (servers, 0..) |server, index| {
-        if (server.type) |tag| if (!std.mem.eql(u8, tag, "stdio")) return error.InvalidInput;
-        if (server.name.len == 0 or server.name.len > 256 or !noNul(server.name) or
-            (server.command.len == 0 or server.command.len > 4096 or !noNul(server.command))) return error.InvalidInput;
+        if (server.name.len == 0 or server.name.len > 256 or !noNul(server.name)) return error.InvalidInput;
+        const kind = if (server.type) |tag| std.meta.stringToEnum(ServerKind, tag) orelse return error.InvalidInput else .stdio;
         for (result[0..index]) |prev| {
             if (std.mem.eql(u8, prev.id, server.name)) return error.InvalidInput;
         }
-        const args: []const []const u8 = server.args orelse &.{};
-        const env: []const Env = server.env orelse &.{};
-        if (args.len > 256 or env.len > 128) return error.LimitExceeded;
-
-        const argv = try allocator.alloc([]const u8, args.len + 1);
-        argv[0] = server.command;
-        for (argv[1..], args) |*dest, value| {
-            if (!noNul(value)) return error.InvalidInput;
-            dest.* = value;
-        }
-        const environment = try allocator.alloc(foo.config.Environment, env.len);
-        for (env, 0..) |variable, env_index| {
-            if (!environmentName(variable.name) or !noNul(variable.value)) return error.InvalidInput;
-            for (environment[0..env_index]) |prior| {
-                if (std.ascii.eqlIgnoreCase(prior.name, variable.name)) return error.InvalidInput;
-            }
-            environment[env_index] = .{ .name = variable.name, .value = .{ .literal = variable.value } };
-        }
-        result[index] = .{ .id = server.name, .transport = .{ .stdio = .{ .argv = argv, .environment = environment } } };
+        result[index] = .{
+            .id = server.name,
+            .transport = switch (kind) {
+                .stdio => try stdioServer(allocator, server),
+                .http => if (mcp_http) try httpServer(allocator, server) else return error.InvalidInput,
+            },
+        };
     }
     return .{ .cwd = input.cwd, .mcp_servers = result };
+}
+
+fn stdioServer(allocator: std.mem.Allocator, server: Server) foo.io.Error!McpTransport {
+    const command = server.command orelse return error.InvalidInput;
+    if (command.len == 0 or command.len > 4096 or !noNul(command)) return error.InvalidInput;
+    const args: []const []const u8 = server.args orelse &.{};
+    const env: []const Pair = server.env orelse &.{};
+    if (args.len > 256 or env.len > 128) return error.LimitExceeded;
+
+    const argv = try allocator.alloc([]const u8, args.len + 1);
+    argv[0] = command;
+    for (argv[1..], args) |*dest, value| {
+        if (!noNul(value)) return error.InvalidInput;
+        dest.* = value;
+    }
+    const environment = try allocator.alloc(foo.config.Environment, env.len);
+    for (env, 0..) |variable, env_index| {
+        if (!environmentName(variable.name) or !noNul(variable.value)) return error.InvalidInput;
+        for (environment[0..env_index]) |prior| {
+            if (std.ascii.eqlIgnoreCase(prior.name, variable.name)) return error.InvalidInput;
+        }
+        environment[env_index] = .{ .name = variable.name, .value = .{ .literal = variable.value } };
+    }
+    return .{ .stdio = .{ .argv = argv, .environment = environment } };
+}
+
+fn httpServer(allocator: std.mem.Allocator, server: Server) foo.io.Error!McpTransport {
+    if (server.command != null or server.args != null or server.env != null) return error.InvalidInput;
+    const url = server.url orelse return error.InvalidInput;
+    const input_headers = server.headers orelse &.{};
+    if (url.len > 8192 or input_headers.len > 128) return error.LimitExceeded;
+    for (url) |c| {
+        if (c <= ' ' or c == 0x7f or c == '\\') return error.InvalidInput;
+    }
+    const uri = std.Uri.parse(url) catch return error.InvalidInput;
+    const scheme = if (std.ascii.eqlIgnoreCase(uri.scheme, "https"))
+        "https"
+    else if (std.ascii.eqlIgnoreCase(uri.scheme, "http"))
+        "http"
+    else
+        return error.InvalidInput;
+    if (uri.host == null or uri.host.?.percent_encoded.len == 0 or
+        uri.user != null or uri.password != null or uri.fragment != null or uri.port == 0 or
+        !std.mem.startsWith(u8, url[uri.scheme.len..], "://")) return error.InvalidInput;
+    const endpoint = if (std.mem.eql(u8, uri.scheme, scheme)) url else try std.mem.concat(allocator, u8, &.{ scheme, url[uri.scheme.len..] });
+
+    const headers = try allocator.alloc(foo.config.Header, input_headers.len);
+    for (input_headers, 0..) |header, index| {
+        if (header.name.len == 0) return error.InvalidInput;
+        for (header.name) |c| {
+            if (!std.ascii.isAlphanumeric(c) and std.mem.indexOfScalar(u8, "!#$%&'*+-.^`_|~", c) == null)
+                return error.InvalidInput;
+        }
+        for (header.value) |c| {
+            if ((c < ' ' and c != '\t') or c == 0x7f) return error.InvalidInput;
+        }
+        for (headers[0..index]) |prior| {
+            if (std.ascii.eqlIgnoreCase(prior.name, header.name)) return error.InvalidInput;
+        }
+        headers[index] = .{ .name = header.name, .value = .{ .literal = header.value } };
+    }
+    return .{ .http = .{ .url = endpoint, .headers = headers } };
 }
 
 pub fn prompt(allocator: std.mem.Allocator, raw: []const u8, limits: Limits) foo.io.Error!struct {

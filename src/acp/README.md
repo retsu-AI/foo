@@ -8,13 +8,16 @@ writes only JSON-RPC frames to the output handle.
 
 ## Runtime composition
 
-F12 supplies the session factory. `Factory.open_fn` receives the validated
-working directory, session identity, editor MCP descriptors, and a
-session-bound client host. Apply the configured executable policy and pass
-approved editor MCP descriptors to F06. The open callback borrows those
-descriptors for its duration. Use the session allocator for runtime state and
-copy any descriptor fields that F06 needs after open. The factory reports
+`Factory.open_fn` receives the validated working directory, session identity,
+editor MCP descriptors, and a session-bound client host. Apply the configured
+process and endpoint policy before passing approved descriptors to F06. The
+open callback borrows the descriptors. Use the session allocator for runtime
+state and copy any fields F06 needs after open. The factory reports
 `AuthenticationRequired` if the configured provider credential is missing.
+
+Set `Options.mcp_http` when the factory supports Streamable HTTP. The adapter
+advertises `mcpCapabilities.http` and accepts HTTP descriptors with validated
+URLs and literal headers. Stdio descriptors are supported by default.
 
 `Runtime.prepare_fn` receives each new run identity and returns the tools and
 services for that turn. Use it to prepare permission-aware tools and to
@@ -47,7 +50,9 @@ snapshot. The shutdown report counts terminal cleanup that could not be
 confirmed and runtime close failures. On disconnect, runtime callbacks
 share one shutdown deadline. Factory and runner code must honor the supplied
 operation deadlines and cancellation. The adapter joins its tasks before
-returning.
+returning. When the entrypoint runs `serveStdio` in an `std.Io` future,
+cancelling the future stops the active turn and runs session cleanup before
+returning the shutdown report.
 
 See the [ACP pipe tests](../../tests/acp/README.md) for the method matrix,
 stop reasons, and test commands.
