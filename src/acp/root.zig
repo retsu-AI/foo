@@ -33,7 +33,11 @@ pub const RunServices = struct {
     tools: foo.tool.Registry,
     services: host.Services,
 };
-pub const Options = struct { factory: Factory, limits: Limits = .{} };
+pub const Options = struct {
+    factory: Factory,
+    limits: Limits = .{},
+    mcp_http: bool = false,
+};
 pub const Shutdown = enum { eof, invalid_frame, input_failed, output_failed, output_pressure, cancelled };
 pub const Report = struct {
     reason: Shutdown,
@@ -397,7 +401,7 @@ const Connection = struct {
                 .write_file = caps.fs.writeTextFile,
                 .terminal = caps.terminal,
             };
-            return self.respond(ticket, .{ .success = protocol.initialize_result });
+            return self.respond(ticket, .{ .success = protocol.initializeResult(self.options.mcp_http) });
         }
         const kind: enum { new, prompt } = if (std.mem.eql(u8, method, "session/new")) .new else if (std.mem.eql(u8, method, "session/prompt")) .prompt else return self.respond(ticket, .{ .failure = .{
             .code = rpc.Code.method_not_found,
@@ -419,7 +423,7 @@ const Connection = struct {
         const work_kind: @FieldType(Work, "kind") = switch (kind) {
             .new => new: {
                 if (self.sessions.items.len == limits.sessions) return self.respond(ticket, .{ .failure = capacity });
-                const input = protocol.newSession(allocator, params, limits) catch |err|
+                const input = protocol.newSession(allocator, params, limits, self.options.mcp_http) catch |err|
                     return self.respond(ticket, .{ .failure = parseFailure(err) });
                 const sequence = std.math.add(u64, self.session_sequence, 1) catch
                     return self.respond(ticket, .{ .failure = capacity });

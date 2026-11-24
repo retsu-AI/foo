@@ -6,11 +6,22 @@ pub const max_prompt_bytes = 1024 * 1024;
 
 pub const SessionMode = enum { fresh, @"resume" };
 pub const Prompt = union(enum) { argument: []const u8, stdin };
+pub const McpCommand = struct {
+    kind: foo.tool.ContextKind,
+    server: []const u8,
+    selection: union(enum) {
+        list,
+        get: struct { id: []const u8, arguments_json: []const u8 = "" },
+    },
+};
 pub const Action = union(enum) {
     help,
     version,
     run: Prompt,
     rpc,
+    tui,
+    acp,
+    mcp: McpCommand,
     check,
     show,
 };
@@ -20,8 +31,9 @@ pub const Command = struct {
     config: config.Input,
 };
 
-const Mode = enum { run, rpc, config };
+const Mode = enum { run, rpc, tui, acp, mcp, config };
 const ConfigMode = enum { check, show };
+const McpMode = enum { list, get };
 const Flag = enum {
     @"--config",
     @"--preset",
@@ -33,6 +45,7 @@ const Flag = enum {
     @"--prompt",
     @"--stdin",
     @"--resume",
+    @"--arguments",
 };
 
 const ModelPatch = struct {
@@ -53,14 +66,15 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8, en
     }
     const mode = std.meta.stringToEnum(Mode, argv[0]) orelse return error.InvalidArguments;
     var offset: usize = 1;
+    if (argv.len == 2 and isHelp(argv[1])) return .{ .action = .help, .config = input };
     const config_mode: ?ConfigMode = if (mode == .config) blk: {
         if (offset == argv.len) return error.InvalidArguments;
-        if (argv.len == 2 and isHelp(argv[1])) return .{ .action = .help, .config = input };
         offset += 1;
         break :blk std.meta.stringToEnum(ConfigMode, argv[1]) orelse return error.InvalidArguments;
     } else null;
     if (argv.len == offset + 1 and isHelp(argv[offset])) return .{ .action = .help, .config = input };
 
+    var mcp_command = if (mode == .mcp) try parseMcp(argv, &offset) else null;
     var layers: std.ArrayList(config.Layer) = .empty;
     var used: std.EnumSet(Flag) = .empty;
     var patch: ModelPatch = .{};
@@ -81,8 +95,12 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8, en
                     .{ .argument = try value(argv, &offset, max_prompt_bytes) };
             },
             .@"--resume" => {
-                if (mode == .config) return error.InvalidArguments;
+                if (mode != .run and mode != .rpc and mode != .tui) return error.InvalidArguments;
                 session = .@"resume";
+            },
+            .@"--arguments" => {
+                if (mcp_command == null or mcp_command.?.selection != .get) return error.InvalidArguments;
+                mcp_command.?.selection.get.arguments_json = try value(argv, &offset, config.max_config_bytes);
             },
             .@"--config" => try addLayer(a, &layers, .{
                 .source = .file,
@@ -125,6 +143,9 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8, en
         .action = switch (mode) {
             .run => .{ .run = prompt orelse return error.InvalidArguments },
             .rpc => .rpc,
+            .tui => .tui,
+            .acp => .acp,
+            .mcp => .{ .mcp = mcp_command.? },
             .config => switch (config_mode.?) {
                 .check => .check,
                 .show => .show,
@@ -132,6 +153,19 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8, en
         },
         .session = session,
         .config = input,
+    };
+}
+
+fn parseMcp(argv: []const []const u8, offset: *usize) Error!McpCommand {
+    const mode = std.meta.stringToEnum(McpMode, try value(argv, offset, config.max_config_bytes)) orelse return error.InvalidArguments;
+    const kind = std.meta.stringToEnum(foo.tool.ContextKind, try value(argv, offset, config.max_config_bytes)) orelse return error.InvalidArguments;
+    return .{
+        .kind = kind,
+        .server = try value(argv, offset, config.max_config_bytes),
+        .selection = switch (mode) {
+            .list => .list,
+            .get => .{ .get = .{ .id = try value(argv, offset, config.max_config_bytes) } },
+        },
     };
 }
 

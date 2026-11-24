@@ -17,14 +17,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-zig
         id: zig
-      - name: Check bootstrap
+      - name: Check contracts
         run: |
           zig build check-bootstrap
-          zig build
-          python tests/contracts/bootstrap.py
           python .github/scripts/test-install-zig.py
-      - name: Check wire fixtures
-        run: zig build test -Dmodule=wire
+      - name: Check portable suites
+        run: |
+          for module in wire core providers config; do
+            zig build test -Dmodule="$module"
+          done
       - name: Check documentation
         run: |
           python -m pip install -r .github/docs-requirements.txt

@@ -2,11 +2,26 @@ name: Nightly
 on:
   schedule:
     - cron: "23 9 * * *"
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'build.zig'
+      - 'build.zig.zon'
+      - '.zig-version'
+      - '.gitattributes'
+      - 'nix/transport*'
+      - '.github/**'
   workflow_dispatch:
+    inputs:
+      candidate:
+        description: Build and retain unpublished candidate archives
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
-  group: nightly-${{ github.ref }}
+  group: nightly-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   native:
@@ -16,20 +31,27 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.os == 'windows-2022' && 45 || 30 }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/setup-zig
       - name: Set transport prefix
         shell: bash
         run: |
           echo "FOO_TRANSPORT_PREFIX=$RUNNER_TEMP/foo-transport" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/foo-transport/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache/restore@v4
+        id: transport
+        with:
+          path: ${{ env.FOO_TRANSPORT_PREFIX }}
+          key: native-transport-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('nix/transport-sources.json', 'nix/transport-curl-no-keylog.patch', '.github/scripts/build-transport.py') }}
       - name: Build pinned transport libraries
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && steps.transport.outputs.cache-hit != 'true'
         run: python .github/scripts/build-transport.py "$FOO_TRANSPORT_PREFIX"
       - name: Install NASM for OpenSSL (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && steps.transport.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $archive = Join-Path $env:RUNNER_TEMP 'nasm-2.16.03-win64.zip'
@@ -40,23 +62,36 @@ jobs:
           Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP
           Join-Path $env:RUNNER_TEMP 'nasm-2.16.03' >> $env:GITHUB_PATH
       - name: Build pinned transport libraries (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && steps.transport.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 || exit /b 1
           python .github/scripts/build-transport.py "%FOO_TRANSPORT_PREFIX%"
+      - uses: actions/cache/save@v4
+        if: steps.transport.outputs.cache-hit != 'true'
+        with:
+          path: ${{ env.FOO_TRANSPORT_PREFIX }}
+          key: ${{ steps.transport.outputs.cache-primary-key }}
       - name: Check Debug
-        run: |
-          zig build check
-          zig build
-          python tests/contracts/bootstrap.py
+        run: zig build check --summary all
       - name: Check ReleaseSafe
-        run: |
-          zig build check -Doptimize=ReleaseSafe
-          zig build -Doptimize=ReleaseSafe
-          python tests/contracts/bootstrap.py
+        run: zig build check -Doptimize=ReleaseSafe --summary all
+      - name: Install candidate packaging tools (Linux)
+        if: runner.os == 'Linux' && (github.event_name == 'pull_request' || inputs.candidate)
+        run: sudo apt-get update && sudo apt-get install -y patchelf
+      - name: Validate candidate archive
+        if: github.event_name == 'pull_request' || inputs.candidate
+        run: zig build release -Doptimize=ReleaseSafe --summary all
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.candidate
+        with:
+          name: candidate-${{ matrix.os }}-${{ github.sha }}
+          path: zig-out/candidate/
+          if-no-files-found: error
+          retention-days: 30
   nix:
     name: Nix checks (Linux)
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

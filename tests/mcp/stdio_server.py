@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 
 
@@ -112,10 +113,19 @@ def legacy():
     sys.stderr.buffer.write(b"x" * (512 * 1024) + b"fixture-stderr-tail\n")
     sys.stderr.buffer.flush()
     write(notify("notifications/tools/list_changed"), response(regular, {"tools": []}))
-    for _ in range(10):
-        time.sleep(0.02)
-        write(notify("notifications/resources/list_changed"))
-    eof()
+    stopped = threading.Event()
+
+    def announce():
+        while not stopped.wait(0.02):
+            write(notify("notifications/resources/list_changed"))
+
+    notifier = threading.Thread(target=announce)
+    notifier.start()
+    try:
+        eof()
+    finally:
+        stopped.set()
+        notifier.join()
 
 
 def interrupted(slow):

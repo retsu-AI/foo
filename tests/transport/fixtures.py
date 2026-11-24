@@ -299,7 +299,7 @@ class Transport(unittest.TestCase):
                             try:
                                 with tls.wrap_socket(peer, server_side=True) as secure:
                                     self.assert_disconnected(secure)
-                            except (ssl.SSLError, ConnectionResetError, BrokenPipeError):
+                            except (ssl.SSLError, ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
                                 pass
                     self.assert_no_accept(server)
 

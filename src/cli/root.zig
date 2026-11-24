@@ -1,12 +1,14 @@
 const std = @import("std");
 const foo = @import("foo");
 const config = @import("configuration");
-const arguments = @import("arguments.zig");
+pub const arguments = @import("arguments.zig");
 const rpc = @import("rpc.zig");
 
 const process = @import("process.zig");
 
 pub const executeProcess = process.execute;
+pub const withProcessSignals = process.withSignals;
+pub const waitForOperation = process.fileOperation;
 pub const SessionMode = arguments.SessionMode;
 pub const BindError = foo.io.Error || error{ MissingCredential, SessionUnavailable };
 
@@ -52,7 +54,7 @@ pub const Exit = enum(u8) {
     interrupted = 7,
     cancelled = 130,
 
-    fn fromError(err: foo.io.Error) Exit {
+    pub fn fromError(err: foo.io.Error) Exit {
         return switch (err) {
             error.InvalidInput => .usage,
             error.DeadlineExceeded, error.LimitExceeded => .limit,
@@ -61,7 +63,7 @@ pub const Exit = enum(u8) {
         };
     }
 
-    fn fromOutcome(outcome: foo.events.Outcome) Exit {
+    pub fn fromOutcome(outcome: foo.events.Outcome) Exit {
         return switch (outcome.reason) {
             .completed => .success,
             .cancelled => .cancelled,
@@ -78,6 +80,11 @@ pub const help =
     \\Usage:
     \\  foo run (--prompt TEXT | --stdin) [--resume] [OPTIONS]
     \\  foo rpc [--resume] [OPTIONS]
+    \\  foo tui [--resume] [OPTIONS]
+    \\  foo acp [OPTIONS]
+    \\  foo mcp list KIND SERVER [OPTIONS]
+    \\  foo mcp get KIND SERVER ID [--arguments JSON] [OPTIONS]
+    \\  KIND is resource, resource_template, or prompt.
     \\  foo config (check | show) [OPTIONS]
     \\  foo --help | --version
     \\
@@ -145,6 +152,10 @@ pub fn execute(
             return print(streams, operation, "\n");
         },
         .run, .rpc => {},
+        .tui, .acp, .mcp => {
+            report(streams, operation.io, "frontend is unavailable", .{});
+            return .host;
+        },
         .help, .version => unreachable,
     }
 
@@ -298,7 +309,7 @@ fn runPlain(
     return .success;
 }
 
-fn missingCredential(model: foo.config.Model, environ: ?*const std.process.Environ.Map) ?[]const u8 {
+pub fn missingCredential(model: foo.config.Model, environ: ?*const std.process.Environ.Map) ?[]const u8 {
     if (model.credential == .environment) {
         const name = model.credential.environment;
         const key = if (environ) |env| env.get(name) orelse return name else return name;

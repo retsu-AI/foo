@@ -530,11 +530,11 @@
         "Required MCP and ACP support is present in the candidate before handoff."
       ],
       "handoff": [
-        "Exact candidate commit, archive/checksum manifest, compiler/target identities.",
-        "Integrated deterministic results and native build matrix.",
-        "Explicit pending live/performance/manual evidence for F13; release remains owner-gated."
+        "See tests/integration/README.md for the production entrypoints, deterministic checks, and archive build.",
+        "ENG-1485 records the exact candidate commit, native matrix, archive checksums, and manifests.",
+        "F13 owns live, performance, and manual qualification. Publication remains owner-gated."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1485",
         "uuid": "52fe3490-4eb8-456a-901d-77a0633811fc",

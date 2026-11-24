@@ -12,27 +12,29 @@ F09 passed all 16 configuration fixtures on Linux in Debug and ReleaseSafe. The 
 
 | Command | Purpose and current status |
 | --- | --- |
-| `zig build test -Dmodule=core` | Integrator registration pending. Run the landed suite with the [direct Zig command](../src/core/README.md#verification). |
-| `zig build test -Dmodule=providers` | Integrator registration pending. Run the landed suite with the [direct Zig command](../tests/providers/README.md). |
-| `zig build test -Dmodule=session` | Integrator registration pending. Run the landed suite and native crash probe with the [session test command](../src/session/README.md#verification-and-integration). |
-| `zig build test -Dmodule=acp` | Integrator registration pending. Run the [native ACP pipe suite](../tests/acp/README.md). |
-| `zig build test -Dmodule=config` | Integrator registration pending. Run the landed suite with the [direct Zig command](../tests/config/README.md). |
-| `zig build test -Dmodule=tui` | Integrator registration pending. Run the [native TUI fixtures](../tests/tui/README.md). |
-| `zig build test -Dmodule=platform-terminal` | Integrator registration pending. The [native terminal driver](../tests/tui/README.md) includes direct backend and TUI probes. |
-| `zig build test -Dmodule=cli` | Integrator registration pending. Run the landed [real-pipe CLI suite](../src/cli/README.md#integration-and-verification). |
+| `zig build test -Dmodule=core` | Run the single-conversation engine fixtures |
+| `zig build test -Dmodule=providers` | Run all three provider codec fixtures |
+| `zig build test -Dmodule=session` | Run journal fixtures and kill a native writer at each effect boundary |
+| `zig build test -Dmodule=acp` | Run the native ACP pipe suite |
+| `zig build test -Dmodule=config` | Run the resolver fixtures |
+| `zig build test -Dmodule=tui` | Run the TUI and terminal backend fixtures using PTY or ConPTY |
+| `zig build test -Dmodule=platform-terminal` | Run the same native terminal fixtures |
+| `zig build test -Dmodule=cli` | Run the native CLI pipe suite |
 | `zig build test -Dmodule=transport` | Run native HTTP and TLS loopback fixtures with the pinned transport profile |
 | `zig build test -Dmodule=wire` | Run the framing, JSON-RPC, and correlation fixtures |
 | `zig build test -Dmodule=tools` | Run the coding and custom executable tool fixtures |
-| `zig build test -Dmodule=mcp` | Run both MCP profiles with scripted HTTP and native stdio. The transport profile adds HTTP loopback. |
-| `zig build test -Dmodule=codemode` | Run the JavaScript runtime, capability, and real file composition checks |
+| `zig build test -Dmodule=mcp` | Run MCP protocol, native stdio, and Streamable HTTP loopback fixtures |
+| `zig build test -Dmodule=codemode` | Run the optional JavaScript runtime, capability, and real file composition checks |
 | `zig build test -Dmodule=platform-process` | Run the native subprocess and cleanup fixtures |
-| `zig build check` | Check formatting, compile the executable, and run the contracts, transport, wire, tools, platform-process, and MCP suites. Add `-Dcodemode=true` for Code Mode |
-| `zig build check-bootstrap` | Check formatting, compile the executable, and run contract tests without the transport profile |
-| `zig build acceptance` | Unavailable; planned native offline CLI, process, journal, MCP, ACP, and terminal scenarios |
-| `zig build acceptance-live` | Unavailable; planned provider/server/editor interoperability with an allowlist and spend ceiling |
-| `zig build bench` | Unavailable; planned reproducible measurements separate from unit-test assertions |
+| `zig build test -Dmodule=integration` | Run the production executable with local provider, MCP, terminal, and editor fixtures |
+| `zig build check` | Check formatting and run the deterministic suites. Add `-Dcodemode=true` for the optional Code Mode suite |
+| `zig build check-bootstrap` | Check formatting and contracts without the transport profile |
+| `zig build release -Doptimize=ReleaseSafe` | Build and smoke-test an unpublished archive using the pinned native transport prefix |
+| `zig build acceptance` | F13 native offline acceptance |
+| `zig build acceptance-live` | F13 provider, server, and editor interoperability |
+| `zig build bench` | F13 reproducible measurements |
 
-Module selector names are `contracts`, `transport`, `wire`, `core`, `providers`, `tools`, `platform-process`, `codemode`, `mcp`, `session`, `acp`, `config`, `cli`, `tui`, `platform-terminal`, and `integration`. A missing module implementation is reported as missing; a placeholder or empty test target must not count as acceptance. Build registration changes belong to the integrator so agents do not edit the same build files.
+The native package and integration checks run in Debug and ReleaseSafe. See the [candidate guide](../tests/integration/README.md) for build inputs, archive contents, and verification commands.
 
 The regular pull-request path runs deterministic checks and focused native tests. Schedule longer fuzzing, soak, and benchmark runs separately. Live endpoints must not be required for ordinary CI. Do not weaken a failed assertion or add a retry merely to obtain a green result.
 

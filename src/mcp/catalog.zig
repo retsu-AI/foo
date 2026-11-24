@@ -411,14 +411,17 @@ pub const Registry = struct {
     }
 };
 
+const alias_limit = 64;
+const alias_prefix = "mcp_";
+const alias_digest_start = alias_limit - 17;
+
 pub fn providerAlias(allocator: Allocator, server: []const u8, remote: []const u8) error{ InvalidInput, OutOfMemory }![]const u8 {
     if (server.len == 0 or remote.len == 0) return error.InvalidInput;
-    const limit = 64;
-    const length = 5 +| server.len +| remote.len;
-    const alias = try allocator.alloc(u8, @min(length, limit));
-    @memcpy(alias[0..4], "mcp_");
-    const stem_limit = if (length > limit) limit - 17 else alias.len;
-    var index: usize = 4;
+    const length = alias_prefix.len + 1 +| server.len +| remote.len;
+    const alias = try allocator.alloc(u8, @min(length, alias_limit));
+    @memcpy(alias[0..alias_prefix.len], alias_prefix);
+    const stem_limit = if (length > alias_limit) alias_digest_start else alias.len;
+    var index: usize = alias_prefix.len;
     for (server) |char| {
         if (index == stem_limit) break;
         alias[index] = providerChar(char);
@@ -433,7 +436,7 @@ pub fn providerAlias(allocator: Allocator, server: []const u8, remote: []const u
         alias[index] = providerChar(char);
         index += 1;
     }
-    if (length > limit) {
+    if (length > alias_limit) {
         var hash: std.crypto.hash.sha2.Sha256 = .init(.{});
         var size: [8]u8 = undefined;
         std.mem.writeInt(u64, &size, server.len, .big);
@@ -446,6 +449,30 @@ pub fn providerAlias(allocator: Allocator, server: []const u8, remote: []const u
         @memcpy(alias[stem_limit + 1 ..][0..hex.len], &hex);
     }
     return alias;
+}
+
+pub fn maySupplyAlias(server: []const u8, alias: []const u8) bool {
+    if (server.len == 0 or alias.len > alias_limit or !std.mem.startsWith(u8, alias, alias_prefix))
+        return false;
+
+    const body = alias[alias_prefix.len..];
+    if (body.len > server.len +| 1 and body[server.len] == '_' and startsWithServer(body, server))
+        return true;
+
+    if (alias.len != alias_limit or alias[alias_digest_start] != '_') return false;
+    for (alias[alias_digest_start + 1 ..]) |char| {
+        if (!std.ascii.isDigit(char) and (char < 'a' or char > 'f')) return false;
+    }
+    const stem = alias[alias_prefix.len..alias_digest_start];
+    if (server.len < stem.len and stem[server.len] != '_') return false;
+    return startsWithServer(stem, server[0..@min(server.len, stem.len)]);
+}
+
+fn startsWithServer(alias: []const u8, server: []const u8) bool {
+    for (server, alias[0..server.len]) |char, escaped| {
+        if (providerChar(char) != escaped) return false;
+    }
+    return true;
 }
 
 fn providerChar(char: u8) u8 {

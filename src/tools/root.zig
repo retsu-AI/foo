@@ -1,6 +1,7 @@
 const std = @import("std");
 const foo = @import("foo");
 const Schema = @import("schema.zig").Schema;
+const client = @import("client.zig");
 
 pub const exec = @import("exec.zig");
 pub const builtin_tools = @import("builtin.zig");
@@ -25,6 +26,7 @@ pub const Options = struct {
     run: foo.events.RunId,
     generation: u64,
     permissions: ?foo.host.PermissionHandler = null,
+    host: foo.host.Host = .{},
     cleanup_ms: u64 = 2_000,
     spool: ?exec.Spool = null,
     builtins: ?BuiltinOptions = null,
@@ -46,7 +48,7 @@ pub const Registry = struct {
     };
     const Action = union(enum) {
         executable: Executable,
-        builtin: builtin_tools.Kind,
+        builtin: struct { kind: builtin_tools.Kind, backend: foo.config.Backend },
     };
     const Entry = struct {
         schema: Schema,
@@ -116,12 +118,13 @@ pub const Registry = struct {
             else
                 null;
             const action: Action = if (kind) |builtin_kind| builtins: {
-                if (builtin_kind == .exec) {
-                    if (settings.process_backend != .local) return error.Unavailable;
-                } else if (settings.files_backend != .local) return error.Unavailable;
+                const selected_backend = if (builtin_kind == .exec) settings.process_backend else settings.files_backend;
                 decl.identity.backend = "builtin";
-                decl.spec = builtin_tools.spec(builtin_kind);
-                break :builtins .{ .builtin = builtin_kind };
+                decl.spec = if (selected_backend == .client)
+                    try client.spec(builtin_kind, options.host, options.builtins.?.inherit_environment)
+                else
+                    builtin_tools.spec(builtin_kind);
+                break :builtins .{ .builtin = .{ .kind = builtin_kind, .backend = selected_backend } };
             } else configured: {
                 const descriptor = maybe_descriptor orelse return error.InvalidInput;
                 if (settings.process_backend != .local) return error.Unavailable;
@@ -226,7 +229,7 @@ pub const Registry = struct {
         defer scratch.deinit();
         const prepared = switch (entry.action) {
             .executable => null,
-            .builtin => |kind| builtin_tools.prepare(kind, scratch.allocator(), self.cwd, call.arguments_json, self.options.builtins.?.file_bytes) catch |err|
+            .builtin => |builtin_tool| builtin_tools.prepare(builtin_tool.kind, scratch.allocator(), self.cwd, call.arguments_json, self.options.builtins.?.file_bytes) catch |err|
                 return self.rejected(allocator, call.id, .failure, @errorName(err)),
         };
         const target = if (prepared) |builtin_call| builtin_call.target() else entry.action.executable.argv[0];
@@ -234,7 +237,7 @@ pub const Registry = struct {
             .allow => {},
             .deny => return self.rejected(allocator, call.id, .denied, "Tool permission denied"),
             .ask => {
-                const handler = self.options.permissions orelse
+                const handler = self.options.permissions orelse self.options.host.permissions orelse
                     return self.rejected(allocator, call.id, .denied, "Tool permission handler is unavailable");
                 const decision = handler.decide_fn(handler.context, operation, .{
                     .session = self.options.session,
@@ -260,7 +263,7 @@ pub const Registry = struct {
 
         const starts_process = switch (entry.action) {
             .executable => true,
-            .builtin => |kind| kind == .exec,
+            .builtin => |builtin_tool| builtin_tool.kind == .exec,
         };
         if (starts_process and !self.admitCommand())
             return self.rejected(allocator, call.id, .failure, "Active command limit reached");
@@ -279,6 +282,12 @@ pub const Registry = struct {
             execution.environment = profile.environment;
             execution.inherit_environment = profile.inherit_environment;
             execution.timeout_ms = profile.timeout_ms;
+            if (entry.action.builtin.backend == .client) return client.run(builtin_call, allocator, scratch.allocator(), operation, call.id, .{
+                .host = self.options.host,
+                .session = self.options.session,
+                .execution = execution,
+                .file_bytes = profile.file_bytes,
+            });
             return builtin_call.run(allocator, scratch.allocator(), operation, call.id, profile.file_bytes, execution.output_bytes, &self.writer_lock, execution);
         }
         const command = entry.action.executable;

@@ -192,6 +192,21 @@ fn invoke(
     });
 }
 
+test "a server may supply its generated aliases without matching an unrelated server" {
+    const long = "a-very-long-server-name-that-continues-past-the-digest-prefix";
+    const long_tool = "a-tool-name-long-enough-to-trigger-the-digest-suffix";
+    for ([_][]const u8{ "office.lab", "office", long }) |server| {
+        for ([_][]const u8{ "x", "look.up", long_tool }) |name| {
+            const alias = try catalog.providerAlias(test_allocator, server, name);
+            defer test_allocator.free(alias);
+            try std.testing.expect(catalog.maySupplyAlias(server, alias));
+            try std.testing.expect(!catalog.maySupplyAlias("another", alias));
+        }
+    }
+    try std.testing.expect(!catalog.maySupplyAlias("office", "mcp_office_"));
+    try std.testing.expect(!catalog.maySupplyAlias("off", "mcp_office_lab_lookup"));
+}
+
 const lookup_alias = "mcp_office_lab_lookup_v1";
 const lookup = "{\"name\":\"lookup.v1\",\"description\":\"Lookup\",\"inputSchema\":{\"type\":\"object\"}}";
 const alternate = "{\"name\":\"alternate\",\"inputSchema\":{\"type\":\"object\"}}";
