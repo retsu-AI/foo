@@ -17,10 +17,15 @@ pub fn execute(
     if (args.len == 0 or !(std.mem.eql(u8, args[0], "run") or std.mem.eql(u8, args[0], "rpc")))
         return cli.execute(allocator, operation, args, options);
 
-    operation.check() catch |err| return switch (err) {
-        error.DeadlineExceeded => .limit,
-        else => .cancelled,
-    };
+    return withSignals(operation, executeActive, .{ allocator, args, options });
+}
+
+pub fn withSignals(
+    operation: foo.io.Context,
+    comptime function: anytype,
+    args: anytype,
+) cli.Exit {
+    operation.check() catch |err| return cli.Exit.fromError(err);
     const handlers = Handlers.install() catch return .host;
     defer handlers.restore();
     var cancellation: foo.io.Cancellation = .{};
@@ -28,7 +33,11 @@ pub fn execute(
     active.cancellation = &cancellation;
     var watcher = operation.io.concurrent(watch, .{ operation, &cancellation }) catch return .host;
     defer watcher.cancel(operation.io);
-    return cli.execute(allocator, active, args, options);
+    return @call(.auto, function, .{active} ++ args);
+}
+
+fn executeActive(operation: foo.io.Context, allocator: std.mem.Allocator, args: []const []const u8, options: cli.Options) cli.Exit {
+    return cli.execute(allocator, operation, args, options);
 }
 
 fn watch(operation: foo.io.Context, cancellation: *foo.io.Cancellation) void {

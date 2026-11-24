@@ -11,6 +11,8 @@ pub const Action = union(enum) {
     version,
     run: Prompt,
     rpc,
+    tui,
+    acp,
     check,
     show,
 };
@@ -20,7 +22,7 @@ pub const Command = struct {
     config: config.Input,
 };
 
-const Mode = enum { run, rpc, config };
+const Mode = enum { run, rpc, tui, acp, config };
 const ConfigMode = enum { check, show };
 const Flag = enum {
     @"--config",
@@ -81,7 +83,7 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8, en
                     .{ .argument = try value(argv, &offset, max_prompt_bytes) };
             },
             .@"--resume" => {
-                if (mode == .config) return error.InvalidArguments;
+                if (mode == .config or mode == .acp) return error.InvalidArguments;
                 session = .@"resume";
             },
             .@"--config" => try addLayer(a, &layers, .{
@@ -125,6 +127,8 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8, en
         .action = switch (mode) {
             .run => .{ .run = prompt orelse return error.InvalidArguments },
             .rpc => .rpc,
+            .tui => .tui,
+            .acp => .acp,
             .config => switch (config_mode.?) {
                 .check => .check,
                 .show => .show,
