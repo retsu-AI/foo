@@ -61,7 +61,7 @@ pub const Terminal = struct {
         input_raw.cc[@backingInt(posix.V.MIN)] = 0;
         input_raw.cc[@backingInt(posix.V.TIME)] = 0;
         try setMode(input.handle, input_raw);
-        errdefer setMode(input.handle, in_mode) catch {};
+        errdefer restoreInputMode(input.handle, in_mode) catch {};
 
         var self: Terminal = .{
             .io = io,
@@ -127,7 +127,7 @@ pub const Terminal = struct {
         if (!self.active) return;
         self.active = false;
         self.leaveScreen();
-        setMode(self.input, self.input_mode) catch {};
+        restoreInputMode(self.input, self.input_mode) catch {};
         setMode(self.output, self.output_mode) catch {};
         setFileFlags(self.output, self.output_flags) catch {};
         restoreSignals(&self.signal_actions);
@@ -208,6 +208,16 @@ fn setMode(fd: posix.fd_t, mode: posix.termios) !void {
             .NOTTY, .BADF, .IO => return error.TerminalDisconnected,
             else => |err| return posix.unexpectedErrno(err),
         }
+    }
+}
+
+fn restoreInputMode(fd: posix.fd_t, mode: posix.termios) !void {
+    try setMode(fd, mode);
+    if (builtin.os.tag == .macos and mode.lflag.ICANON and !mode.lflag.PENDIN) {
+        // XNU sets PENDIN when TCSANOW re-enables ICANON. FIONREAD reprocesses queued input without draining output.
+        const darwin_fionread = 0x4004667f;
+        var available: c_int = undefined;
+        while (posix.errno(system.ioctl(fd, darwin_fionread, &available)) == .INTR) {}
     }
 }
 

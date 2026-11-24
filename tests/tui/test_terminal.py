@@ -36,7 +36,7 @@ class NativeScenarios(unittest.TestCase):
     def restored(self, peer, code=0):
         self.assertEqual(peer.wait(), code, peer.capture()[-1000:])
         if not IS_WINDOWS:
-            self.assertTrue(peer.device.mode_restored(), "terminal attributes changed after exit")
+            self.assertEqual(peer.device.current_mode(), peer.device.original, "terminal attributes changed after exit")
 
     def tui(self, *arguments, columns=80, rows=18):
         peer = self.peer(self.tui_binary, *arguments, columns=columns, rows=rows)

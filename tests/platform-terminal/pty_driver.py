@@ -88,7 +88,10 @@ class UnixPty:
             self.master = None
 
     def mode_restored(self):
-        return termios.tcgetattr(self.slave) == self.original
+        return self.current_mode() == self.original
+
+    def current_mode(self):
+        return termios.tcgetattr(self.slave)
 
     def close(self):
         if self.process.poll() is None:
@@ -113,6 +116,7 @@ class TerminalPeer:
         self.condition = threading.Condition()
         self.data = bytearray()
         self.failure = None
+        self.ended = False
         self.read_enabled = threading.Event()
         self.read_enabled.set()
         self.reader = threading.Thread(target=self.drain, daemon=True)
@@ -131,6 +135,10 @@ class TerminalPeer:
         except (OSError, ValueError, TypeError) as error:
             with self.condition:
                 self.failure = error
+                self.condition.notify_all()
+        finally:
+            with self.condition:
+                self.ended = True
                 self.condition.notify_all()
 
     def mark(self):
@@ -153,7 +161,7 @@ class TerminalPeer:
                 if self.failure is not None:
                     raise self.failure
                 remaining = end - time.monotonic()
-                if remaining <= 0:
+                if self.ended or remaining <= 0:
                     raise AssertionError(f"missing {token!r} on {platform.system()}. Last bytes: {self.data[-600:]!r}")
                 self.condition.wait(remaining)
 

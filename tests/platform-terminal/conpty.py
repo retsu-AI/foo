@@ -12,6 +12,7 @@ P_HANDLE = ctypes.POINTER(win.HANDLE)
 P_DWORD = ctypes.POINTER(win.DWORD)
 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016
 EXTENDED_STARTUPINFO_PRESENT = 0x00080000
+STARTF_USESTDHANDLES = 0x00000100
 WAIT_TIMEOUT = 258
 WAIT_OBJECT_0 = 0
 
@@ -118,6 +119,8 @@ class ConPty:
             ))
             info = StartupInfoEx()
             info.startup.cb = ctypes.sizeof(info)
+            # Explicit null standard handles let ConPTY replace the runner's redirected handles.
+            info.startup.dwFlags = STARTF_USESTDHANDLES
             info.attributes = ctypes.cast(attributes, PVOID)
             process = ProcessInfo()
             command = ctypes.create_unicode_buffer(subprocess.list2cmdline(list(map(str, arguments))))
