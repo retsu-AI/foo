@@ -238,7 +238,7 @@ pub const Session = struct {
         var reserved: std.ArrayList([]const u8) = .empty;
         var descriptors: std.ArrayList(tools.Descriptor) = .empty;
         var use_builtin_exec = false;
-        var remote_count: usize = 0;
+        var remote_aliases: std.ArrayList([]const u8) = .empty;
         for (selected) |name| {
             if (std.meta.stringToEnum(tools.builtin_tools.Kind, name)) |kind| {
                 try reserved.append(scratch, name);
@@ -262,9 +262,8 @@ pub const Session = struct {
                     .timeout_ms = custom.timeout_ms,
                 });
                 break;
-            } else remote_count += 1;
+            } else try remote_aliases.append(scratch, name);
         }
-        if (remote_count != 0 and settings.mcp_servers.len == 0) return error.InvalidInput;
         var local: ?tools.Registry = null;
         defer if (local) |*registry| registry.deinit();
         var registries: std.ArrayList(foo.tool.Registry) = .empty;
@@ -294,7 +293,7 @@ pub const Session = struct {
             });
             try registries.append(scratch, local.?.interface());
         }
-        const peers: []Peer = if (remote_count == 0) &.{} else try self.openPeers(operation);
+        const peers: []Peer = if (remote_aliases.items.len == 0) &.{} else try self.openPeers(operation, remote_aliases.items);
         const remote = try scratch.alloc(mcp.Registry, peers.len);
         var opened: usize = 0;
         defer for (remote[0..opened]) |*registry| registry.deinit();
@@ -315,16 +314,21 @@ pub const Session = struct {
         }
         var set = mcp.RegistrySet.init(a, registries.items, settings.limits.catalog_bytes) catch |err| return mcpError(err);
         defer set.deinit();
-        if (set.declarations.len < locals.items.len + remote_count) return error.Unavailable;
+        if (set.declarations.len < locals.items.len + remote_aliases.items.len) return error.Unavailable;
         turn.tools = set.interface();
         return (try self.app.engine.run(a, operation, turn, sink)).outcome;
     }
 
-    fn openPeers(self: *Session, operation: io.Context) io.Error![]Peer {
+    fn openPeers(self: *Session, operation: io.Context, aliases: []const []const u8) io.Error![]Peer {
         if (self.peers) |peers| return peers;
         const servers = self.settings.runtime.mcp_servers;
         const a = self.app.allocator;
-        const peers = try a.alloc(Peer, servers.len);
+        var selected: usize = 0;
+        for (servers) |server| {
+            if (suppliesTool(server, aliases)) selected += 1;
+        }
+        if (selected == 0) return error.InvalidInput;
+        const peers = try a.alloc(Peer, selected);
         errdefer a.free(peers);
         var count: usize = 0;
         errdefer {
@@ -332,14 +336,22 @@ pub const Session = struct {
             const cleanup = cleanupContext(operation, &token, self.settings.launch.process.cleanup_ms);
             for (peers[0..count]) |*peer| peer.deinit(cleanup) catch {};
         }
-        for (servers, peers) |server, *peer| {
-            try peer.open(self, operation, server);
+        for (servers) |server| {
+            if (!suppliesTool(server, aliases)) continue;
+            try peers[count].open(self, operation, server);
             count += 1;
         }
         self.peers = peers;
         return peers;
     }
 };
+
+fn suppliesTool(server: foo.config.McpServer, aliases: []const []const u8) bool {
+    for (aliases) |alias| {
+        if (mcp.catalog.maySupplyAlias(server.id, alias)) return true;
+    }
+    return false;
+}
 
 fn permittedBackend(input: foo.host.RunInput, kind: tools.builtin_tools.Kind) bool {
     const caps = input.services.host.capabilities;
