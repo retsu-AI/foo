@@ -244,16 +244,24 @@ pub fn read(
     const target = try openTarget(op, path);
     defer target.dir.close(op.io);
     const source = try snapshot(scratch, op, target, file_limit) orelse return error.MissingFile;
-    if (args.offset > source.bytes.len) return error.InvalidRange;
+    return formatRead(allocator, scratch, op, source.bytes, source.digest, args, output_limit);
+}
+
+pub fn readClient(allocator: Allocator, scratch: Allocator, op: foo.io.Context, bytes: []const u8, args: Read, output_limit: usize) Error!Payload {
+    return formatRead(allocator, scratch, op, bytes, digest(bytes), args, output_limit);
+}
+
+fn formatRead(allocator: Allocator, scratch: Allocator, op: foo.io.Context, source: []const u8, source_digest: Digest, args: Read, output_limit: usize) Error!Payload {
+    if (args.offset > source.len) return error.InvalidRange;
     if (args.encoding == .utf8) {
-        if (!std.unicode.utf8ValidateSlice(source.bytes)) return error.InvalidEncoding;
-        if (args.offset < source.bytes.len and continuation(source.bytes[args.offset]))
+        if (!std.unicode.utf8ValidateSlice(source)) return error.InvalidEncoding;
+        if (args.offset < source.len and continuation(source[args.offset]))
             return error.InvalidRange;
     }
 
-    const remaining = source.bytes[args.offset..];
+    const remaining = source[args.offset..];
     const max_bytes = @min(args.max_bytes, remaining.len, output_limit);
-    const sha256 = std.fmt.bytesToHex(source.digest, .lower);
+    const sha256 = std.fmt.bytesToHex(source_digest, .lower);
     const response_buffer = try scratch.alloc(u8, @min(output_limit, 256 +| 6 *| max_bytes));
     const encoded: []u8 = if (args.encoding == .base64)
         try scratch.alloc(u8, base64.Encoder.calcSize(max_bytes))
@@ -262,7 +270,7 @@ pub fn read(
     var result: ReadResult = .{
         .encoding = args.encoding,
         .offset = args.offset,
-        .total_bytes = source.bytes.len,
+        .total_bytes = source.len,
         .sha256 = &sha256,
     };
 
@@ -385,13 +393,8 @@ pub fn mutate(
         writable.close(op.io);
     }
 
-    const sha256 = std.fmt.bytesToHex(digest(replacement), .lower);
-    const result = try std.json.Stringify.valueAlloc(allocator, .{
-        .bytes = replacement.len,
-        .sha256 = sha256[0..],
-    }, .{});
+    const result = try writeResult(allocator, replacement, output_limit);
     errdefer allocator.free(result);
-    if (result.len > output_limit) return error.LimitExceeded;
 
     try op.check();
     var temporary = target.dir.createFileAtomic(op.io, target.name, .{
@@ -441,6 +444,14 @@ pub fn mutate(
         temporary.link(op.io) catch |err| return commitError(err);
     }
     return .{ .content = result };
+}
+
+pub fn writeResult(allocator: Allocator, bytes: []const u8, output_limit: usize) Error![]const u8 {
+    const sha256 = std.fmt.bytesToHex(digest(bytes), .lower);
+    const result = try std.json.Stringify.valueAlloc(allocator, .{ .bytes = bytes.len, .sha256 = sha256[0..] }, .{});
+    errdefer allocator.free(result);
+    if (result.len > output_limit) return error.LimitExceeded;
+    return result;
 }
 
 fn commitError(err: anyerror) Error {

@@ -160,7 +160,7 @@ fn parse(comptime T: type, scratch: Allocator, input: []const u8) files.Error!T 
     };
 }
 
-fn fileFailure(allocator: Allocator, id: []const u8, limit: usize, err: files.Error) foo.io.Error!foo.tool.Result {
+pub fn fileFailure(allocator: Allocator, id: []const u8, limit: usize, err: files.Error) foo.io.Error!foo.tool.Result {
     const message = switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Cancelled => "File operation cancelled before replacement.",

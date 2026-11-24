@@ -80,12 +80,31 @@ serializes its own writes, and the adapter checks for external changes immediate
 before replacement. A writer outside the registry can still race that last check.
 The tools operate on one file per call and reject symbolic links, including in
 ancestor directories. New files use mode 0600 on POSIX and replacements preserve
-basic POSIX permission bits. The registry requires local backends for these tools.
+basic POSIX permission bits. These filesystem guarantees apply to the local backend.
 
 `exec` passes literal argv elements with the configured cwd and environment. To
 run shell syntax, call a shell explicitly in argv. This gives the command the
 launching user's operating-system privileges. Configure an external isolation
 boundary when running commands that require isolation.
+
+## Editor backends
+
+Supply the session's `foo.host.Host` in `Options.host` to use configured `client`
+backends. For `permissions: "ask"`, the registry uses `Options.permissions` when
+supplied and otherwise uses the host's permission handler.
+
+`read` and `write` use the separately negotiated editor text-file capabilities.
+A read can return unsaved editor text. A write sends UTF-8 text and reports the
+size and digest of the submitted bytes. A write whose outcome cannot be
+confirmed is uncertain. Select the local `files_backend` for `edit`, which
+requires compare-and-swap semantics.
+
+`exec` uses the negotiated editor terminal with literal argv, the configured
+working directory, and explicitly configured environment entries. The editor
+controls the terminal's launch environment and returns merged terminal output.
+Client execution requires `process.inherit_environment: false`. Custom
+executables require the local backend for their stdin/stdout protocol. Selecting
+a tool whose configured backend lacks its required capability rejects the catalog.
 
 ## Executable protocol
 
