@@ -1,0 +1,34 @@
+name: Native TUI
+on:
+  pull_request:
+    paths:
+      - 'src/tui/**'
+      - 'src/platform/terminal/**'
+      - 'src/contracts/**'
+      - 'src/config/**'
+      - 'tests/tui/**'
+      - 'tests/platform-terminal/**'
+      - '.zig-version'
+      - '.github/zig.json'
+      - '.github/workflows/native-tui.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-tui-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    name: Terminal and TUI (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-zig
+      - name: Drive the native terminal
+        shell: bash
+        run: python tests/tui/run.py
