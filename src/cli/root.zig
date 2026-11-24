@@ -82,6 +82,9 @@ pub const help =
     \\  foo rpc [--resume] [OPTIONS]
     \\  foo tui [--resume] [OPTIONS]
     \\  foo acp [OPTIONS]
+    \\  foo mcp list KIND SERVER [OPTIONS]
+    \\  foo mcp get KIND SERVER ID [--arguments JSON] [OPTIONS]
+    \\  KIND is resource, resource_template, or prompt.
     \\  foo config (check | show) [OPTIONS]
     \\  foo --help | --version
     \\
@@ -149,7 +152,7 @@ pub fn execute(
             return print(streams, operation, "\n");
         },
         .run, .rpc => {},
-        .tui, .acp => {
+        .tui, .acp, .mcp => {
             report(streams, operation.io, "frontend is unavailable", .{});
             return .host;
         },

@@ -64,6 +64,53 @@ pub const App = struct {
         session.closeAfter(.{ .io = std_io, .clock = session.clock, .cancellation = &cancel });
     }
 
+    pub fn mcpContext(self: *App, allocator: alloc, operation: io.Context, settings: configuration.Effective, command: cli.arguments.McpCommand) io.Error![]const u8 {
+        const server = for (settings.runtime.mcp_servers) |candidate| {
+            if (std.mem.eql(u8, candidate.id, command.server)) break candidate;
+        } else return error.InvalidInput;
+        const process_options = settings.launch.process;
+        var bounded = operation;
+        const deadline = operation.clock.now() +| process_options.timeout_ms;
+        bounded.deadline_ms = @min(operation.deadline_ms orelse deadline, deadline);
+
+        var peer: Peer = undefined;
+        const profile = try peer.open(self, bounded, server, settings, settings.runtime.cwd);
+        const result = result: {
+            errdefer peer.closeAfter(operation, process_options.cleanup_ms) catch {};
+            var context: mcp.context.Source = .{
+                .client = &peer.client,
+                .server_id = server.id,
+                .limits = settings.runtime.limits,
+                .capabilities = profile.capabilities,
+            };
+            const source = context.interface();
+            break :result try switch (command.selection) {
+                .list => std.json.Stringify.valueAlloc(allocator, try source.list_fn(source.context, allocator, bounded, command.kind, null), .{}),
+                .get => |selection| content: {
+                    const value = try source.get_fn(source.context, allocator, bounded, .{
+                        .server = server.id,
+                        .kind = command.kind,
+                        .id = selection.id,
+                    }, selection.arguments_json);
+                    const utf8 = std.unicode.utf8ValidateSlice(value.bytes);
+                    const bytes = if (utf8) value.bytes else blk: {
+                        const encoder = std.base64.standard.Encoder;
+                        break :blk encoder.encode(try allocator.alloc(u8, encoder.calcSize(value.bytes.len)), value.bytes);
+                    };
+                    break :content std.json.Stringify.valueAlloc(allocator, .{
+                        .reference = value.reference,
+                        .mime = value.mime,
+                        .bytes = bytes,
+                        .encoding = if (utf8) "utf8" else "base64",
+                        .truncated = value.truncated,
+                    }, .{});
+                },
+            };
+        };
+        try peer.closeAfter(operation, process_options.cleanup_ms);
+        return result;
+    }
+
     fn httpClient(self: *App, operation: io.Context) io.Error!foo.transport.Client {
         if (self.transport == null) {
             const roots = if (self.environ.get("FOO_CA_FILE")) |path| try loadRoots(self.allocator, operation, path) else null;
@@ -332,14 +379,18 @@ pub const Session = struct {
         errdefer a.free(peers);
         var count: usize = 0;
         errdefer {
+            const shield = operation.io.swapCancelProtection(.blocked);
+            defer _ = operation.io.swapCancelProtection(shield);
             const token: io.Cancellation = .{};
             const cleanup = cleanupContext(operation, &token, self.settings.launch.process.cleanup_ms);
             for (peers[0..count]) |*peer| peer.deinit(cleanup) catch {};
         }
         for (servers) |server| {
             if (!suppliesTool(server, aliases)) continue;
-            try peers[count].open(self, operation, server);
+            const peer = &peers[count];
+            const profile = try peer.open(self.app, operation, server, self.settings, self.launch_cwd);
             count += 1;
+            if (profile.capabilities.tools_changed) try peer.watchTools(operation);
         }
         self.peers = peers;
         return peers;
@@ -372,11 +423,10 @@ const Peer = struct {
     listener: ?std.Io.Future(void) = null,
     listening: io.Cancellation = .{},
 
-    fn open(self: *Peer, session: *Session, operation: io.Context, server: foo.config.McpServer) io.Error!void {
-        const app = session.app;
-        const limits = session.settings.runtime.limits;
+    fn open(self: *Peer, app: *App, operation: io.Context, server: foo.config.McpServer, settings: configuration.Effective, cwd: []const u8) io.Error!mcp.client.Profile {
+        const limits = settings.runtime.limits;
         self.* = .{ .app = app, .client = undefined, .link = undefined };
-        const resolved = try mcp.connection_config.resolve(app.allocator, server, session.launch_cwd, app.environ);
+        const resolved = try mcp.connection_config.resolve(app.allocator, server, cwd, app.environ);
         switch (resolved) {
             .stdio => |spec| {
                 defer app.allocator.free(spec.environment);
@@ -389,20 +439,30 @@ const Peer = struct {
                 try self.link.http.open(app, operation, spec.url, spec.headers, limits);
             },
         }
-        const token: io.Cancellation = .{};
-        const cleanup = cleanupContext(operation, &token, session.settings.launch.process.cleanup_ms);
-        errdefer self.closeLink(cleanup) catch {};
+        errdefer {
+            const shield = operation.io.swapCancelProtection(.blocked);
+            defer _ = operation.io.swapCancelProtection(shield);
+            const token: io.Cancellation = .{};
+            self.closeLink(cleanupContext(operation, &token, settings.launch.process.cleanup_ms)) catch {};
+        }
         const link = switch (self.link) {
             .stdio => |stdio| stdio.interface(),
             .http => |*http| http.adapter.interface(),
         };
         self.client = mcp.Client.init(link, .{ .server_id = server.id, .revision = server.revision, .limits = limits }) catch |err| return mcpError(err);
-        const profile = self.client.connect(app.allocator, operation) catch |err| return mcpError(err);
-        errdefer self.client.shutdown(cleanup) catch {};
-        if (profile.capabilities.tools_changed) {
-            const background: io.Context = .{ .io = operation.io, .clock = operation.clock, .cancellation = &self.listening };
-            self.listener = operation.io.concurrent(listen, .{ self, background }) catch return error.Unavailable;
-        }
+        return self.client.connect(app.allocator, operation) catch |err| mcpError(err);
+    }
+
+    fn watchTools(self: *Peer, operation: io.Context) io.Error!void {
+        const background: io.Context = .{ .io = operation.io, .clock = operation.clock, .cancellation = &self.listening };
+        self.listener = operation.io.concurrent(listen, .{ self, background }) catch return error.Unavailable;
+    }
+
+    fn closeAfter(self: *Peer, operation: io.Context, cleanup_ms: u64) io.Error!void {
+        const shield = operation.io.swapCancelProtection(.blocked);
+        defer _ = operation.io.swapCancelProtection(shield);
+        const token: io.Cancellation = .{};
+        try self.deinit(cleanupContext(operation, &token, cleanup_ms));
     }
 
     fn listen(self: *Peer, operation: io.Context) void {

@@ -48,7 +48,7 @@ fn run(init: std.process.Init) !cli.Exit {
     defer app.deinit();
     const environment_json = init.environ_map.get("FOO_CONFIG_JSON");
     const command = values.items[0];
-    if (eql(command, "tui") or eql(command, "acp")) {
+    if (eql(command, "tui") or eql(command, "acp") or eql(command, "mcp")) {
         return cli.withProcessSignals(operation, otherFrontend, .{ &app, cwd, values.items, environment_json });
     }
     return cli.executeProcess(init.gpa, operation, values.items, .{
@@ -90,7 +90,32 @@ fn otherFrontend(operation: foo.io.Context, app: *runtime.App, cwd: []const u8, 
             else => |shared| cli.Exit.fromError(shared),
         };
     };
-    return runTui(app, operation, settings, command.session);
+    return switch (command.action) {
+        .mcp => |query| mcp: {
+            const json = app.mcpContext(allocator, operation, settings, query) catch |err| {
+                report(operation.io, @errorName(err));
+                break :mcp cli.Exit.fromError(err);
+            };
+            cli.waitForOperation(operation, printMcp, .{ operation, json }) catch |err| {
+                report(operation.io, @errorName(err));
+                break :mcp cli.Exit.fromError(err);
+            };
+            break :mcp .success;
+        },
+        .tui => runTui(app, operation, settings, command.session),
+        else => unreachable,
+    };
+}
+
+fn printMcp(operation: foo.io.Context, json: []const u8) foo.io.Error!void {
+    const out = std.Io.File.stdout();
+    for ([_][]const u8{ json, "\n" }) |part| {
+        out.writeStreamingAll(operation.io, part) catch |err| return switch (err) {
+            error.Canceled => error.Cancelled,
+            error.BrokenPipe => error.Disconnected,
+            else => error.IoFailure,
+        };
+    }
 }
 
 fn runTui(app: *runtime.App, operation: foo.io.Context, settings: configuration.Effective, mode: cli.SessionMode) cli.Exit {
