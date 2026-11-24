@@ -28,14 +28,28 @@ def mcp_result(request):
             return {
                 "protocolVersion": LEGACY,
                 "serverInfo": {"name": "loopback", "version": "1"},
-                "capabilities": {"tools": {}},
+                "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
             }
         case "server/discover":
             return {
                 "supportedVersions": [MODERN],
-                "capabilities": {"tools": {}},
+                "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
                 "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "loopback", "version": "1"}},
             }
+        case "resources/list":
+            return {"resources": [{"uri": "fixture://sample", "name": "sample"}]}
+        case "resources/templates/list":
+            return {"resourceTemplates": [{"uriTemplate": "fixture://{name}", "name": "sample template"}]}
+        case "prompts/list":
+            return {"prompts": [{"name": "explain"}]}
+        case "resources/read":
+            uri = request["params"]["uri"]
+            payload = {"blob": "/wA="} if uri == "fixture://binary" else {"text": "resource text"}
+            return {"contents": [{"uri": uri, **payload}]}
+        case "prompts/get":
+            assert request["params"]["name"] == "explain", request
+            subject = request["params"]["arguments"]["subject"]
+            return {"messages": [{"role": "user", "content": {"type": "text", "text": f"Explain {subject}"}}]}
         case "tools/list":
             return {"tools": [{
                 "name": "lookup",
@@ -233,12 +247,44 @@ class Production(unittest.TestCase):
     def test_stdio_mcp_is_discovered_and_called(self):
         marker = self.directory / "stdio-started"
         server, _ = self.stdio_config(marker)
-        self.config(mcp_servers=[server], enabled_tools=["mcp_pipe_lookup"], permissions="allow")
+        dormant = self.directory / "dormant-started"
+        unused, _ = self.stdio_config(dormant)
+        self.config(mcp_servers=[server, {**unused, "id": "unused"}],
+                    enabled_tools=["mcp_pipe_lookup"], permissions="allow")
         result = self.execute("run", "--prompt", "call mcp_pipe_lookup")
         self.assertEqual(result.returncode, 0, (result.stderr, result.stdout, self.server.requests))
         self.assertIn(b"loopback tool result", result.stdout)
         self.assertEqual(result.stderr, b"")
         self.assertEqual(marker.read_text(encoding="utf-8"), "started")
+        self.assertFalse(dormant.exists())
+
+    def test_mcp_context_is_retrieved_only_on_explicit_selection(self):
+        server = {"id": "web", "revision": LEGACY, "transport": {"http": {"url": self.origin + "/mcp"}}}
+        self.config(mcp_servers=[server])
+
+        def context(*command):
+            result = self.execute("mcp", *command)
+            self.assertEqual(result.returncode, 0, (result.stderr, self.server.requests))
+            self.assertEqual(result.stderr, b"")
+            return json.loads(result.stdout)
+
+        for kind, identity in (("resource", "fixture://sample"), ("resource_template", "fixture://{name}"),
+                               ("prompt", "explain")):
+            page = context("list", kind, "web")
+            self.assertEqual(page["items"][0]["reference"], {"server": "web", "kind": kind, "id": identity})
+
+        resource = context("get", "resource_template", "web", "fixture://{name}",
+                           "--arguments", '{"name":"sample"}')
+        self.assertEqual(resource["reference"], {"server": "web", "kind": "resource", "id": "fixture://sample"})
+        self.assertEqual((resource["mime"], resource["encoding"], resource["bytes"]),
+                         ("text/plain", "utf8", "resource text"))
+        binary = context("get", "resource", "web", "fixture://binary")
+        self.assertEqual((binary["mime"], binary["encoding"], binary["bytes"]),
+                         ("application/octet-stream", "base64", "/wA="))
+        prompt = context("get", "prompt", "web", "explain", "--arguments", '{"subject":"the fixture"}')
+        self.assertEqual(prompt["reference"], {"server": "web", "kind": "prompt", "id": "explain"})
+        self.assertEqual(json.loads(prompt["bytes"])["messages"][0]["content"]["text"], "Explain the fixture")
+        self.assertEqual(self.provider_requests(), [])
 
     def test_modern_http_mcp(self):
         server = {"id": "web", "revision": MODERN, "transport": {"http": {"url": self.origin + "/modern"}}}

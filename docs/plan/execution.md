@@ -69,23 +69,11 @@ finishable(package) = every(package.dependencies, status == complete)
 
 Use `in_progress` only after assignment and worktree creation; `review` means a concrete patch and handoff are ready; `complete` means the reviewed package was integrated and its package acceptance passed. `blocked` must name the missing prerequisite. A queued task, authored test, green fake test, merged module, cross-compiled binary, live protocol test, and qualified release are different evidence states.
 
-The [work-package board](index.html#packages) computes availability using the manifest. F12 has its start prerequisites met. Linear holds current assignments and workflow state. F13 may author fixtures now, but remains incomplete until native and live qualification is done against F12's candidate. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
+The [work-package board](index.html#packages) computes availability using the manifest. F12 integrates the candidate for F13. Linear holds current assignments and workflow state. F13 may author fixtures now, but remains incomplete until native and live qualification is done against F12's candidate. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
 
 ## Build commands and remaining targets
 
-Run project tools through `nix develop .#ci -c`. F00 establishes the command interfaces below with Zig 0.17.1. `zig build check` runs the `contracts`, `transport`, `wire`, `tools`, `platform-process`, and `mcp` suites. Add `-Dcodemode=true` to include Code Mode. The core, provider, session, ACP, configuration, CLI, and TUI suites use package-local commands pending registration. The qualification targets remain planned. An empty suite must never count as acceptance.
-
-| Command | Owner and current status |
-| --- | --- |
-| `zig build check` | Integrator. Formatting, executable compilation, and all registered suites |
-| `zig build test -Dmodule=contracts` | F00. Implemented shared-contract and scripted-fake tests |
-| `zig build test -Dmodule=<module>` | Module owner. `contracts`, `transport`, `wire`, `tools`, and `platform-process` are available |
-| `zig build acceptance` | F13. Unavailable; planned native offline fixtures and loopback peers |
-| `zig build acceptance-live` | F13. Unavailable; planned opted-in interoperability with allowlist and spend cap |
-| `zig build bench` | F13. Unavailable; planned repeatable measurements and raw results |
-| `zig build release -Dtarget=<declared-target>` | F12. Unavailable; planned candidate archive and manifest |
-
-F00 established the target interfaces. F01 registers the transport suite and its pinned native profile. Its module allowlist includes `contracts`, `transport`, `wire`, `core`, `providers`, `tools`, `platform-process`, `mcp`, `session`, `acp`, `config`, `cli`, `tui`, `platform-terminal`, and `integration`. The owning packages add their actual test roots; F12 completes packaging and CI. A module handoff runs its narrow suite. The integrator runs affected dependent suites after a merge and the full deterministic gate once per candidate. Live tests and benchmarks are opt-in lanes; ordinary edits must not depend on remote credentials or provider spending.
+Run project tools through `nix develop .#ci -c`. Use the [build and test commands](../testing.md#build-and-test-commands) for deterministic checks and the [candidate guide](../../tests/integration/README.md) to build and verify a native archive. F13 owns the offline and live acceptance and benchmark targets.
 
 ## Work packages
 
@@ -193,9 +181,9 @@ The native PTY and ConPTY fixtures exercise the standalone modules with a script
 
 **Owner:** integrator. **Dependencies:** F01–F11, all complete. **Paths:** `src/main.zig`, `src/lib.zig`, `build.zig`, `build.zig.zon`, shared root toolchain metadata, `src/contracts/**`, `tests/contracts/**`, `tests/support/**`, `.github/**`, `tests/integration/**`. **Consumes:** every delivered module interface.
 
-Wire real providers, tools, journal, MCP, CLI/TUI/ACP, configuration, and native shutdown into one binary. Complete the declared build matrix, candidate archives/checksums/manifests, dependency/license inventory, and CI lanes. Fix module defects through the owning package; the integrator must not accumulate duplicate implementations in main. Native compile and deterministic smoke failures block the candidate.
+The CLI, JSONL RPC, TUI, and ACP use one conversation engine with the configured provider, selected tools, optional journal, and native shutdown. The MCP client supports both supported HTTP profiles and stdio. Explicit context commands list and retrieve MCP resources, templates, and prompts.
 
-Accept clean-clone candidate builds and deterministic integrated checks on Linux/macOS/Windows with required interfaces enabled. Verify no fake adapter is reachable in production, protocol/stdout channels are clean, and feature disablement removes work rather than merely hiding UI. Handoff an exact commit plus candidate hashes to F13. This package does not claim live interoperability, final performance acceptance, release qualification, or authorization to publish.
+The native integration and archive checks cover Linux x86_64, macOS arm64, and Windows x86_64. See [the packaging guide](../../tests/integration/README.md) for build inputs and archive identity. The [F12 Linear issue](https://linear.app/retsu-ai/issue/ENG-1485/f12-integration-and-release-candidate) records the exact candidate handoff. F13 owns live interoperability, performance, and manual qualification.
 
 ### F13 — Acceptance corpus and final qualification
 

@@ -1,6 +1,6 @@
 # CLI and JSONL process interface
 
-F10 supplies a CLI adapter for the shared runner. F12 owns the production executable's wiring. The commands below run through the test executable today with an injected provider and the real core, configuration resolver, and session store.
+The CLI runs commands through the shared conversation engine. See the [candidate guide](../../tests/integration/README.md) for building foo and explicitly retrieving MCP context.
 
 ## Commands
 

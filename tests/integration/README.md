@@ -22,6 +22,22 @@ file and terminal tools require the configured client backend and the
 negotiated editor capability. ACP client writes use the editor's plain write
 operation. Atomic edit and custom executable protocols require local backends.
 
+## Retrieve MCP context
+
+Choose one configured server and a resource, template, or prompt. The command
+writes JSON with the server, item identity, MIME type, and payload encoding.
+It performs the requested MCP operation without starting a model turn.
+
+```sh
+foo mcp list resource work --config profile.json
+foo mcp get resource work fixture://sample --config profile.json
+foo mcp get prompt work explain --arguments '{"subject":"a sample"}' --config profile.json
+```
+
+The `resource_template` kind accepts template arguments as a JSON object with
+string values. Binary resource bytes use Base64. Prompt retrieval returns the
+server-authored messages for inspection.
+
 ## Build a candidate
 
 Use a clean checkout and the pinned Zig toolchain on Linux x86_64, macOS

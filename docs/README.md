@@ -44,6 +44,6 @@ These documents describe the accepted direction and the remaining work for v1.
 
 The [v1 plan](plan/README.md) remains active. It contains [execution and ownership rules](plan/execution.md), [reference evidence](plan/evidence.md), and the [work-package manifest](plan/work-packages.json). The [offline HTML view](plan/index.html) includes the complete plan documents, this index, the ADRs, and the package board.
 
-Linear holds live assignments and workflow status. The local manifest records completed packages. Use **Ready to start** on the [work-package board](plan/index.html#packages) to find packages with completed start prerequisites. F12 has its start prerequisites met.
+Linear holds live assignments and workflow status. The local manifest records completed packages. Use **Ready to start** on the [work-package board](plan/index.html#packages) to find packages with completed start prerequisites. F13 qualifies the F12 candidate.
 
 After the v1 candidate passes its required qualification, freeze the whole v1 plan and its self-contained HTML under `docs/archive/v1-plan/`. Snapshot every source in the builder's `DOCS` registry, including the architecture, protocol, testing, index, and decision documents. Preserve source-relative paths or record exact source paths and revisions in an archive manifest. Freeze those sources and the generated HTML together so later edits cannot rewrite the historical plan. Keep current documentation and later decisions outside the archive. No archive is created before qualification.
