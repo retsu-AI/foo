@@ -12,15 +12,15 @@ const poll_ms = 12;
 const frame_interval_ms = 16;
 
 pub const Streams = struct {
-    input: std.Io.File = .stdin(),
-    output: std.Io.File = .stdout(),
+    input: std.Io.File,
+    output: std.Io.File,
 };
 
 pub const Options = struct {
     runner: foo.host.Runner,
     input: foo.host.RunInput,
     settings: config.Tui = .{},
-    streams: Streams = .{},
+    streams: ?Streams = null,
     environ: ?*const std.process.Environ.Map = null,
     plain: bool = false,
     no_color: bool = false,
@@ -35,11 +35,11 @@ pub fn run(a: std.mem.Allocator, operation: foo.io.Context, options: Options) fo
         std.mem.eql(u8, env.get("TERM") orelse "", "dumb")
     else
         false;
-    if (plain) return runPlain(a, operation, options);
+    const streams = options.streams orelse Streams{ .input = .stdin(), .output = .stdout() };
+    if (plain) return runPlain(a, operation, options, streams);
 
-    const streams = options.streams;
     var native = (terminal.Terminal.open(operation.io, streams.input, streams.output) catch return error.IoFailure) orelse
-        return runPlain(a, operation, options);
+        return runPlain(a, operation, options, streams);
     defer native.restore();
     const no_color = options.no_color or if (environment) |env| env.get("NO_COLOR") != null else false;
     return interactive(a, operation, options, &native, no_color);
@@ -376,7 +376,7 @@ const Plain = struct {
     }
 };
 
-fn runPlain(a: std.mem.Allocator, operation: foo.io.Context, options: Options) foo.io.Error!?foo.events.Outcome {
+fn runPlain(a: std.mem.Allocator, operation: foo.io.Context, options: Options, streams: Streams) foo.io.Error!?foo.events.Outcome {
     var limits: foo.io.Budget = .{ .limit = options.input.settings.limits.transcript_bytes };
     for (options.input.messages) |message| try limits.take(runtime.messageBytes(message));
     const limit = limits.limit - limits.used -| runtime.promptBytes(0);
@@ -386,7 +386,7 @@ fn runPlain(a: std.mem.Allocator, operation: foo.io.Context, options: Options) f
     while (true) {
         try operation.check();
         const capacity = @min(buffer.len, (limit - bytes.items.len) +| 1);
-        const count = options.streams.input.readStreaming(operation.io, &.{buffer[0..capacity]}) catch |err| switch (err) {
+        const count = streams.input.readStreaming(operation.io, &.{buffer[0..capacity]}) catch |err| switch (err) {
             error.EndOfStream => break,
             error.Canceled => return error.Cancelled,
             else => return error.IoFailure,
@@ -402,7 +402,7 @@ fn runPlain(a: std.mem.Allocator, operation: foo.io.Context, options: Options) f
     @memcpy(messages[0..invocation.messages.len], invocation.messages);
     messages[invocation.messages.len] = .{ .role = .user, .blocks = (&block)[0..1] };
     invocation.messages = messages;
-    var projection: Plain = .{ .output = options.streams.output };
+    var projection: Plain = .{ .output = streams.output };
     const outcome = try options.runner.run_fn(options.runner.context, a, operation, invocation, .{ .context = &projection, .emit_fn = Plain.emit });
     if (projection.last) |last| {
         if (last != '\n') try write(projection.output, operation, "\n");
