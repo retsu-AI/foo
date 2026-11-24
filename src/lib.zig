@@ -9,4 +9,4 @@ pub const host = @import("contracts/host.zig");
 pub const transport = @import("transport/root.zig");
 pub const wire = @import("wire/root.zig");
 
-pub const version = "0.0.0-bootstrap";
+pub const version = "0.0.0-rc";

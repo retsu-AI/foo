@@ -19,23 +19,6 @@ pub fn build(b: *std.Build) void {
         addTransportSuite(b, foo, target, optimize, prefix)
     else
         &b.addFail("Transport requires FOO_TRANSPORT_PREFIX or -Dtransport-prefix; use nix develop .#ci or build the pinned native profile").step;
-    const exe = b.addExecutable(.{
-        .name = "foo",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    exe.root_module.addImport("foo", foo);
-    b.installArtifact(exe);
-    const run = b.addRunArtifact(exe);
-    run.addPassthruArgs();
-    if (transport_prefix) |prefix| {
-        if (builtin.os.tag == .windows) addTransportPath(b, run, prefix);
-    }
-    b.step("run", "Run the bootstrap executable").dependOn(&run.step);
-
     const support = b.createModule(.{
         .root_source_file = b.path("tests/support/root.zig"),
         .target = target,
@@ -75,35 +58,110 @@ pub fn build(b: *std.Build) void {
     const include_codemode = b.option(bool, "codemode", "Build the optional Code Mode module and include it in check") orelse false;
     const native = addProcessSuites(b, foo, support, target, optimize, include_codemode or std.mem.eql(u8, selected, "codemode"));
     const mcp_test = addMcpSuite(b, foo, native.spawner, native.guardian, target, optimize, transport_prefix);
-    const module_names = [_][]const u8{
-        "contracts",   "transport", "wire", "core",   "providers", "tools", "platform-process",
-        "mcp",         "session",   "acp",  "config", "cli",       "tui",   "platform-terminal",
-        "integration", "codemode",
-    };
-    var known = false;
-    for (module_names) |name| {
-        if (std.mem.eql(u8, name, selected)) known = true;
-    }
-    const test_step = b.step("test", "Run a registered module's tests");
-    if (!known) {
-        test_step.dependOn(&b.addFail(b.fmt("Unknown test module: {s}", .{selected})).step);
-    } else if (std.mem.eql(u8, selected, "transport")) {
-        test_step.dependOn(transport_test);
-    } else if (std.mem.eql(u8, selected, "wire")) {
-        test_step.dependOn(&run_wire_tests.step);
-    } else if (std.mem.eql(u8, selected, "tools")) {
-        test_step.dependOn(native.tools);
-    } else if (std.mem.eql(u8, selected, "platform-process")) {
-        test_step.dependOn(native.process);
-    } else if (std.mem.eql(u8, selected, "codemode")) {
-        if (native.codemode) |code_tests| test_step.dependOn(code_tests);
-    } else if (std.mem.eql(u8, selected, "mcp")) {
-        test_step.dependOn(mcp_test);
-    } else if (!std.mem.eql(u8, selected, "contracts")) {
-        test_step.dependOn(&b.addFail(b.fmt("Module '{s}' is unavailable: its implementation and test root have not landed", .{selected})).step);
+    const core = leaf(b, target, optimize, "src/core/root.zig", &.{.{ .name = "foo", .module = foo }});
+    const providers = leaf(b, target, optimize, "src/providers/root.zig", &.{.{ .name = "foo", .module = foo }});
+    const journal = leaf(b, target, optimize, "src/session/root.zig", &.{.{ .name = "foo", .module = foo }});
+    const configuration = leaf(b, target, optimize, "src/config/root.zig", &.{.{ .name = "foo", .module = foo }});
+    const terminal = leaf(b, target, optimize, "src/platform/terminal/root.zig", &.{});
+    terminal.link_libc = target.result.os.tag != .windows;
+    const cli = leaf(b, target, optimize, "src/cli/root.zig", &.{
+        .{ .name = "foo", .module = foo },
+        .{ .name = "configuration", .module = configuration },
+    });
+    const tui = leaf(b, target, optimize, "src/tui/root.zig", &.{
+        .{ .name = "foo", .module = foo },
+        .{ .name = "configuration", .module = configuration },
+        .{ .name = "terminal", .module = terminal },
+    });
+    const acp = leaf(b, target, optimize, "src/acp/root.zig", &.{.{ .name = "foo", .module = foo }});
+
+    const run_step = b.step("run", "Run foo");
+    const release_step = b.step("release", "Build an unpublished native candidate archive");
+    const integration = b.step("test-integration", "Exercise the production executable");
+    if (transport_prefix) |prefix| {
+        const exe = b.addExecutable(.{
+            .name = "foo",
+            .root_module = leaf(b, target, optimize, "src/main.zig", &.{
+                .{ .name = "foo", .module = foo },
+                .{ .name = "core", .module = core },
+                .{ .name = "providers", .module = providers },
+                .{ .name = "journal", .module = journal },
+                .{ .name = "configuration", .module = configuration },
+                .{ .name = "cli", .module = cli },
+                .{ .name = "tui", .module = tui },
+                .{ .name = "terminal", .module = terminal },
+                .{ .name = "acp", .module = acp },
+                .{ .name = "mcp", .module = mcp_test.module },
+                .{ .name = "tools", .module = native.registry },
+                .{ .name = "process", .module = native.spawner },
+            }),
+        });
+        const install_exe = b.addInstallArtifact(exe, .{});
+        if (native.guardian_install) |guardian| install_exe.step.dependOn(&guardian.step);
+        b.getInstallStep().dependOn(&install_exe.step);
+
+        const installed_bin: std.Build.LazyPath = .{ .relative = .{ .base = .install_bin, .sub_path = exe.out_filename } };
+        const run = std.Build.Step.Run.create(b, "Run installed foo");
+        run.addFileArg(installed_bin);
+        run.addPassthruArgs();
+        run.step.dependOn(&install_exe.step);
+        if (builtin.os.tag == .windows) addTransportPath(b, run, prefix);
+        run_step.dependOn(&run.step);
+
+        const smoke = pythonCommand(b, "tests/integration/check.py");
+        smoke.addFileArg(installed_bin);
+        smoke.step.dependOn(&install_exe.step);
+        if (builtin.os.tag == .windows) addTransportPath(b, smoke, prefix);
+        integration.dependOn(&smoke.step);
+
+        if (optimize != .safe) {
+            release_step.dependOn(&b.addFail("Use -Doptimize=ReleaseSafe to build a candidate").step);
+        } else {
+            const pack = pythonCommand(b, ".github/scripts/package-candidate.py");
+            pack.addFileArg(installed_bin);
+            pack.addDirectoryArg(.{ .relative = .{ .base = .install_prefix, .sub_path = "" } });
+            pack.addArgs(&.{ prefix, target.result.zigTriple(b.allocator) catch @panic("out of memory") });
+            pack.step.dependOn(&install_exe.step);
+            release_step.dependOn(&pack.step);
+        }
     } else {
-        test_step.dependOn(&run_tests.step);
+        b.getInstallStep().dependOn(transport_test);
+        run_step.dependOn(transport_test);
+        release_step.dependOn(transport_test);
+        integration.dependOn(transport_test);
     }
+
+    const tui_tests = pythonSuite(b, "tests/tui/run.py", optimize);
+    const modules = [_]struct { name: []const u8, step: *std.Build.Step }{
+        .{ .name = "contracts", .step = &run_tests.step },
+        .{ .name = "transport", .step = transport_test },
+        .{ .name = "wire", .step = &run_wire_tests.step },
+        .{ .name = "core", .step = addZigSuite(b, target, optimize, "tests/core/root.zig", &.{
+            .{ .name = "foo", .module = foo },
+            .{ .name = "core", .module = core },
+            .{ .name = "support", .module = support },
+        }) },
+        .{ .name = "providers", .step = addZigSuite(b, target, optimize, "tests/providers/root.zig", &.{
+            .{ .name = "foo", .module = foo },
+            .{ .name = "providers", .module = providers },
+            .{ .name = "support", .module = support },
+        }) },
+        .{ .name = "tools", .step = native.tools },
+        .{ .name = "platform-process", .step = native.process },
+        .{ .name = "mcp", .step = mcp_test.step },
+        .{ .name = "session", .step = pythonSuite(b, "tests/session/check.py", optimize) },
+        .{ .name = "acp", .step = pythonSuite(b, "tests/acp/run.py", optimize) },
+        .{ .name = "config", .step = addZigSuite(b, target, optimize, "tests/config/root.zig", &.{
+            .{ .name = "foo", .module = foo },
+            .{ .name = "configuration", .module = configuration },
+            .{ .name = "support", .module = support },
+        }) },
+        .{ .name = "cli", .step = pythonSuite(b, "tests/cli/check.py", optimize) },
+        .{ .name = "tui", .step = tui_tests },
+        .{ .name = "platform-terminal", .step = tui_tests },
+        .{ .name = "integration", .step = integration },
+    };
+
     const test_compile = b.step("test-compile", "Compile contract and wire tests without claiming native execution");
     test_compile.dependOn(&tests.step);
     test_compile.dependOn(&wire_tests.step);
@@ -111,23 +169,69 @@ pub fn build(b: *std.Build) void {
         .paths = &.{ b.path("build.zig"), b.path("build.zig.zon"), b.path("src"), b.path("tests") },
         .check = true,
     });
-    const bootstrap = b.step("check-bootstrap", "Check formatting, compile the executable, and run contract tests");
+    const bootstrap = b.step("check-bootstrap", "Check formatting and contracts without native transport");
     bootstrap.dependOn(&fmt.step);
-    bootstrap.dependOn(&exe.step);
     bootstrap.dependOn(&run_tests.step);
-    const check = b.step("check", "Check formatting, compile the executable, and run implemented suites");
+    const check = b.step("check", "Run all registered deterministic suites");
     check.dependOn(bootstrap);
-    check.dependOn(transport_test);
-    check.dependOn(&run_wire_tests.step);
-    check.dependOn(native.tools);
-    check.dependOn(native.process);
-    check.dependOn(mcp_test);
-    if (native.codemode) |code_tests| check.dependOn(code_tests);
-    for ([_][]const u8{ "acceptance", "acceptance-live", "bench", "release" }) |name| {
-        b.step(name, "Reserved; unavailable until the owning work package lands").dependOn(
-            &b.addFail(b.fmt("'{s}' is unavailable in the contracts bootstrap", .{name})).step,
-        );
+
+    const test_step = b.step("test", "Run a registered module's tests");
+    var selected_step: ?*std.Build.Step = null;
+    for (modules) |module| {
+        if (!std.mem.eql(u8, module.name, "platform-terminal")) check.dependOn(module.step);
+        if (std.mem.eql(u8, selected, module.name)) selected_step = module.step;
     }
+    if (native.codemode) |code_tests| {
+        if (include_codemode) check.dependOn(code_tests);
+        if (std.mem.eql(u8, selected, "codemode")) selected_step = code_tests;
+    }
+    if (!std.mem.eql(u8, selected, "codemode") or selected_step != null) {
+        test_step.dependOn(selected_step orelse &b.addFail(b.fmt("Unknown test module: {s}", .{selected})).step);
+    }
+    for ([_][]const u8{ "acceptance", "acceptance-live", "bench" }) |name| {
+        b.step(name, "Reserved for F13").dependOn(&b.addFail(b.fmt("'{s}' is unavailable until F13", .{name})).step);
+    }
+}
+
+fn leaf(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.Optimize,
+    path: []const u8,
+    imports: []const std.Build.Module.Import,
+) *std.Build.Module {
+    return b.createModule(.{
+        .root_source_file = b.path(path),
+        .target = target,
+        .optimize = optimize,
+        .imports = imports,
+    });
+}
+
+fn addZigSuite(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.Optimize,
+    path: []const u8,
+    imports: []const std.Build.Module.Import,
+) *std.Build.Step {
+    return &b.addRunArtifact(b.addTest(.{ .root_module = leaf(b, target, optimize, path, imports) })).step;
+}
+
+fn pythonCommand(b: *std.Build, script: []const u8) *std.Build.Step.Run {
+    const command = b.addSystemCommand(&.{if (builtin.os.tag == .windows) "python" else "python3"});
+    command.addFileArg(b.path(script));
+    return command;
+}
+
+fn pythonSuite(b: *std.Build, script: []const u8, optimize: std.builtin.Optimize) *std.Build.Step {
+    const command = pythonCommand(b, script);
+    command.addArgs(&.{ "--optimize", switch (optimize) {
+        .debug => "Debug",
+        .safe => "ReleaseSafe",
+        else => @tagName(optimize),
+    } });
+    return &command.step;
 }
 
 fn addProcessSuites(
@@ -142,6 +246,8 @@ fn addProcessSuites(
     process: *std.Build.Step,
     codemode: ?*std.Build.Step,
     spawner: *std.Build.Module,
+    registry: *std.Build.Module,
+    guardian_install: ?*std.Build.Step.InstallArtifact,
     guardian: ?*std.Build.Step.Compile,
 } {
     const use_guardian = target.result.os.tag == .linux or target.result.os.tag == .macos;
@@ -202,7 +308,6 @@ fn addProcessSuites(
             "src/platform/process/guardian.c",
             "src/platform/process/posix_native.c",
         } });
-        b.installArtifact(executable);
         fixtures.addArtifactArg(executable);
         break :artifact executable;
     } else null;
@@ -210,6 +315,8 @@ fn addProcessSuites(
         .tools = &b.addRunArtifact(suite).step,
         .process = &fixtures.step,
         .spawner = process,
+        .registry = tools,
+        .guardian_install = if (guardian) |exe| b.addInstallArtifact(exe, .{}) else null,
         .guardian = guardian,
         .codemode = if (include_codemode) addCodeModeSuite(b, foo, tools, target, optimize) else null,
     };
@@ -283,7 +390,7 @@ fn addMcpSuite(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.Optimize,
     transport_prefix: ?[]const u8,
-) *std.Build.Step {
+) struct { module: *std.Build.Module, step: *std.Build.Step } {
     const mcp = b.addModule("foo-mcp", .{
         .root_source_file = b.path("src/mcp/root.zig"),
         .target = target,
@@ -340,7 +447,7 @@ fn addMcpSuite(
         }
         peer_tests.dependOn(&http.step);
     }
-    return peer_tests;
+    return .{ .module = mcp, .step = peer_tests };
 }
 
 fn addTransportSuite(
