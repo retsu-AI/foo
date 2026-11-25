@@ -18,9 +18,10 @@ pub const McpCommand = struct {
 };
 pub const AuthCommand = union(enum) {
     list,
-    login: struct { provider: []const u8, api_key: bool },
+    login: struct { provider: []const u8, method: LoginMethod = .auto },
     logout: []const u8,
 };
+pub const LoginMethod = enum { auto, device, api_key };
 pub const Action = union(enum) {
     help,
     version,
@@ -217,9 +218,9 @@ fn parseAuth(args: []const []const u8) Error!AuthCommand {
         .logout => if (args.len == 2) .{ .logout = args[1] } else error.InvalidArguments,
         .login => .{ .login = .{
             .provider = args[1],
-            .api_key = switch (args.len) {
-                2 => false,
-                3 => if (std.mem.eql(u8, args[2], "--api-key")) true else return error.InvalidArguments,
+            .method = switch (args.len) {
+                2 => .auto,
+                3 => if (std.mem.eql(u8, args[2], "--api-key")) .api_key else if (std.mem.eql(u8, args[2], "--device")) .device else return error.InvalidArguments,
                 else => return error.InvalidArguments,
             },
         } },

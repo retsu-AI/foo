@@ -1,6 +1,8 @@
 const std = @import("std");
 const foo = @import("foo");
 const storage = @import("store.zig");
+pub const oauth = @import("oauth.zig");
+const openai_codex = @import("openai_codex.zig");
 
 pub const Store = storage.Store;
 pub const Entry = storage.Entry;
@@ -13,13 +15,14 @@ pub const Credential = union(enum) {
     api_key: []const u8,
     bearer: Bearer,
 
-    pub const Bearer = struct { token: []const u8, account: ?[]const u8 };
+    pub const Bearer = struct { token: []const u8, account: ?Account = null };
+    pub const Account = struct { header: []const u8, value: []const u8 };
 
     pub fn valid(self: Credential) bool {
         return switch (self) {
             .api_key => |key| key.len != 0 and validHeaderValue(key),
             .bearer => |bearer| storage.validSecret(bearer.token) and
-                (if (bearer.account) |account| storage.validSecret(account) else true),
+                (if (bearer.account) |account| account.header.len != 0 and storage.validSecret(account.value) else true),
         };
     }
 };
@@ -45,23 +48,58 @@ pub const CredentialSource = struct {
     }
 };
 
-pub const Flow = struct {
-    provider: []const u8,
-    login_fn: *const fn (std.mem.Allocator, foo.io.Context) Error!OAuth,
-    refresh_fn: ?*const fn (std.mem.Allocator, foo.io.Context, OAuth, []const u8) Error!OAuth = null,
+pub const Notice = union(enum) {
+    url: []const u8,
+    device_code: struct { uri: []const u8, code: []const u8 },
 };
 
-pub const flows: []const Flow = &.{};
+pub const Prompt = struct {
+    context: *anyopaque,
+    show_fn: *const fn (*anyopaque, foo.io.Context, Notice) Error!void,
+
+    pub fn show(self: Prompt, operation: foo.io.Context, notice: Notice) Error!void {
+        try operation.check();
+        return self.show_fn(self.context, operation, notice);
+    }
+};
+
+pub const Login = struct {
+    a: std.mem.Allocator,
+    operation: foo.io.Context,
+    http: foo.io.HttpTransport,
+    prompt: Prompt,
+};
+
+pub const Refresh = struct {
+    a: std.mem.Allocator,
+    operation: foo.io.Context,
+    http: foo.io.HttpTransport,
+    current: OAuth,
+};
+
+pub const Flow = struct {
+    provider: []const u8,
+    browser: ?*const fn (Login) Error!OAuth = null,
+    device: ?*const fn (Login) Error!OAuth = null,
+    refresh: ?*const fn (Refresh) Error!OAuth = null,
+    account_header: ?[]const u8 = null,
+};
+
+pub const flows: []const Flow = &.{openai_codex.flow};
 
 pub fn findFlow(registry: []const Flow, provider: []const u8) ?Flow {
     for (registry) |flow| if (std.mem.eql(u8, flow.provider, provider)) return flow;
     return null;
 }
 
+const refresh_window_ms = 60_000;
+
 pub const Resolver = struct {
     environment: ?*const std.process.Environ.Map = null,
     store: ?Store = null,
     registry: []const Flow = flows,
+    /// Enables refresh. Without it, stored tokens are returned as they are.
+    http: ?foo.io.HttpTransport = null,
 
     pub fn interface(self: *const Resolver) CredentialSource {
         return .{ .context = self, .resolve_fn = resolve, .refresh_fn = refresh };
@@ -70,44 +108,76 @@ pub const Resolver = struct {
     fn resolve(raw: *const anyopaque, a: std.mem.Allocator, operation: foo.io.Context, reference: foo.config.SecretRef) Error!Credential {
         const self: *const Resolver = @ptrCast(@alignCast(raw));
         if (reference != .auth) return direct(self.environment, reference);
+        const provider = reference.auth;
         const store = self.store orelse return error.Authentication;
         var snapshot = try store.read(a, operation);
         defer snapshot.deinit();
-        const entry = snapshot.entries.get(reference.auth) orelse return error.Authentication;
-        return switch (entry) {
-            .api_key => |key| .{ .api_key = try a.dupe(u8, key) },
-            .oauth => |oauth| blk: {
-                const token = try a.dupe(u8, oauth.access);
-                errdefer a.free(token);
-                break :blk .{ .bearer = .{
-                    .token = token,
-                    .account = if (oauth.account) |account| try a.dupe(u8, account) else null,
-                } };
-            },
+        const entry = snapshot.entries.get(provider) orelse return error.Authentication;
+        var current = switch (entry) {
+            .api_key => |key| return .{ .api_key = try a.dupe(u8, key) },
+            .oauth => |value| value,
         };
+        const flow = findFlow(self.registry, provider);
+        var scratch = std.heap.ArenaAllocator.init(a);
+        defer scratch.deinit();
+        if (flow) |registered| {
+            const now_ms = std.Io.Timestamp.now(operation.io, .real).toMilliseconds();
+            if (current.expires_ms -| now_ms < refresh_window_ms) {
+                // A token that has not expired yet stays usable when the refresh endpoint fails.
+                const renewed = self.renew(scratch.allocator(), operation, registered, current) catch |err| switch (err) {
+                    error.Cancelled, error.OutOfMemory => |e| return e,
+                    else => if (current.expires_ms > now_ms) null else return err,
+                };
+                if (renewed) |latest| current = latest;
+            }
+        }
+        const token = try a.dupe(u8, current.access);
+        errdefer a.free(token);
+        const header = if (flow) |registered| registered.account_header else null;
+        return .{ .bearer = .{
+            .token = token,
+            .account = if (header) |name| if (current.account) |account| .{ .header = name, .value = try a.dupe(u8, account) } else null else null,
+        } };
     }
 
     fn refresh(raw: *const anyopaque, a: std.mem.Allocator, operation: foo.io.Context, reference: foo.config.SecretRef, attempted: Credential.Bearer) Error!bool {
         const self: *const Resolver = @ptrCast(@alignCast(raw));
         if (reference != .auth) return false;
-        const provider = reference.auth;
-        const flow = findFlow(self.registry, provider) orelse return false;
-        const refresh_fn = flow.refresh_fn orelse return false;
+        const flow = findFlow(self.registry, reference.auth) orelse return false;
         const store = self.store orelse return false;
-        var snapshot = try store.read(a, operation);
-        defer snapshot.deinit();
-        const entry = snapshot.entries.get(provider) orelse return false;
+        var scratch = std.heap.ArenaAllocator.init(a);
+        defer scratch.deinit();
+        const snapshot = try store.read(scratch.allocator(), operation);
+        const entry = snapshot.entries.get(reference.auth) orelse return false;
         if (entry != .oauth) return false;
-        const oauth = entry.oauth;
-        const token = oauth.refresh orelse return false;
-        if (!std.mem.eql(u8, oauth.access, attempted.token)) return true;
-        const updated = try refresh_fn(a, operation, oauth, token);
-        if (try store.replaceOAuth(a, operation, provider, oauth, updated)) return true;
+        if (!std.mem.eql(u8, entry.oauth.access, attempted.token)) return true;
+        const latest = try self.renew(scratch.allocator(), operation, flow, entry.oauth) orelse return false;
+        return !std.mem.eql(u8, latest.access, attempted.token);
+    }
 
-        var latest = try store.read(a, operation);
-        defer latest.deinit();
-        const current = latest.entries.get(provider) orelse return false;
-        return current == .oauth and !std.mem.eql(u8, current.oauth.access, attempted.token);
+    /// Returns the entry current after the refresh, which another process may have written.
+    fn renew(self: *const Resolver, arena: std.mem.Allocator, operation: foo.io.Context, flow: Flow, current: OAuth) Error!?OAuth {
+        const refresh_fn = flow.refresh orelse return null;
+        const http = self.http orelse return null;
+        const store = self.store orelse return null;
+        if (current.refresh == null) return null;
+        var updated = refresh_fn(.{ .a = arena, .operation = operation, .http = http, .current = current }) catch |err| switch (err) {
+            error.Cancelled, error.OutOfMemory => |e| return e,
+            // Another process may have spent this refresh token on a rotating issuer and saved the result.
+            else => return try newerEntry(arena, operation, store, flow.provider, current) orelse err,
+        };
+        if (updated.account == null) updated.account = current.account;
+        if (try store.replaceOAuth(arena, operation, flow.provider, current, updated)) return updated;
+        const latest = try store.read(arena, operation);
+        const entry = latest.entries.get(flow.provider) orelse return null;
+        return if (entry == .oauth) entry.oauth else null;
+    }
+
+    fn newerEntry(arena: std.mem.Allocator, operation: foo.io.Context, store: Store, provider: []const u8, current: OAuth) Error!?OAuth {
+        const latest = try store.read(arena, operation);
+        const entry = latest.entries.get(provider) orelse return null;
+        if (entry != .oauth or std.mem.eql(u8, entry.oauth.access, current.access)) return null;
+        return entry.oauth;
     }
 };
 

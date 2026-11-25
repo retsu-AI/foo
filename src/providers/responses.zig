@@ -64,6 +64,7 @@ pub const Reducer = struct {
             "response.content_part.added",          "response.content_part.done",            "response.output_text.done",
             "response.refusal.done",                "response.function_call_arguments.done", "response.reasoning_summary_part.added",
             "response.reasoning_summary_part.done", "response.reasoning_summary_text.done",  "response.reasoning_text.done",
+            "response.metadata",
         };
         for (passive) |allowed| if (c.eq(kind, allowed)) return;
         return error.Rejected;

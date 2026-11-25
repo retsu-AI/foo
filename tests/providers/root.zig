@@ -63,7 +63,7 @@ const Wire = struct {
     status: u16 = 200,
     next_status: ?u16 = null,
     first_authorization: ?[]const u8 = null,
-    content_type: []const u8 = "text/event-stream; charset=utf-8",
+    content_type: ?[]const u8 = "text/event-stream; charset=utf-8",
     retry_after: ?[]const u8 = null,
     chunk_bytes: usize = 7,
     fail_unsent: usize = 0,
@@ -97,12 +97,12 @@ const Wire = struct {
         self.headers = headers;
         if (self.calls == 1) self.first_authorization = self.header("authorization");
         const response_headers = [_]io.Header{
-            .{ .name = "Content-Type", .value = self.content_type },
             .{ .name = "Retry-After", .value = self.retry_after orelse "" },
+            .{ .name = "Content-Type", .value = self.content_type orelse "" },
         };
         try sink.head_fn(sink.context, operation, .{
             .status = if (self.calls == 1) self.status else self.next_status orelse self.status,
-            .headers = response_headers[0..if (self.retry_after == null) 1 else 2],
+            .headers = response_headers[@intFromBool(self.retry_after == null)..if (self.content_type == null) 1 else 2],
         });
         if (self.body.len > request.max_response_bytes) return error.LimitExceeded;
         var offset: usize = 0;
@@ -813,17 +813,13 @@ test "a single invocation budget allows a larger tool catalog" {
 const Refresh = struct {
     var calls: usize = 0;
 
-    fn login(_: std.mem.Allocator, _: io.Context) auth.Error!auth.OAuth {
-        return error.Authentication;
-    }
-
-    fn refresh(_: std.mem.Allocator, _: io.Context, current: auth.OAuth, token: []const u8) auth.Error!auth.OAuth {
-        if (!std.mem.eql(u8, current.access, "first-access") or !std.mem.eql(u8, token, "first-refresh")) return error.InvalidInput;
+    fn refresh(request: auth.Refresh) auth.Error!auth.OAuth {
+        if (!std.mem.eql(u8, request.current.access, "first-access") or !std.mem.eql(u8, request.current.refresh.?, "first-refresh")) return error.InvalidInput;
         calls += 1;
-        return .{ .access = "second-access", .refresh = "second-refresh", .expires_ms = 200, .account = current.account };
+        return .{ .access = "second-access", .refresh = "second-refresh", .expires_ms = std.math.maxInt(i64) };
     }
 
-    const flow = auth.Flow{ .provider = "gateway", .login_fn = login, .refresh_fn = refresh };
+    const flow = auth.Flow{ .provider = "gateway", .refresh = refresh };
 };
 
 test "only a bearer with a registered refresh token can retry an HTTP 401" {
@@ -854,7 +850,7 @@ test "only a bearer with a registered refresh token can retry an HTTP 401" {
         try store.put(a, operation, "gateway", if (case.api_key) .{ .api_key = "first-access" } else .{ .oauth = .{
             .access = "first-access",
             .refresh = case.refresh_token,
-            .expires_ms = 100,
+            .expires_ms = std.math.maxInt(i64) - 1,
             .account = "fixture-account",
         } });
         var wire: Wire = .{
@@ -863,7 +859,7 @@ test "only a bearer with a registered refresh token can retry an HTTP 401" {
             .status = case.initial_status,
             .next_status = case.next_status,
         };
-        const resolver = auth.Resolver{ .store = store, .registry = if (case.registered) &.{Refresh.flow} else &.{} };
+        const resolver = auth.Resolver{ .store = store, .registry = if (case.registered) &.{Refresh.flow} else &.{}, .http = wire.transport() };
         var adapter: providers.Adapter = .{ .transport = wire.transport(), .credentials = resolver.interface(), .retry_attempts = 2 };
         var request = requestFor(.openai_chat, "https://fixture.invalid/v1/chat/completions");
         request.model.credential = .{ .auth = "gateway" };
@@ -881,6 +877,49 @@ test "only a bearer with a registered refresh token can retry an HTTP 401" {
         try same(if (case.refreshed) "Bearer second-access" else "Bearer first-access", wire.header("authorization").?);
         var snapshot = try store.read(a, operation);
         defer snapshot.deinit();
-        if (!case.api_key) try equal(if (case.refreshed) @as(i64, 200) else 100, snapshot.entries.get("gateway").?.oauth.expires_ms);
+        if (!case.api_key) {
+            const stored = snapshot.entries.get("gateway").?.oauth;
+            try same(if (case.refreshed) "second-access" else "first-access", stored.access);
+            try same("fixture-account", stored.account.?);
+        }
     }
+}
+
+// The live backend omits Content-Type and interleaves response.metadata (checked 2026-11-25).
+const codex_body = "event: response.metadata\ndata: {\"type\":\"response.metadata\",\"metadata\":{}}\n\n" ++ @embedFile("fixtures/responses.sse");
+
+test "openai-codex sends the stored bearer, account header and Responses body to the ChatGPT backend" {
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var run: Run = .{ .allocator = a };
+    const operation: io.Context = .{ .io = std.testing.io, .cancellation = &run.cancellation, .clock = run.clock.interface() };
+    const store = auth.Store{ .directory = try tmp.dir.realPathFileAlloc(operation.io, ".", a) };
+    try store.put(a, operation, "openai-codex", .{ .oauth = .{
+        .access = "codex-access",
+        .refresh = "codex-refresh",
+        .expires_ms = std.math.maxInt(i64),
+        .account = "codex-account",
+    } });
+    var wire: Wire = .{ .allocator = a, .body = codex_body, .content_type = null };
+    const resolver = auth.Resolver{ .store = store };
+    var adapter: providers.Adapter = .{ .transport = wire.transport(), .credentials = resolver.interface() };
+    var request = requestFor(.openai_responses, "https://chatgpt.com/backend-api/codex/responses");
+    request.model.id = "gpt-6.1-terra";
+    request.model.credential = .{ .auth = "openai-codex" };
+    request.model.headers = &.{.{ .name = "originator", .value = .{ .literal = "foo" } }};
+    _ = try run.stream(&adapter, request);
+    try same("https://chatgpt.com/backend-api/codex/responses", wire.url);
+    try same("Bearer codex-access", wire.header("authorization").?);
+    try same("codex-account", wire.header("chatgpt-account-id").?);
+    try same("foo", wire.header("originator").?);
+    const json = try parse(a, wire.request_body);
+    try expect(is(json, "model", "gpt-6.1-terra"));
+    try equal(false, (try member(json, "store")).bool);
+    try same("reasoning.encrypted_content", (try member(json, "include")).array.items[0].string);
+
+    request.model.headers = &.{.{ .name = "ChatGPT-Account-Id", .value = .{ .literal = "other" } }};
+    try std.testing.expectError(error.InvalidInput, run.stream(&adapter, request));
 }

@@ -113,7 +113,7 @@ pub const App = struct {
         return result;
     }
 
-    fn httpClient(self: *App, operation: io.Context) io.Error!foo.transport.Client {
+    pub fn httpClient(self: *App, operation: io.Context) io.Error!foo.transport.Client {
         if (self.transport == null) {
             const roots = try self.trustedRoots(operation);
             errdefer self.allocator.free(roots);
@@ -159,6 +159,7 @@ pub const Session = struct {
     launch_cwd: []const u8,
     clock: io.Clock,
     transport: foo.transport.Client,
+    authentication: auth.Resolver,
     provider: providers.Adapter,
     local: ?Local = null,
     peers: ?[]Peer = null,
@@ -178,13 +179,15 @@ pub const Session = struct {
             .launch_cwd = if (mode == .editor) mode.editor else effective.runtime.cwd,
             .clock = operation.clock,
             .transport = try app.httpClient(operation),
+            .authentication = app.authentication,
             .provider = undefined,
         };
         errdefer self.transport.deinit();
+        self.authentication.http = self.transport.interface();
         self.provider = .{
             .transport = self.transport.interface(),
             .environment = app.environ,
-            .credentials = app.authentication.interface(),
+            .credentials = self.authentication.interface(),
             .retry_attempts = effective.runtime.retry_attempts,
             .scratch_allocator = app.allocator,
         };

@@ -417,48 +417,52 @@ The ReleaseSafe startup probe ran 20 interleaved samples per variant with zero f
 
 **Files.**
 
-- [ ] Create `src/auth/oauth.zig` with the PKCE and device-code helpers, and `src/auth/openai_codex.zig`.
-- [ ] Edit `src/auth/root.zig`. The OAuth registry.
-- [ ] Create `src/config/defaults.zig` with the built-in provider table, and load it as the `.defaults` layer in `src/config/root.zig` `resolve`.
-- [ ] Edit `src/providers/root.zig` `headers()` at line 63 and `src/providers/request.zig` `encode` at line 6.
-- [ ] Edit `src/providers/routes.md`, `tests/providers/root.zig`, and `tests/auth/root.zig`.
+- [x] Create `src/auth/oauth.zig` with the PKCE and device-code helpers, and `src/auth/openai_codex.zig`.
+- [x] Edit `src/auth/root.zig`. The OAuth registry.
+- [x] Create `src/config/defaults.zig` with the built-in provider table, and load it as the `.defaults` layer in `src/config/root.zig` `resolve`.
+- [x] Edit `src/providers/root.zig` `headers()` at line 63 and `src/providers/request.zig` `encode` at line 6.
+- [x] Edit `src/providers/routes.md`, `tests/providers/root.zig`, and `tests/auth/root.zig`.
 
 **Build.**
 
-- [ ] Add the `openai-codex` flow to the registry with the values in Appendix E. PKCE against `https://auth.openai.com/oauth/authorize` and `/oauth/token`, client id `app_EMoamEEZ73f0CkXaXp7hrann`, redirect `http://localhost:1455/auth/callback`, scope `openid profile email offline_access`, and the extra parameters `id_token_add_organizations=true`, `codex_cli_simplified_flow=true`, and `originator=foo`. Print the URL for the user to open. Fall back to `--device` on request or when no callback arrives in 120 seconds. The device flow posts to `/api/accounts/deviceauth/usercode`, shows `https://auth.openai.com/codex/device` and the user code, and polls `/api/accounts/deviceauth/token`. Store `access`, `refresh`, `expires_ms`, and `account` from the id token claim `https://api.openai.com/auth`.`chatgpt_account_id`.
-- [ ] Add a built-in provider `openai-codex` in `src/config/defaults.zig` with family `openai_responses`, `base_url` `https://chatgpt.com/backend-api/codex`, credential `{"auth": "openai-codex"}`, and no models. The user lists models under it. The adapter sends `authorization: Bearer <access>` and `chatgpt-account-id: <account>` when the credential is `bearer` with an account, and `originator: foo`.
-- [ ] In `request.zig`, the Responses codec already sends `store: false` and `include: ["reasoning.encrypted_content"]`, which Pi sends to the same backend. Lane 2 confirms the backend accepts the body. Record any field the backend rejects in `src/providers/routes.md` and strip it for this provider only.
-- [ ] Refresh through `/oauth/token` with `grant_type=refresh_token` when `expires_ms` is within 60 seconds of now, before the request, and once more on 401 per U05.
+- [x] Add the `openai-codex` flow to the registry with the values in Appendix E. PKCE against `https://auth.openai.com/oauth/authorize` and `/oauth/token`, client id `app_EMoamEEZ73f0CkXaXp7hrann`, redirect `http://localhost:1455/auth/callback`, scope `openid profile email offline_access`, and the extra parameters `id_token_add_organizations=true`, `codex_cli_simplified_flow=true`, and `originator=foo`. Print the URL for the user to open. Fall back to `--device` on request or when no callback arrives in 120 seconds. The device flow posts to `/api/accounts/deviceauth/usercode`, shows `https://auth.openai.com/codex/device` and the user code, and polls `/api/accounts/deviceauth/token`. Store `access`, `refresh`, `expires_ms`, and `account` from the id token claim `https://api.openai.com/auth`.`chatgpt_account_id`.
+- [x] Add a built-in provider `openai-codex` in `src/config/defaults.zig` with family `openai_responses`, `base_url` `https://chatgpt.com/backend-api/codex`, credential `{"auth": "openai-codex"}`, and no models. The user lists models under it. The adapter sends `authorization: Bearer <access>` and `chatgpt-account-id: <account>` when the credential is `bearer` with an account, and `originator: foo`.
+- [x] In `request.zig`, the Responses codec already sends `store: false` and `include: ["reasoning.encrypted_content"]`, which Pi sends to the same backend. Lane 2 confirms the backend accepts the body. Record any field the backend rejects in `src/providers/routes.md` and strip it for this provider only.
+- [x] Refresh through `/oauth/token` with `grant_type=refresh_token` when `expires_ms` is within 60 seconds of now, before the request, and once more on 401 per U05.
 
 **You see.**
 
 - [ ] `foo auth login openai-codex` prints an `https://auth.openai.com/oauth/authorize?...` URL, the browser returns to `localhost:1455`, and `foo auth list` shows `openai-codex  oauth  expires in 9h`.
-- [ ] `foo run --model openai-codex/gpt-5.5-codex --prompt "say ok"` prints `ok` with no API key in the environment.
+- [x] `foo run --model openai-codex/gpt-6.1-terra --prompt "say ok"` prints `ok` with no API key in the environment.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `tests/auth/root.zig` covers the PKCE verifier and challenge against the RFC 7636 appendix B vector, callback parsing with a wrong `state`, token response parsing, and the id token claim extraction. Run `nix develop .#ci -c zig build test -Dmodule=auth`.
-- [ ] `tests/providers/root.zig` gains a route row for `openai-codex` asserting both headers and the request body. Run `nix develop .#ci -c zig build test -Dmodule=providers`.
+- [x] `tests/auth/root.zig` covers the PKCE verifier and challenge against the RFC 7636 appendix B vector, callback parsing with a wrong `state`, token response parsing, and the id token claim extraction. Run `nix develop .#ci -c zig build test -Dmodule=auth`.
+- [x] `tests/providers/root.zig` gains a route row for `openai-codex` asserting both headers and the request body. Run `nix develop .#ci -c zig build test -Dmodule=providers`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` model at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk has no Codex login. Record that. At head, `foo auth login openai-codex` with the operator present to click. Save `codex-login.png`. Pass when the store holds an oauth entry and `auth list` shows an expiry.
-- [ ] Lane 2. One-turn run against `openai-codex`. Save `codex-run.png`. Pass when the reply prints and the exit code is 0.
-- [ ] Lane 3. A run with one `read` tool call. Save `codex-tool.png`. Pass when the tool runs and the second turn completes with encrypted reasoning replayed.
+- [x] Lane 2. One-turn run against `openai-codex`. Save `codex-run.png`. Pass when the reply prints and the exit code is 0.
+- [x] Lane 3. A run with one `read` tool call. Save `codex-tool.png`. Pass when the tool runs and the second turn completes with encrypted reasoning replayed.
 - [ ] Lane 4. Edit the store to set `expires_ms` in the past, run. Save `codex-refresh.png`. Pass when the run completes and `expires_ms` is updated.
 - [ ] Lane 5. Edit the store to corrupt `access`, run. Save `codex-401-refresh.png`. Pass when one 401 is logged, a refresh follows, and the run completes.
-- [ ] Lane 6. Corrupt both tokens. Save `codex-relogin.png`. Pass when the authentication detail ends `Run foo auth login openai-codex`.
+- [x] Lane 6. Corrupt both tokens. Save `codex-relogin.png`. Pass when the authentication detail ends `Run foo auth login openai-codex`.
 - [ ] Lane 7. `foo auth login openai-codex --device` on a host with no browser. Save `codex-device.png`. Pass when the user code prints and login completes after the operator enters it.
-- [ ] Lane 8. Callback with a tampered `state`. Save `codex-state.png`. Pass when foo rejects it and stores nothing.
-- [ ] Lane 9. `foo config show` for the codex model. Save `codex-show.png`. Pass when no token appears.
-- [ ] Lane 10. Run `nix develop .#ci -c zig build check`. Save `codex-check.png`. Pass when every suite passes.
+- [x] Lane 8. Callback with a tampered `state`. Save `codex-state.png`. Pass when foo rejects it and stores nothing.
+- [x] Lane 9. `foo config show` for the codex model. Save `codex-show.png`. Pass when no token appears.
+- [x] Lane 10. Run `nix develop .#ci -c zig build check`. Save `codex-check.png`. Pass when every suite passes.
+
+Measured 2026-11-25 at the PR head with the operator's ChatGPT Pro account. Lanes 2 and 3 used a test store holding only the Codex CLI's current access token, so no refresh token was used or rotated. Lane 2 printed `ok` with exit 0. Lane 3 read a file and completed the continuation with encrypted reasoning replayed. The first live run failed because the backend's 200 stream has no `Content-Type` and adds a `response.metadata` event. `d8b7c7a` fixes both and the route test now replays that shape. Lane 6 printed `authentication failed for https://chatgpt.com/backend-api/codex/responses. Run foo auth login openai-codex` with exit 4. Lane 8 returned HTTP 400 to the tampered callback, printed `login for openai-codex was not completed`, and left no `auth.json`. Lane 9 showed `{"auth":"openai-codex"}`, `defaults` provenance, and no token. Lane 10 passed 41 of 41 steps. Lane 7 printed the device page and user code after the 120 second browser timeout. Lanes 1, 4, 5, and 7's completion need the operator to finish a login and stay open. `gpt-5.5-codex` is rejected for ChatGPT accounts, so the examples use `gpt-6.1-terra`.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. Time from `foo run` start to the first request arriving at a loopback fixture standing in for the Codex endpoint, with a valid oauth entry, at head. Trunk lacks the feature. The diff-added work is one store read and one expiry check, budget 5 ms. The end state the user waits for is the first byte of the reply.
-- [ ] Probe. Twenty runs, timestamped at the fixture's accept, against the U05 `api_key` store variant on the same head.
-- [ ] Baseline. Record the head `api_key` store mean first.
-- [ ] Rule. Head oauth mean minus head `api_key` mean is under 5 ms.
+- [x] Metric. Time from `foo run` start to the first request arriving at a loopback fixture standing in for the Codex endpoint, with a valid oauth entry, at head. Trunk lacks the feature. The diff-added work is one store read and one expiry check, budget 5 ms. The end state the user waits for is the first byte of the reply.
+- [x] Probe. Twenty runs, timestamped at the fixture's accept, against the U05 `api_key` store variant on the same head.
+- [x] Baseline. Record the head `api_key` store mean first.
+- [x] Rule. Head oauth mean minus head `api_key` mean is under 5 ms.
+
+Debug build, 20 interleaved runs per variant after 2 warmups, timed at the loopback fixture's accept. The head `api_key` mean was 18.077 ms and the head oauth mean 17.870 ms, a difference of -0.21 ms.
 
 **Review gate.** None. U06 is not review-gated.
 

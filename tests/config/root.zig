@@ -541,7 +541,7 @@ test "null removes whole entries and their provenance while preserving the rest 
         },
         .model_patch = .{ .provider = "a.b" },
     });
-    try equal(1, settings.providers.count());
+    try expect(settings.providers.get("a") == null);
     try same("first", settings.runtime.model.id);
     const models = settings.providers.get("a.b").?.models;
     try equal(3, models.len);
@@ -750,4 +750,36 @@ test "long provider IDs do not amplify empty entries and bound generated paths" 
             try equal(1024, effective.providers.get(&provider_id).?.models.len);
         }
     }
+}
+
+test "built-in providers resolve from defaults and user layers can replace or remove them" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var call: Request = .{};
+    const select =
+        \\{"providers":{"openai-codex":{"models":{"gpt-6.1-terra":{}}}},"model":"openai-codex/gpt-6.1-terra"}
+    ;
+    const builtin = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json = select } }} });
+    const model = builtin.runtime.model;
+    try same("https://chatgpt.com/backend-api/codex/responses", model.endpoint);
+    try same("openai-codex", model.credential.auth);
+    try same("originator", model.headers[0].name);
+    try same("foo", model.headers[0].value.literal);
+    try equal(foo.config.Source.defaults, (try sourceOf(builtin, "providers.openai-codex.base_url")).source);
+    try equal(foo.config.Source.defaults, (try sourceOf(builtin, "model.credential")).source);
+
+    const moved = [_]config.Layer{
+        .{ .source = .file, .data = .{ .json = select } },
+        .{ .source = .file, .location = "user.json", .data = .{ .json =
+        \\{"providers":{"openai-codex":{"base_url":"https://other.invalid/v1"}}}
+        } },
+    };
+    try std.testing.expectError(error.InvalidConfiguration, call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &moved }));
+    try same("providers.openai-codex.credential", call.diagnostic.?.path);
+
+    const removed = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
+        \\{"providers":{"openai-codex":null,"demo":{"family":"openai_responses","base_url":"https://fixture.invalid/v1","models":{"explicit-model":{}}}},"model":"demo/explicit-model"}
+    } }} });
+    try expect(removed.providers.get("openai-codex") == null);
 }

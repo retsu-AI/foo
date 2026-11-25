@@ -5,11 +5,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
 
 TESTS = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(TESTS / "acp"), str(TESTS / "cli"), str(TESTS / "platform-terminal")]
@@ -139,6 +143,7 @@ class Handler(BaseHTTPRequestHandler):
         self.server.requests.append((self.path, request))
         if self.path == "/chat/completions":
             self.server.provider_authorizations.append(self.headers.get("Authorization"))
+            self.server.provider_accounts.append(self.headers.get("chatgpt-account-id"))
             self.respond(200, chat_reply(request), "text/event-stream")
         elif self.path in ("/mcp", "/modern") and "id" in request:
             modern = self.path == "/modern"
@@ -163,6 +168,7 @@ class Production(unittest.TestCase):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.requests = []
         self.server.provider_authorizations = []
+        self.server.provider_accounts = []
         worker = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05})
         worker.start()
 
@@ -413,6 +419,68 @@ class Production(unittest.TestCase):
         self.assertEqual(denied.returncode, 4, denied.stderr)
         self.assertIn(b"Run foo auth login local", denied.stderr)
         self.assertEqual(len(self.provider_requests()), 1)
+
+    def test_oauth_login_sends_the_registered_account_header(self):
+        self.user_config.parent.mkdir(parents=True)
+        peer = TerminalPeer([self.binary, "auth", "login", "openai-codex", "--api-key"], environment=self.env, cwd=self.directory)
+        try:
+            peer.expect("openai-codex API key:")
+            peer.send("placeholder\r")
+            self.assertEqual(peer.wait(), 0)
+        finally:
+            peer.close()
+        stored = self.user_config.with_name("auth.json")
+        # Rewriting foo's own store keeps the owner and permissions it created.
+        stored.write_text(json.dumps({"openai-codex": {
+            "type": "oauth", "access": "fixture-access", "refresh": "fixture-refresh",
+            "expires_ms": 4102444800000, "account": "fixture-account",
+        }}), encoding="utf-8")
+        self.config(provider={"credential": {"auth": "openai-codex"}})
+        self.success(("run", "--prompt", "say ok"), "Reply to say ok\n")
+        self.assertEqual(self.server.provider_authorizations, ["Bearer fixture-access"])
+        self.assertEqual(self.server.provider_accounts, ["fixture-account"])
+        listed = self.invoke("auth", "list")
+        self.assertEqual(listed.stdout.decode().splitlines()[0].split("  ")[:2], ["openai-codex", "oauth"])
+
+    def test_codex_login_rejects_a_tampered_callback_state(self):
+        probe = socket.socket()
+        if os.name != "nt":
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(("127.0.0.1", 1455))
+        except OSError:
+            self.skipTest("port 1455 is in use")
+        finally:
+            probe.close()
+        self.user_config.parent.mkdir(parents=True)
+        child = subprocess.Popen(
+            [self.binary, "auth", "login", "openai-codex"], env=self.env, cwd=self.directory,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            line = b""
+            while b"https://" not in line:
+                line = child.stderr.readline()
+                self.assertTrue(line, "login exited before printing the URL")
+            url = urllib.parse.urlsplit(line.decode().strip())
+            query = urllib.parse.parse_qs(url.query)
+            self.assertEqual(url.netloc + url.path, "auth.openai.com/oauth/authorize")
+            self.assertEqual(query["redirect_uri"], ["http://localhost:1455/auth/callback"])
+            self.assertEqual(query["originator"], ["foo"])
+            self.assertEqual(query["code_challenge_method"], ["S256"])
+            with self.assertRaises(urllib.error.HTTPError) as rejected:
+                urllib.request.urlopen(f"http://127.0.0.1:1455/auth/callback?code=fixture&state=tampered{query['state'][0]}", timeout=TIMEOUT)
+            self.assertEqual(rejected.exception.code, 400)
+            rejected.exception.close()
+            _, stderr = child.communicate(timeout=TIMEOUT)
+        finally:
+            child.kill()
+            child.wait()
+            child.stdout.close()
+            child.stderr.close()
+        self.assertEqual(child.returncode, 4, stderr)
+        self.assertIn(b"login for openai-codex was not completed", stderr)
+        self.assertFalse(self.user_config.with_name("auth.json").exists())
 
     def test_journal_and_builtin_read(self):
         (self.directory / "sample.txt").write_text("local text", encoding="utf-8")

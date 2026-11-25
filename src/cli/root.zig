@@ -39,6 +39,12 @@ pub const Streams = struct {
     diagnostic: std.Io.File,
 };
 
+/// Opens the HTTP transport on first use, so commands that never log in skip TLS setup.
+pub const Network = struct {
+    context: *anyopaque,
+    open_fn: *const fn (*anyopaque, foo.io.Context) foo.io.Error!foo.io.HttpTransport,
+};
+
 pub const Options = struct {
     cwd: []const u8,
     streams: ?Streams = null,
@@ -47,6 +53,7 @@ pub const Options = struct {
     discover_config: bool = false,
     runtime: ?Runtime = null,
     authentication: auth.Resolver = .{},
+    network: ?Network = null,
 };
 
 pub const Exit = enum(u8) {
@@ -92,7 +99,7 @@ pub const help =
     \\  foo mcp get KIND SERVER ID [--arguments JSON] [OPTIONS]
     \\  KIND is resource, resource_template, or prompt.
     \\  foo config (check | show) [OPTIONS]
-    \\  foo auth login PROVIDER [--api-key]
+    \\  foo auth login PROVIDER [--api-key | --device]
     \\  foo auth list
     \\  foo auth logout PROVIDER
     \\  foo --help | --version
@@ -137,7 +144,7 @@ pub fn execute(
     switch (command.action) {
         .help => return print(streams, operation, help),
         .version => return print(streams, operation, "foo " ++ foo.version ++ "\n"),
-        .auth => |action| return runAuth(a, operation, streams, options.authentication, action),
+        .auth => |action| return runAuth(a, operation, streams, options, action),
         else => {},
     }
 
@@ -406,14 +413,21 @@ fn authFailure(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams
     }
 }
 
-fn runAuth(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, resolver: auth.Resolver, command: arguments.AuthCommand) Exit {
-    const flow = if (command == .login and !command.login.api_key)
-        auth.findFlow(resolver.registry, command.login.provider) orelse {
-            report(streams, operation.io, "no browser login for {s}; use --api-key", .{command.login.provider});
+fn runAuth(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, options: Options, command: arguments.AuthCommand) Exit {
+    const resolver = options.authentication;
+    const login_fn = if (command == .login and command.login.method != .api_key) login: {
+        const flow = auth.findFlow(resolver.registry, command.login.provider);
+        const selected = if (flow) |found| switch (command.login.method) {
+            .auto => found.browser orelse found.device,
+            .device => found.device,
+            .api_key => unreachable,
+        } else null;
+        break :login selected orelse {
+            const kind = if (flow != null) "device" else "browser";
+            report(streams, operation.io, "no {s} login for {s}; use --api-key", .{ kind, command.login.provider });
             return .usage;
-        }
-    else
-        null;
+        };
+    } else null;
     const store = resolver.store orelse {
         report(streams, operation.io, "no user configuration directory. Set FOO_CONFIG_DIR to an absolute path", .{});
         return .usage;
@@ -422,8 +436,29 @@ fn runAuth(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, re
         .login => |login| login_entry: {
             var buffer: [auth.max_secret_bytes]u8 = undefined;
             defer std.crypto.secureZero(u8, &buffer);
-            const entry: auth.Entry = if (flow) |browser| .{
-                .oauth = browser.login_fn(a, operation) catch |err| return authFailure(a, operation, streams, store, err),
+            const entry: auth.Entry = if (login_fn) |flow_login| oauth: {
+                const network = options.network orelse {
+                    report(streams, operation.io, "network is unavailable", .{});
+                    return .host;
+                };
+                const http = network.open_fn(network.context, operation) catch |err| return failed(streams, operation, err);
+                var prompt: LoginPrompt = .{ .streams = streams };
+                break :oauth .{ .oauth = flow_login(.{
+                    .a = a,
+                    .operation = operation,
+                    .http = http,
+                    .prompt = .{ .context = &prompt, .show_fn = LoginPrompt.show },
+                }) catch |err| switch (err) {
+                    error.Authentication => {
+                        report(streams, operation.io, "login for {s} was not completed", .{login.provider});
+                        return .provider;
+                    },
+                    error.DeadlineExceeded => {
+                        report(streams, operation.io, "login for {s} timed out", .{login.provider});
+                        return .limit;
+                    },
+                    else => |e| return authFailure(a, operation, streams, store, e),
+                } };
             } else key: {
                 const prompt = std.fmt.allocPrint(a, "{s} API key: ", .{login.provider}) catch return failed(streams, operation, error.OutOfMemory);
                 const key = process.fileOperation(operation, secret_input.read, .{ operation, streams.input, streams.diagnostic, prompt, &buffer }) catch |err| switch (err) {
@@ -460,6 +495,19 @@ fn runAuth(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, re
         },
     };
 }
+
+const LoginPrompt = struct {
+    streams: Streams,
+
+    fn show(raw: *anyopaque, operation: foo.io.Context, notice: auth.Notice) auth.Error!void {
+        const self: *LoginPrompt = @ptrCast(@alignCast(raw));
+        const parts: []const []const u8 = switch (notice) {
+            .url => |url| &.{ "Open this URL to log in:\n  ", url, "\n" },
+            .device_code => |device| &.{ "Open ", device.uri, " and enter code ", device.code, "\n" },
+        };
+        for (parts) |part| try writeAll(self.streams.diagnostic, operation, part);
+    }
+};
 
 fn promptLimit(limits: foo.config.Limits) usize {
     return @min(arguments.max_prompt_bytes, limits.transcript_bytes);
