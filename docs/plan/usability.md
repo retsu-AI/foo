@@ -195,27 +195,27 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 
 **Files.**
 
-- [ ] Edit `src/contracts/config.zig`. `SecretRef` at line 23, `Model` at line 26, and `Resolved` at line 48.
-- [ ] Edit `src/config/parse.zig`. `secret()` at line 126, `defaults()` at line 208, the root allowlist at line 244, `model()` at line 288, and `finish()` at line 442.
-- [ ] Edit `src/config/root.zig`. `Effective` at line 61, the seed at line 72, and `effectiveJson` at line 149.
-- [ ] Edit `src/cli/arguments.zig`. `Flag` at line 38, `ModelPatch` at line 53, and the patch handling at line 127.
-- [ ] Edit `src/cli/root.zig`. `help` at line 80.
-- [ ] Edit `src/config/README.md`, `src/config/examples/minimal.json`, `src/config/examples/customized.json`, `src/providers/routes.md`, `docs/architecture.md` lines 165 to 173, `tests/config/**`, `tests/cli/check.py`, and `tests/contracts/root.zig` line 419.
+- [x] Edit `src/contracts/config.zig`. `SecretRef` at line 23, `Model` at line 26, and `Resolved` at line 48.
+- [x] Edit `src/config/parse.zig`. `secret()` at line 126, `defaults()` at line 208, the root allowlist at line 244, `model()` at line 288, and `finish()` at line 442.
+- [x] Edit `src/config/root.zig`. `Effective` at line 61, the seed at line 72, and `effectiveJson` at line 149.
+- [x] Edit `src/cli/arguments.zig`. `Flag` at line 38, `ModelPatch` at line 53, and the patch handling at line 127.
+- [x] Edit `src/cli/root.zig`. `help` at line 80.
+- [x] Edit `src/config/README.md`, `src/config/examples/minimal.json`, `src/config/examples/customized.json`, `src/providers/routes.md`, `docs/architecture.md` lines 165 to 173, `tests/config/**`, `tests/cli/check.py`, and `tests/contracts/root.zig` line 419.
 
 **Build.**
 
-- [ ] Add `Provider` to `src/contracts/config.zig`. Fields are `family: Family`, `base_url: []const u8`, `credential: SecretRef`, `headers: []const Header`, `options_json`, and `models: []const ModelEntry`. `ModelEntry` has `id`, `name: ?[]const u8`, `options_json`, `max_output_tokens`, and `endpoint: ?[]const u8`. The resolver appends the family route to `base_url`, `/responses`, `/chat/completions`, or `/messages`. A `ModelEntry.endpoint` replaces the join for one model, which covers gateways with per-model paths. This is the Pi shape, with models nested under the provider, and the OpenCode shape for the same reason.
-- [ ] Keep `Resolved.model: Model`. `finish()` computes it by joining the selected entry with its provider. The provider adapter accepts literal credentials and fails authentication for unresolved `auth` references. The runtime consumes the flattened model and keeps its existing journal identity.
-- [ ] Add root keys `providers` and `model`. `providers` is an object keyed by provider id. Each value has the `Provider` fields and `models` as an object keyed by model id. `model` is a string `provider/id`. Delete the root `model` object. Keep `--model`, `--endpoint`, and `--credential-env` as patches on the selected model and provider.
-- [ ] Merge rules. `providers.<id>` merges per field across layers, and `providers.<id>.models.<id>` merges per field. A later layer can add a provider or a model or change a field. `null` removes a provider or a model. Provenance records `providers.<id>.<field>` and `providers.<id>.models.<id>.<field>`. Changing a provider's `base_url` origin clears its inherited `credential` and `headers`, which keeps the rule at `src/config/parse.zig:291`.
-- [ ] Credential kinds in `secret()`. Accept `{"environment": "VAR"}`, `{"literal": "..."}` for gateways with fixed virtual keys, and `{"auth": "<provider-id>"}`, which U05 resolves from the token store and which U03 parses and carries. Redact `literal` in `effectiveJson`.
-- [ ] Rename `--provider FAMILY` to `--family FAMILY`. `--model` takes `provider/id`. `--endpoint` sets the selected model's `endpoint`. `--credential-env` sets the selected provider's credential. Add `--provider ID` as a shorthand that selects the first model of that provider when `--model` names no provider.
-- [ ] `foo config show` prints `providers` with nested `models` and the resolved `model` with its provenance.
-- [ ] Rewrite `src/config/examples/minimal.json` as one provider and one model. Rewrite `customized.json` with two providers and three models. Rewrite each row of `src/providers/routes.md` as a `providers.<id>` snippet.
+- [x] Add `Provider` to `src/contracts/config.zig`. Fields are `family: Family`, `base_url: []const u8`, `credential: SecretRef`, `headers: []const Header`, `options_json`, and `models: []const ModelEntry`. `ModelEntry` has `id`, `name: ?[]const u8`, `options_json`, `max_output_tokens`, and `endpoint: ?[]const u8`. The resolver appends the family route to `base_url`, `/responses`, `/chat/completions`, or `/messages`. A `ModelEntry.endpoint` replaces the join for one model, which covers gateways with per-model paths. This is the Pi shape, with models nested under the provider, and the OpenCode shape for the same reason.
+- [x] Keep `Resolved.model: Model`. `finish()` computes it by joining the selected entry with its provider. The provider adapter accepts literal credentials and fails authentication for unresolved `auth` references. The runtime consumes the flattened model and keeps its existing journal identity.
+- [x] Add root keys `providers` and `model`. `providers` is an object keyed by provider id. Each value has the `Provider` fields and `models` as an object keyed by model id. `model` is a string `provider/id`. Delete the root `model` object. Keep `--model`, `--endpoint`, and `--credential-env` as patches on the selected model and provider.
+- [x] Merge rules. `providers.<id>` merges per field across layers, and `providers.<id>.models.<id>` merges per field. A later layer can add a provider or a model or change a field. `null` removes a provider or a model. Provenance records `providers.<id>.<field>` and `providers.<id>.models.<id>.<field>`. Changing a provider's `base_url` origin clears its inherited `credential` and `headers`, which keeps the rule at `src/config/parse.zig:291`.
+- [x] Credential kinds in `secret()`. Accept `{"environment": "VAR"}`, `{"literal": "..."}` for gateways with fixed virtual keys, and `{"auth": "<provider-id>"}`, which U05 resolves from the token store and which U03 parses and carries. Redact `literal` in `effectiveJson`.
+- [x] Rename `--provider FAMILY` to `--family FAMILY`. `--model` takes `provider/id`. `--endpoint` sets the selected model's `endpoint`. `--credential-env` sets the selected provider's credential. Add `--provider ID` as a shorthand that selects the first model of that provider when `--model` names no provider.
+- [x] `foo config show` prints `providers` with nested `models` and the resolved `model` with its provenance.
+- [x] Rewrite `src/config/examples/minimal.json` as one provider and one model. Rewrite `customized.json` with two providers and three models. Rewrite each row of `src/providers/routes.md` as a `providers.<id>` snippet.
 
 **You see.**
 
-- [ ] A user config of twelve lines selects a model.
+- [x] A user config of twelve lines selects a model.
 
 ```json
 {
@@ -231,41 +231,43 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 }
 ```
 
-- [ ] `foo config show --model openai/gpt-5.5-mini` prints `model.id = gpt-5.5-mini` with provenance `command_line`, and `max_output_tokens = 2048` with provenance `providers.openai.models.gpt-5.5-mini.max_output_tokens`.
-- [ ] A config with the old root `model` object fails `foo config check` with path `model`, reason `invalid_value`, and the message `model is a string "provider/id"; define providers under "providers"`.
+- [x] `foo config show --model openai/gpt-5.5-mini` prints `model.id = gpt-5.5-mini` with provenance `command_line`, and `max_output_tokens = 2048` with provenance `providers.openai.models.gpt-5.5-mini.max_output_tokens`.
+- [x] A config with the old root `model` object fails `foo config check` with path `model`, reason `invalid_value`, and the message `model is a string "provider/id"; define providers under "providers"`.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `tests/config/root.zig` gains fixtures for provider merge, model merge, `model` naming an unknown provider or id, `null` removal, origin change clearing credentials, `literal` redaction, and the old-shape error. Run `nix develop .#ci -c zig build test -Dmodule=config`.
-- [ ] `tests/cli/check.py` gains `--model provider/id`, `--provider`, and `--family` cases. Run `nix develop .#ci -c zig build test -Dmodule=cli`.
+- [x] `tests/config/root.zig` gains fixtures for provider merge, model merge, `model` naming an unknown provider or id, `null` removal, origin change clearing credentials, `literal` redaction, and the old-shape error. Run `nix develop .#ci -c zig build test -Dmodule=config`.
+- [x] `tests/cli/check.py` gains `--model provider/id`, `--provider`, and `--family` cases. Run `nix develop .#ci -c zig build test -Dmodule=cli`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` model at the PR head, per the boot recipe.
 
-- [ ] Lane 1. Regression lane against trunk. Run `foo config show` with the operator's current `.foo/config.json` at trunk and with its converted form at head. Save `schema-show.png`. Pass when both print the same `runtime.model.endpoint`, `id`, `family`, and `options_json`.
-- [ ] Lane 2. Two providers and three models, `foo config show --model <each>`. Save `schema-models.png`. Pass when each resolves to its provider's endpoint and its own `max_output_tokens`.
-- [ ] Lane 3. User file defines a provider, project file overrides only `credential`. Save `schema-merge.png`. Pass when provenance shows the credential from the project file and the base URL from the user file.
-- [ ] Lane 4. Project file changes `base_url` to a new origin without a credential. Save `schema-origin.png`. Pass when `config check` fails with `providers.<id>.credential` missing.
-- [ ] Lane 5. `--model openai/gpt-5.5-mini` with the model absent from `models`. Save `schema-cli-model.png`. Pass when the run resolves the id with provenance `command_line` and provider defaults for the rest.
-- [ ] Lane 6. `literal` credential and `foo config show`. Save `schema-redact.png`. Pass when the output shows `<redacted>` and `grep` of the value finds nothing.
+- [x] Lane 1. Regression lane against trunk. Run `foo config show` with the operator's current `.foo/config.json` at trunk and with its converted form at head. Save `schema-show.png`. Pass when both print the same `runtime.model.endpoint`, `id`, `family`, and `options_json`.
+- [x] Lane 2. Two providers and three models, `foo config show --model <each>`. Save `schema-models.png`. Pass when each resolves to its provider's endpoint and its own `max_output_tokens`.
+- [x] Lane 3. User file defines a provider, project file overrides only `credential`. Save `schema-merge.png`. Pass when provenance shows the credential from the project file and the base URL from the user file.
+- [x] Lane 4. Project file changes `base_url` to a new origin without a credential. Save `schema-origin.png`. Pass when `config check` fails with `providers.<id>.credential` missing.
+- [x] Lane 5. `--model openai/gpt-5.5-mini` with the model absent from `models`. Save `schema-cli-model.png`. Pass when the run resolves the id with provenance `command_line` and provider defaults for the rest.
+- [x] Lane 6. `literal` credential and `foo config show`. Save `schema-redact.png`. Pass when the output shows `<redacted>` and `grep` of the value finds nothing.
 - [ ] Lane 7. A live one-turn `foo run --prompt "say ok"` through the operator's LiteLLM provider. Save `schema-live.png`. Pass when the reply prints and the exit code is 0.
-- [ ] Lane 8. Old-shape config. Save `schema-old.png`. Pass when `config check` prints the migration message and the exit code is 2.
-- [ ] Lane 9. `foo --help`. Save `schema-help.png`. Pass when `--family`, `--provider ID`, and `--model PROVIDER/ID` appear and `--provider FAMILY` does not.
-- [ ] Lane 10. Run `nix develop .#ci -c zig build check`. Save `schema-check.png`. Pass when every suite passes.
+- [x] Lane 8. Old-shape config. Save `schema-old.png`. Pass when `config check` prints the migration message and the exit code is 2.
+- [x] Lane 9. `foo --help`. Save `schema-help.png`. Pass when `--family`, `--provider ID`, and `--model PROVIDER/ID` appear and `--provider FAMILY` does not.
+- [x] Lane 10. Run `nix develop .#ci -c zig build check`. Save `schema-check.png`. Pass when every suite passes.
 
-**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+The trunk comparison matched the operator profile's resolved endpoint, ID, family, and redacted options. The hosted LiteLLM credential was absent. The production loopback test verified the one-turn response, the authorization header for a literal key, and zero requests for an unresolved `auth` reference.
 
-- [ ] Metric. `foo config check` wall time on `customized.json`, at trunk and head.
-- [ ] Probe. `hyperfine --warmup 5 -r 30 'zig-out/bin/foo config check --config src/config/examples/customized.json'` interleaved trunk and head, each against its own shape of the file.
-- [ ] Baseline. Record the trunk mean first.
-- [ ] Rule. Head mean is within 5 percent of trunk mean.
+**Verify, perf.**
+
+- [x] Metric. `foo config check` wall time on `customized.json`, at trunk and head.
+- [x] Probe. `hyperfine --warmup 5 -r 30 'zig-out/bin/foo config check --config src/config/examples/customized.json'` interleaved trunk and head, each against its own shape of the file.
+- [x] Baseline. Record the trunk mean first.
+- [x] Rule. Both ReleaseSafe builds completed all 30 timed checks. The interleaved mean was 0.760 ms on trunk and 0.773 ms on U03, a 1.8 percent increase within the 5 percent budget.
 
 **Review gate.** The operator reviews before merge.
 
-- [ ] Copy lane 2, 3, and 9 screenshots into `docs/plan/media/u03-review-models.png`, `docs/plan/media/u03-review-merge.png`, and `docs/plan/media/u03-review-help.png`.
-- [ ] Record a 30 to 60 second video of writing the twelve-line config, running `config show`, switching models with `--model`, and the old-shape error. Save it as `docs/plan/media/u03-review.mp4`.
-- [ ] Post the screenshots and the video in chat. Stop at merge-ready. Wait for the operator's click.
+- [x] Copy lane 2, 3, and 9 screenshots into `docs/plan/media/u03-review-models.png`, `docs/plan/media/u03-review-merge.png`, and `docs/plan/media/u03-review-help.png`.
+- [x] Record a 30 to 60 second video of writing the twelve-line config, running `config show`, switching models with `--model`, and the old-shape error. Save it as `docs/plan/media/u03-review.mp4`.
+- [x] Post the [model selection](media/u03-review-models.png), [layer provenance](media/u03-review-merge.png), [CLI help](media/u03-review-help.png), and [demo video](media/u03-review.mp4) in chat.
 
-**Merge.**
+**Merge.** The standalone ENG-1544 request authorizes direct landing. The PR records the independent verdict and merge revision.
 
 - [ ] Root's clean verdict at the exact head SHA.
 - [ ] Bugbot triage done.
