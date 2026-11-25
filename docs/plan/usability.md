@@ -554,6 +554,7 @@ ReleaseSafe, `foo config check --model openai-codex/x`, 300 interleaved runs, tr
 - [ ] Add `foo models`. It prints every `provider/id` from `providers`, with a readiness column `ready`, `needs <VAR>`, or `needs login`, and marks the configured `model` with `*`. Readiness asks the `CredentialSource` without making a request.
 - [ ] Add `/model <provider/id>` to the TUI input. When idle, it resolves the selection, rebuilds `Session.provider` with the new `Model`, and shows `model: <provider/id>` in the status row. When busy, it returns `busy` like a second prompt does. `/model` with no argument lists the models in the transcript pane with the same readiness column.
 - [ ] Record the switch in the journal as a configuration identity record so `--resume` restores it.
+- [ ] Repeat the catalog's `credential_required` check when `/model` selects a provider. Since U07, an unselected built-in moved to another origin loads with no credential, so a switch must not send to it until it has one.
 
 **You see.**
 

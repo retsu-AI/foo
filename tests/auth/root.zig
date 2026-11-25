@@ -628,6 +628,7 @@ test "xAI device login rejects a verification page that is not HTTPS or not prin
         "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"https://accounts.x.ai/device\",\"verification_uri_complete\":\"javascript:alert(1)\",\"expires_in\":600}",
         "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"file:///etc/passwd\",\"expires_in\":600}",
         "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"https://evil\\u001b]8;;x\\u0007.x.ai/\",\"expires_in\":600}",
+        "{\"device_code\":\"dev-1\",\"user_code\":\"C\\u009b2J\",\"verification_uri\":\"https://accounts.x.ai/device\",\"expires_in\":600}",
         "{\"device_code\":\"dev-1\",\"user_code\":\"C\\u001b[2J\",\"verification_uri\":\"https://accounts.x.ai/device\",\"expires_in\":600}",
     }) |body| {
         var fixture: Fixture = .{ .a = a, .replies = &.{.{ .url = xai_device, .body = body }} };

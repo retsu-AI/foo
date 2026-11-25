@@ -88,6 +88,6 @@ fn https(uri: []const u8) bool {
 /// Both values are printed to the terminal, so control bytes could inject escape sequences.
 fn printable(text: []const u8) bool {
     if (text.len == 0) return false;
-    for (text) |byte| if (byte <= ' ' or byte == 0x7f) return false;
+    for (text) |byte| if (byte <= ' ' or byte >= 0x7f) return false;
     return true;
 }
