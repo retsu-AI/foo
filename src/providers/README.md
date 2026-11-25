@@ -24,7 +24,7 @@ The model endpoint is the complete request URL, including its path. The adapter 
 
 All families send `Content-Type: application/json` and `Accept: text/event-stream`. Custom headers support literal values and explicit environment references. Header names are case-insensitive. Duplicate headers, invalid names or values, and overrides of managed headers return `InvalidInput`. Managed headers include authorization, API keys, content type, accept, Anthropic version, host, content length, transfer encoding, connection, expect, upgrade, TE, trailer, and keep-alive. At most 128 custom headers are accepted.
 
-The built-in OAuth registry is empty. Configure a compatible API-key endpoint and its credential explicitly. [Credential commands](../auth/README.md)
+A stored OAuth credential can carry an account header named by its login flow, such as `chatgpt-account-id` for `openai-codex`. The adapter sends it after `Authorization` and rejects a custom header with the same name. [Credential commands](../auth/README.md)
 
 ## Request options
 

@@ -23,7 +23,7 @@ foo rpc --config profile.json
 
 Repeat `--config` to apply explicit files in command order. Set `--preset coding` to select the coding preset. Use `--provider`, `--model`, `--endpoint`, `--credential-env`, or `--cwd` to override values. See `foo --help` and the [configuration reference](../config/README.md).
 
-Use `foo auth login PROVIDER --api-key` to save a key from an interactive terminal. Use `foo auth list` to see saved provider IDs and `foo auth logout PROVIDER` to remove one. [Credential commands](../auth/README.md)
+Use `foo auth login PROVIDER --api-key` to save a key from an interactive terminal. Use `foo auth login openai-codex` to log in with a ChatGPT subscription, or add `--device` on a host without a browser. Use `foo auth list` to see saved provider IDs and `foo auth logout PROVIDER` to remove one. [Credential commands](../auth/README.md)
 
 `config check` validates the resolved configuration and exits silently on success. `config show` writes redacted effective JSON with provenance. Both commands can run before credentials are available. `run` and `rpc` check declared model credentials and header environment references before opening runtime adapters.
 

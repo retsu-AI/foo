@@ -25,9 +25,32 @@ attempt. The caller supplies the allocator for stored values. Literal and
 environment values borrow their original storage. MCP headers and process
 environment values resolve literals and environment names.
 
-The production OAuth registry is empty. A registered OAuth flow with a stored
-refresh token can refresh once after an HTTP 401. Foo saves the refresh only if
-the previous OAuth entry is still current.
+## Subscription login
+
+`foo auth login openai-codex` logs in with a ChatGPT subscription. Foo prints an
+`https://auth.openai.com/oauth/authorize` URL on stderr and waits on
+`http://localhost:1455/auth/callback`. If no callback arrives within 120
+seconds, or port 1455 is busy, foo switches to the device flow. A callback with
+the wrong `state` ends the login and stores nothing. `--device` starts the
+device flow directly. It prints `https://auth.openai.com/codex/device` and a
+user code to enter there. The built-in `openai-codex` provider then sends the
+token to `https://chatgpt.com/backend-api/codex` with the `chatgpt-account-id`
+header.
+
+Foo refreshes a registered OAuth token when it expires within 60 seconds, and
+once more after an HTTP 401. Foo saves the refresh only if the previous OAuth
+entry is still current.
+
+## Adding a subscription login
+
+`flows` in `root.zig` lists one `Flow` per provider. A `Flow` names the provider
+ID and the capabilities it supports. `browser` and `device` log in, `refresh`
+renews a token, and `account_header` names the header that carries the stored
+`account`. Each provider file builds its capabilities from `oauth.zig`. That file
+holds PKCE, form encoding, token exchange and refresh, the loopback callback, the
+device polling loop, and JWT claim decoding. All HTTP goes through the injected
+`HttpTransport`. To add a provider, write `src/auth/<provider>.zig` that exports
+`flow`. Then append it to `flows` and add its entry to `src/config/defaults.zig`.
 
 ```sh
 nix develop .#ci -c zig build test -Dmodule=auth
