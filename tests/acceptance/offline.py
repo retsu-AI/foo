@@ -93,7 +93,7 @@ class Reply:
 
 class ScriptedHandler(Handler):
     def do_POST(self):
-        if self.path not in ("/chat", "/responses", "/messages") or self.server.replies is None:
+        if self.path not in ("/chat/completions", "/responses", "/messages") or self.server.replies is None:
             return super().do_POST()
 
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -206,7 +206,7 @@ class Acceptance(Production):
             ("anthropic_messages", "/messages", "messages"),
         ):
             with self.subTest(family=family):
-                self.config(model={"family": family, "endpoint": self.origin + route, "id": "fixture"})
+                self.config(provider={"family": family})
                 self.success(("run", "--prompt", prompt), text + "\n")
                 actual_route, request = self.server.requests[-1]
                 self.assertEqual(actual_route, route)
