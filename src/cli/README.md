@@ -23,6 +23,8 @@ foo rpc --config profile.json
 
 Repeat `--config` to apply explicit files in command order. Set `--preset coding` to select the coding preset. Use `--provider`, `--model`, `--endpoint`, `--credential-env`, or `--cwd` to override values. See `foo --help` and the [configuration reference](../config/README.md).
 
+Use `foo auth login PROVIDER --api-key` to save a key from an interactive terminal. Use `foo auth list` to see saved provider IDs and `foo auth logout PROVIDER` to remove one. [Credential commands](../auth/README.md)
+
 `config check` validates the resolved configuration and exits silently on success. `config show` writes redacted effective JSON with provenance. Both commands can run before credentials are available. `run` and `rpc` check declared model credentials and header environment references before opening runtime adapters.
 
 `--resume` selects an existing journal in the configured session directory. The CLI passes the recovered context to the runner and returns an interrupted outcome when the store reports unresolved effects. A fresh launch requests a new session. RPC with a bound store loads committed history before each subsequent prompt. Without a store, each RPC prompt supplies a fresh context.

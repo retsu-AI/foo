@@ -9,7 +9,8 @@ F04 implements streaming Responses, Chat Completions, and Anthropic Messages thr
 | Field | Meaning |
 | --- | --- |
 | `transport` | Required `foo.io.HttpTransport`. |
-| `environment` | Optional borrowed `std.process.Environ.Map` for explicit credential and header references. The adapter never reads the process environment itself. |
+| `credentials` | Optional `auth.CredentialSource` for provider credential references. The default resolves literals and the supplied environment. |
+| `environment` | Optional borrowed `std.process.Environ.Map` for explicit header references and the default credential source. |
 | `retry_attempts` | Additional attempts after eligible failures. Defaults to zero. |
 | `scratch_allocator` | Internal allocation backing, defaults to `std.heap.page_allocator`. Separate from the result allocator. |
 
@@ -19,11 +20,11 @@ The model endpoint is the complete request URL, including its path. The adapter 
 
 ## Credentials and headers
 
-`credential.environment` resolves an API key from `Adapter.environment`. Responses and Chat use `Authorization: Bearer`. Messages uses `x-api-key` and the fixed `anthropic-version: 2023-06-01`. A missing, empty, or invalid key returns `Authentication` before transmission. `credential.none` permits local and explicitly unauthenticated endpoints.
+`credential.environment`, `credential.literal`, and `credential.auth` resolve through the credential source. Responses and Chat send API keys in `Authorization: Bearer`. Messages sends API keys in `x-api-key` and includes `anthropic-version: 2023-06-01`. OAuth access tokens use `Authorization: Bearer` in every family. A missing, empty, or invalid key returns `Authentication` before transmission. `credential.none` permits local and explicitly unauthenticated endpoints.
 
 All families send `Content-Type: application/json` and `Accept: text/event-stream`. Custom headers support literal values and explicit environment references. Header names are case-insensitive. Duplicate headers, invalid names or values, and overrides of managed headers return `InvalidInput`. Managed headers include authorization, API keys, content type, accept, Anthropic version, host, content length, transfer encoding, connection, expect, upgrade, TE, trailer, and keep-alive. At most 128 custom headers are accepted.
 
-Subscription credentials, OAuth flows, automatic credential discovery, and AWS SigV4 are unsupported. A compatible API-key endpoint remains an explicit configuration choice.
+The built-in OAuth registry is empty. Configure a compatible API-key endpoint and its credential explicitly. [Credential commands](../auth/README.md)
 
 ## Request options
 
@@ -81,7 +82,7 @@ Images, audio, video, hosted tools, deprecated Chat function calls, arbitrary st
 
 HTTP 401 and 403 return `Authentication`, 429 returns `RateLimited`, and 5xx returns `Unavailable`. Other unsuccessful statuses return `Rejected`. Successful responses require `text/event-stream`. Malformed JSON, duplicate JSON keys, inconsistent event names, and invalid stream state return `Protocol`. Truncated framing or a missing completion marker returns `Disconnected`. Provider error events preserve their typed error through the HTTP callback interface.
 
-Retries apply only to `Unavailable` or `Disconnected` while delivery is definitely `unsent`, before any response head or bytes. Every attempt shares the original cancellation token and deadline. HTTP failures, authentication failures, certificate or other `IoFailure` errors, and possibly sent requests are not retried. The adapter never restarts a run, repeats a tool, or switches models.
+Transport retries apply to `Unavailable` or `Disconnected` while delivery is `unsent`, before any response head or bytes. An HTTP 401 on a bearer request can trigger one refresh and one retry when the credential source provides a refresh flow. Every attempt shares the original cancellation token and deadline.
 
 ## Verification and remaining qualification
 

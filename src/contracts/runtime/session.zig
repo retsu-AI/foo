@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const foo = @import("foo");
 const cli = @import("cli");
+const auth = @import("auth");
 const configuration = @import("configuration");
 const core = @import("core");
 const providers = @import("providers");
@@ -15,6 +16,7 @@ const io = foo.io;
 pub const App = struct {
     allocator: alloc,
     environ: *const std.process.Environ.Map,
+    authentication: auth.Resolver,
     native: process.Native,
     engine: core.Engine = .{},
     transport: ?foo.transport.Runtime = null,
@@ -182,6 +184,7 @@ pub const Session = struct {
         self.provider = .{
             .transport = self.transport.interface(),
             .environment = app.environ,
+            .credentials = app.authentication.interface(),
             .retry_attempts = effective.runtime.retry_attempts,
             .scratch_allocator = app.allocator,
         };
@@ -568,16 +571,9 @@ fn environment(a: alloc, environ: *const std.process.Environ.Map, values: []cons
     const result = try a.alloc(io.Environment, values.len);
     for (values, result) |entry, *resolved| resolved.* = .{
         .name = entry.name,
-        .value = try environmentValue(environ, entry.value),
+        .value = try auth.resolveValue(environ, entry.value),
     };
     return result;
-}
-
-pub fn environmentValue(environ: *const std.process.Environ.Map, value: foo.config.Value) io.Error![]const u8 {
-    return switch (value) {
-        .literal => |text| text,
-        .environment => |name| environ.get(name) orelse error.Unavailable,
-    };
 }
 
 fn cleanupContext(operation: io.Context, cancellation: *const io.Cancellation, max_ms: u64) io.Context {

@@ -363,6 +363,55 @@ class Production(unittest.TestCase):
         self.assertEqual(self.execute("config", "check").returncode, 0)
         result = self.execute("run", "--prompt", "say ok")
         self.assertEqual((result.returncode, result.stdout), (4, b""))
+        self.assertIn(b"Run foo auth login pending-login", result.stderr)
+        self.assertEqual(len(self.provider_requests()), 1)
+
+    def test_auth_login_uses_a_private_terminal_and_store(self):
+        account = "local"
+        secret = "foo-fixture-terminal-key"
+        self.user_config.parent.mkdir(parents=True)
+        self.user_config.write_text("{", encoding="utf-8")
+        launch = [self.binary, "auth", "login", account, "--api-key"]
+
+        piped = self.invoke(*launch[1:], data=(secret + "\n").encode())
+        self.assertEqual(piped.returncode, 2, piped.stderr)
+        self.assertIn(b"requires an interactive terminal", piped.stderr)
+        rejected = self.invoke("auth", "login", account)
+        self.assertEqual(rejected.returncode, 2, rejected.stderr)
+        self.assertIn(b"no browser login for local; use --api-key", rejected.stderr)
+
+        peer = TerminalPeer(launch, environment=self.env, cwd=self.directory)
+        try:
+            peer.expect("local API key:")
+            peer.send(secret + "\r")
+            self.assertEqual(peer.wait(), 0)
+            if os.name != "nt":
+                self.assertTrue(peer.device.mode_restored())
+        finally:
+            peer.close()
+        self.assertNotIn(secret.encode(), peer.capture())
+
+        stored = self.user_config.with_name("auth.json")
+        if os.name != "nt":
+            self.assertEqual(stored.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads(stored.read_text(encoding="utf-8")), {account: {"type": "api_key", "key": secret}})
+
+        listed = self.invoke("auth", "list")
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertEqual(listed.stdout.decode().splitlines(), ["local  api_key  no expiry"])
+        self.user_config.unlink()
+        self.config(provider={"credential": {"auth": account}})
+        effective = self.invoke("config", "show", "--config", self.profile)
+        self.assertEqual(effective.returncode, 0, effective.stderr)
+        self.assertNotIn(secret.encode(), effective.stdout)
+        self.assertEqual(json.loads(effective.stdout)["runtime"]["model"]["credential"], {"auth": account})
+        self.success(("run", "--prompt", "say ok"), "Reply to say ok\n")
+        self.assertEqual(self.server.provider_authorizations, [f"Bearer {secret}"])
+        self.assertEqual(self.invoke("auth", "logout", account).returncode, 0)
+        self.assertEqual(self.invoke("auth", "list").stdout, b"")
+        denied = self.execute("run", "--prompt", "say ok")
+        self.assertEqual(denied.returncode, 4, denied.stderr)
+        self.assertIn(b"Run foo auth login local", denied.stderr)
         self.assertEqual(len(self.provider_requests()), 1)
 
     def test_journal_and_builtin_read(self):

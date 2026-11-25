@@ -1,6 +1,7 @@
 const std = @import("std");
 const foo = @import("foo");
 const providers = @import("providers");
+const auth = @import("auth");
 const support = @import("support");
 const io = foo.io;
 const provider = foo.provider;
@@ -60,6 +61,8 @@ const Wire = struct {
     allocator: std.mem.Allocator,
     body: []const u8,
     status: u16 = 200,
+    next_status: ?u16 = null,
+    first_authorization: ?[]const u8 = null,
     content_type: []const u8 = "text/event-stream; charset=utf-8",
     chunk_bytes: usize = 7,
     fail_unsent: usize = 0,
@@ -91,8 +94,9 @@ const Wire = struct {
             };
         }
         self.headers = headers;
+        if (self.calls == 1) self.first_authorization = self.header("authorization");
         try sink.head_fn(sink.context, operation, .{
-            .status = self.status,
+            .status = if (self.calls == 1) self.status else self.next_status orelse self.status,
             .headers = &.{.{ .name = "Content-Type", .value = self.content_type }},
         });
         if (self.body.len > request.max_response_bytes) return error.LimitExceeded;
@@ -778,4 +782,79 @@ test "a single invocation budget allows a larger tool catalog" {
     const sent = try parse(allocator, wire.request_body);
     try equal(2, (try member(sent, "tools")).array.items.len);
     try equal(1, wire.calls);
+}
+
+const Refresh = struct {
+    var calls: usize = 0;
+
+    fn login(_: std.mem.Allocator, _: io.Context) auth.Error!auth.OAuth {
+        return error.Authentication;
+    }
+
+    fn refresh(_: std.mem.Allocator, _: io.Context, current: auth.OAuth, token: []const u8) auth.Error!auth.OAuth {
+        if (!std.mem.eql(u8, current.access, "first-access") or !std.mem.eql(u8, token, "first-refresh")) return error.InvalidInput;
+        calls += 1;
+        return .{ .access = "second-access", .refresh = "second-refresh", .expires_ms = 200, .account = current.account };
+    }
+
+    const flow = auth.Flow{ .provider = "gateway", .login_fn = login, .refresh_fn = refresh };
+};
+
+test "only a bearer with a registered refresh token can retry an HTTP 401" {
+    const cases = [_]struct {
+        initial_status: u16,
+        next_status: u16 = 200,
+        refresh_token: ?[]const u8 = "first-refresh",
+        registered: bool = true,
+        api_key: bool = false,
+        refreshed: bool,
+    }{
+        .{ .initial_status = 401, .refreshed = true },
+        .{ .initial_status = 401, .next_status = 401, .refreshed = true },
+        .{ .initial_status = 401, .refresh_token = null, .refreshed = false },
+        .{ .initial_status = 401, .registered = false, .refreshed = false },
+        .{ .initial_status = 403, .refreshed = false },
+        .{ .initial_status = 401, .api_key = true, .refreshed = false },
+    };
+    for (cases) |case| {
+        var tmp = std.testing.tmpDir(.{ .iterate = true });
+        defer tmp.cleanup();
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var run: Run = .{ .allocator = a };
+        const operation: io.Context = .{ .io = std.testing.io, .cancellation = &run.cancellation, .clock = run.clock.interface() };
+        const store = auth.Store{ .directory = try tmp.dir.realPathFileAlloc(operation.io, ".", a) };
+        try store.put(a, operation, "gateway", if (case.api_key) .{ .api_key = "first-access" } else .{ .oauth = .{
+            .access = "first-access",
+            .refresh = case.refresh_token,
+            .expires_ms = 100,
+            .account = "fixture-account",
+        } });
+        var wire: Wire = .{
+            .allocator = a,
+            .body = @embedFile("fixtures/chat.sse"),
+            .status = case.initial_status,
+            .next_status = case.next_status,
+        };
+        const resolver = auth.Resolver{ .store = store, .registry = if (case.registered) &.{Refresh.flow} else &.{} };
+        var adapter: providers.Adapter = .{ .transport = wire.transport(), .credentials = resolver.interface(), .retry_attempts = 2 };
+        var request = requestFor(.openai_chat, "https://fixture.invalid/v1/chat/completions");
+        request.model.credential = .{ .auth = "gateway" };
+
+        Refresh.calls = 0;
+        if (case.refreshed and case.next_status == 200) {
+            _ = try run.stream(&adapter, request);
+        } else {
+            try std.testing.expectError(error.Authentication, run.stream(&adapter, request));
+        }
+        try equal(if (case.refreshed) @as(usize, 2) else 1, wire.calls);
+        try equal(if (case.refreshed) @as(usize, 1) else 0, Refresh.calls);
+        try equal(io.Delivery.possibly_sent, run.delivery);
+        try same("Bearer first-access", wire.first_authorization.?);
+        try same(if (case.refreshed) "Bearer second-access" else "Bearer first-access", wire.header("authorization").?);
+        var snapshot = try store.read(a, operation);
+        defer snapshot.deinit();
+        if (!case.api_key) try equal(if (case.refreshed) @as(i64, 200) else 100, snapshot.entries.get("gateway").?.oauth.expires_ms);
+    }
 }

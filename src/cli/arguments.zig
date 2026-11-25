@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const foo = @import("foo");
+const auth = @import("auth");
 const config = @import("configuration");
 
 pub const max_prompt_bytes = 1024 * 1024;
@@ -15,6 +16,11 @@ pub const McpCommand = struct {
         get: struct { id: []const u8, arguments_json: []const u8 = "" },
     },
 };
+pub const AuthCommand = union(enum) {
+    list,
+    login: struct { provider: []const u8, api_key: bool },
+    logout: []const u8,
+};
 pub const Action = union(enum) {
     help,
     version,
@@ -23,6 +29,7 @@ pub const Action = union(enum) {
     tui,
     acp,
     mcp: McpCommand,
+    auth: AuthCommand,
     check,
     show,
 };
@@ -32,7 +39,7 @@ pub const Command = struct {
     config: config.Input,
 };
 
-const Mode = enum { run, rpc, tui, acp, mcp, config };
+const Mode = enum { run, rpc, tui, acp, mcp, config, auth };
 const ConfigMode = enum { check, show };
 const McpMode = enum { list, get };
 const Flag = enum {
@@ -73,6 +80,7 @@ pub fn parseWithDiscovery(
     const mode = std.meta.stringToEnum(Mode, argv[0]) orelse return error.InvalidArguments;
     var offset: usize = 1;
     if (argv.len == 2 and isHelp(argv[1])) return .{ .action = .help, .config = input };
+    if (mode == .auth) return .{ .action = .{ .auth = try parseAuth(argv[1..]) }, .config = input };
     const config_mode: ?ConfigMode = if (mode == .config) blk: {
         if (offset == argv.len) return error.InvalidArguments;
         offset += 1;
@@ -145,7 +153,10 @@ pub fn parseWithDiscovery(
         if (used.contains(.@"--approve")) {
             try prependFile(a, &layers, try std.fs.path.join(a, &.{ cwd, ".foo", "config.json" }));
         }
-        if (try userConfig(a, variables)) |path| try prependFile(a, &layers, path);
+        if (try userConfigDirectory(a, variables)) |directory| {
+            defer a.free(directory);
+            try prependFile(a, &layers, try std.fs.path.join(a, &.{ directory, "config.json" }));
+        }
     }
     input.layers = layers.items;
     return .{
@@ -155,6 +166,7 @@ pub fn parseWithDiscovery(
             .tui => .tui,
             .acp => .acp,
             .mcp => .{ .mcp = mcp_command.? },
+            .auth => unreachable,
             .config => switch (config_mode.?) {
                 .check => .check,
                 .show => .show,
@@ -165,20 +177,20 @@ pub fn parseWithDiscovery(
     };
 }
 
-fn userConfig(a: std.mem.Allocator, environ: *const std.process.Environ.Map) Error!?[]const u8 {
+pub fn userConfigDirectory(a: std.mem.Allocator, environ: *const std.process.Environ.Map) Error!?[]const u8 {
     const path = std.fs.path;
     if (absoluteDirectory(environ.get("FOO_CONFIG_DIR"))) |directory| {
-        return try path.join(a, &.{ directory, "config.json" });
+        return try a.dupe(u8, directory);
     }
     if (builtin.os.tag == .windows) {
         const app_data = absoluteDirectory(environ.get("APPDATA")) orelse return null;
-        return try path.join(a, &.{ app_data, "foo", "config.json" });
+        return try path.join(a, &.{ app_data, "foo" });
     }
     if (absoluteDirectory(environ.get("XDG_CONFIG_HOME"))) |directory| {
-        return try path.join(a, &.{ directory, "foo", "config.json" });
+        return try path.join(a, &.{ directory, "foo" });
     }
     const home = absoluteDirectory(environ.get("HOME")) orelse return null;
-    return try path.join(a, &.{ home, ".config", "foo", "config.json" });
+    return try path.join(a, &.{ home, ".config", "foo" });
 }
 
 fn absoluteDirectory(value_or_null: ?[]const u8) ?[]const u8 {
@@ -193,6 +205,25 @@ fn absoluteDirectory(value_or_null: ?[]const u8) ?[]const u8 {
 fn prependFile(a: std.mem.Allocator, layers: *std.ArrayList(config.Layer), path: []const u8) Error!void {
     if (layers.items.len == config.max_layers) return error.LimitExceeded;
     try layers.insert(a, 0, .{ .source = .file, .data = .{ .optional_file = path } });
+}
+
+fn parseAuth(args: []const []const u8) Error!AuthCommand {
+    if (args.len == 0) return error.InvalidArguments;
+    const action = std.meta.stringToEnum(std.meta.Tag(AuthCommand), args[0]) orelse return error.InvalidArguments;
+    if (action == .list) return if (args.len == 1) .list else error.InvalidArguments;
+    if (args.len < 2 or !auth.validProviderId(args[1])) return error.InvalidArguments;
+    return switch (action) {
+        .list => unreachable,
+        .logout => if (args.len == 2) .{ .logout = args[1] } else error.InvalidArguments,
+        .login => .{ .login = .{
+            .provider = args[1],
+            .api_key = switch (args.len) {
+                2 => false,
+                3 => if (std.mem.eql(u8, args[2], "--api-key")) true else return error.InvalidArguments,
+                else => return error.InvalidArguments,
+            },
+        } },
+    };
 }
 
 fn parseMcp(argv: []const []const u8, offset: *usize) Error!McpCommand {

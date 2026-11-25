@@ -1,6 +1,7 @@
 const std = @import("std");
 const foo = @import("foo");
 const cli = @import("cli");
+const auth = @import("auth");
 const configuration = @import("configuration");
 const tui = @import("tui");
 const acp = @import("acp");
@@ -46,9 +47,15 @@ fn run(init: std.process.Init) !cli.Exit {
         .clock = .{ .context = &io, .now_fn = now },
         .cancellation = &cancellation,
     };
+    const config_directory = try cli.arguments.userConfigDirectory(init.gpa, init.environ_map);
+    defer if (config_directory) |directory| init.gpa.free(directory);
     var app: runtime.App = .{
         .allocator = init.gpa,
         .environ = init.environ_map,
+        .authentication = .{
+            .environment = init.environ_map,
+            .store = if (config_directory) |directory| .{ .directory = directory } else null,
+        },
         .native = .{ .environ = init.minimal.environ },
     };
     defer app.deinit();
@@ -63,6 +70,7 @@ fn run(init: std.process.Init) !cli.Exit {
         .environment_json = environment_json,
         .discover_config = true,
         .runtime = app.cliRuntime(),
+        .authentication = app.authentication,
     });
 }
 
@@ -126,9 +134,10 @@ fn printMcp(operation: foo.io.Context, json: []const u8) foo.io.Error!void {
 }
 
 fn runTui(app: *runtime.App, operation: foo.io.Context, settings: configuration.Effective, mode: cli.SessionMode) cli.Exit {
-    if (cli.missingCredential(settings.runtime.model, app.environ) != null) {
-        report(operation.io, "missing or invalid configured model credential");
-        return .usage;
+    {
+        var check = std.heap.ArenaAllocator.init(app.allocator);
+        defer check.deinit();
+        if (cli.checkCredentials(check.allocator(), operation, .{ .input = .stdin(), .output = .stdout(), .diagnostic = .stderr() }, settings.runtime.model, &app.authentication)) |exit| return exit;
     }
     if (mode == .@"resume" and settings.launch.session.directory == null) {
         report(operation.io, "--resume requires a configured session directory");
@@ -221,7 +230,15 @@ const AcpFactory = struct {
             error.InvalidConfiguration, error.InvalidJson, error.UnsupportedVersion => error.InvalidInput,
             else => |shared| shared,
         };
-        if (cli.missingCredential(settings.runtime.model, self.app.environ) != null) return error.AuthenticationRequired;
+        {
+            var check = std.heap.ArenaAllocator.init(allocator);
+            defer check.deinit();
+            const missing = cli.missingCredential(check.allocator(), operation, settings.runtime.model, &self.app.authentication) catch |err| return switch (err) {
+                error.Authentication, error.InvalidStore, error.UnsafeStore, error.InsecurePermissions => error.AuthenticationRequired,
+                else => |shared| shared,
+            };
+            if (missing != null) return error.AuthenticationRequired;
+        }
         try validateEditorServers(self.app.environ, settings.runtime.mcp_servers, input.editor_servers);
         const launch_cwd = settings.runtime.cwd;
         settings.runtime.cwd = input.cwd;
@@ -278,7 +295,7 @@ fn matchingArgv(trusted: []const []const u8, supplied: []const []const u8) bool 
 fn matchingValues(environ: *const std.process.Environ.Map, trusted: anytype, supplied: @TypeOf(trusted), comptime ignore_case: bool) bool {
     if (trusted.len != supplied.len) return false;
     for (trusted) |expected| {
-        const value = runtime.environmentValue(environ, expected.value) catch return false;
+        const value = auth.resolveValue(environ, expected.value) catch return false;
         for (supplied) |actual| {
             const same_name = if (ignore_case) std.ascii.eqlIgnoreCase(expected.name, actual.name) else eql(expected.name, actual.name);
             if (same_name and actual.value == .literal and eql(value, actual.value.literal)) break;

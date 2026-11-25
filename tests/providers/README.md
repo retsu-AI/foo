@@ -3,13 +3,10 @@
 Run the deterministic fixtures with Zig 0.17.1.
 
 ```sh
-nix develop .#ci -c zig test \
-  --dep foo --dep providers --dep support -Mroot=tests/providers/root.zig \
-  -Mfoo=src/lib.zig --dep foo -Mproviders=src/providers/root.zig \
-  --dep foo -Msupport=tests/support/root.zig
+nix develop .#ci -c zig build test -Dmodule=providers
 ```
 
-For ReleaseSafe, add `-O ReleaseSafe` before each `-M` argument. The integrator owns root build registration. The fixtures call the production provider interface and record request bytes, headers, fragmented SSE, deltas, terminal responses, and delivery states.
+For ReleaseSafe, add `-Doptimize=ReleaseSafe`. The fixtures call the production provider interface and record request bytes, headers, fragmented SSE, deltas, terminal responses, and delivery states.
 
 ## Test a LiteLLM tool continuation
 
