@@ -63,7 +63,7 @@ const Wire = struct {
     status: u16 = 200,
     next_status: ?u16 = null,
     first_authorization: ?[]const u8 = null,
-    content_type: []const u8 = "text/event-stream; charset=utf-8",
+    content_type: ?[]const u8 = "text/event-stream; charset=utf-8",
     retry_after: ?[]const u8 = null,
     chunk_bytes: usize = 7,
     fail_unsent: usize = 0,
@@ -97,12 +97,12 @@ const Wire = struct {
         self.headers = headers;
         if (self.calls == 1) self.first_authorization = self.header("authorization");
         const response_headers = [_]io.Header{
-            .{ .name = "Content-Type", .value = self.content_type },
             .{ .name = "Retry-After", .value = self.retry_after orelse "" },
+            .{ .name = "Content-Type", .value = self.content_type orelse "" },
         };
         try sink.head_fn(sink.context, operation, .{
             .status = if (self.calls == 1) self.status else self.next_status orelse self.status,
-            .headers = response_headers[0..if (self.retry_after == null) 1 else 2],
+            .headers = response_headers[@intFromBool(self.retry_after == null)..if (self.content_type == null) 1 else 2],
         });
         if (self.body.len > request.max_response_bytes) return error.LimitExceeded;
         var offset: usize = 0;
@@ -885,6 +885,9 @@ test "only a bearer with a registered refresh token can retry an HTTP 401" {
     }
 }
 
+// The live backend omits Content-Type and interleaves response.metadata (checked 2026-11-25).
+const codex_body = "event: response.metadata\ndata: {\"type\":\"response.metadata\",\"metadata\":{}}\n\n" ++ @embedFile("fixtures/responses.sse");
+
 test "openai-codex sends the stored bearer, account header and Responses body to the ChatGPT backend" {
     var tmp = std.testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
@@ -900,7 +903,7 @@ test "openai-codex sends the stored bearer, account header and Responses body to
         .expires_ms = std.math.maxInt(i64),
         .account = "codex-account",
     } });
-    var wire: Wire = .{ .allocator = a, .body = profiles[0].body };
+    var wire: Wire = .{ .allocator = a, .body = codex_body, .content_type = null };
     const resolver = auth.Resolver{ .store = store };
     var adapter: providers.Adapter = .{ .transport = wire.transport(), .credentials = resolver.interface() };
     var request = requestFor(.openai_responses, "https://chatgpt.com/backend-api/codex/responses");

@@ -204,6 +204,7 @@ const Exchange = struct {
             500...599 => return self.fail(error.Unavailable),
             else => return self.fail(error.Rejected),
         }
+        // The ChatGPT Codex backend streams without a content type; the SSE framing still validates the body.
         var content_type_seen = false;
         for (value.headers) |header| {
             if (!std.ascii.eqlIgnoreCase(header.name, "content-type")) continue;
@@ -212,7 +213,6 @@ const Exchange = struct {
             const end = std.mem.indexOfScalar(u8, header.value, ';') orelse header.value.len;
             if (!std.ascii.eqlIgnoreCase(std.mem.trim(u8, header.value[0..end], " \t"), "text/event-stream")) return self.fail(error.Protocol);
         }
-        if (!content_type_seen) return self.fail(error.Protocol);
     }
 
     fn body(context: *anyopaque, operation: io.Context, bytes: []const u8) io.Error!void {
