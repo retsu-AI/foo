@@ -1,9 +1,12 @@
 {
   "version": 1,
-  "model": {
-    "family": "openai_responses",
-    "endpoint": "https://fixture.invalid/v1/responses",
-    "id": "explicit-model",
-    "credential": {"environment": "MODEL_API_KEY"}
-  }
+  "providers": {
+    "openai": {
+      "family": "openai_responses",
+      "base_url": "https://fixture.invalid/v1",
+      "credential": {"environment": "MODEL_API_KEY"},
+      "models": {"explicit-model": {}}
+    }
+  },
+  "model": "openai/explicit-model"
 }

@@ -21,7 +21,7 @@ pub fn effectiveJson(allocator: std.mem.Allocator, settings: Effective) Error![]
 
 Only `file`, `environment`, and `command_line` are accepted layer sources. The `.file` and `.optional_file` data variants require the `file` source. An `.optional_file` layer is skipped when the file is missing. An environment layer is a JSON patch supplied by the caller after its own declared environment handling. Only caller-supplied environment patches take part in precedence.
 
-`Effective.runtime` is `foo.config.Resolved`. `Effective.launch` contains `process`, `session`, `tui`, and `custom_tools`. `Effective.prompt_files` lists normalized surviving prompt filenames. Strings and arrays in the result remain valid until the caller frees its arena. Use one caller-owned arena for each resolution and discard it after the final consumer finishes. A failed resolution can leave allocations in that arena.
+`Effective.runtime` is `foo.config.Resolved` and contains the flattened model. `Effective.providers` retains the provider catalog. `Effective.launch` contains `process`, `session`, `tui`, and `custom_tools`. `Effective.prompt_files` lists normalized surviving prompt filenames. Strings and arrays in the result remain valid until the caller frees its arena. Use one caller-owned arena for each resolution and discard it after the final consumer finishes. A failed resolution can leave allocations in that arena.
 
 `resolve` clears the diagnostic before work. Schema, file, and limit failures include a setting `path`, `source`, `location`, and a typed `reason`. Diagnostics never include setting values. Syntax and duplicate-key errors use `$` because the JSON parser does not expose a reliable field path. Unsupported versions use `version`. Cancellation, deadline, and allocation errors return directly.
 
@@ -39,7 +39,7 @@ The executable applies file layers in this order. Each layer takes precedence ov
 2. Approved project `.foo/config.json`.
 3. `--config` files in command order.
 
-`FOO_CONFIG_JSON` and CLI field overrides apply after the files.
+`FOO_CONFIG_JSON` and CLI overrides apply after the files. `--model PROVIDER/ID` selects the model and accepts an unlisted model ID under an existing provider. `--provider ID` selects that provider's first model in declaration order. You can combine it with a bare `--model ID`. A qualified `--model PROVIDER/ID` takes precedence. `--family FAMILY` and `--credential-env NAME` override the selected provider. `--endpoint URL` overrides the selected model's complete POST URL.
 
 The resolver applies these layers in order, regardless of the order in `Input.layers`:
 
@@ -49,24 +49,25 @@ The resolver applies these layers in order, regardless of the order in `Input.la
 4. Environment layers, preserving their relative input order.
 5. Command-line layers, preserving their relative input order.
 
-Each supplied layer must be valid, including layers later overridden. Unknown and duplicate keys are rejected throughout the JSON tree. The exceptions to unknown-key validation are `model.options` and each custom tool's `schema`, whose semantics belong to their consumers.
+Each supplied layer must be valid, including layers later overridden. Unknown and duplicate keys are rejected throughout the JSON tree. Provider and model `options` and custom tool `schema` contain keys defined by their consumers.
 
-Object fields merge individually for `model`, `limits`, `process`, `session`, `session.limits`, `tui`, `tui.keys`, and `tui.colors`. All arrays replace. `model.options` and `system_prompt` replace as whole objects. Each MCP server and custom tool is part of its containing replacement list.
+Provider entries and their model entries merge field by field. A later layer can add entries or remove them with `null`. Object fields also merge individually for `limits`, `process`, `session`, `session.limits`, `tui`, `tui.keys`, and `tui.colors`. Arrays, `options` objects, and `system_prompt` replace as a unit across layers.
 
-Omitting a setting retains its earlier value. `[]` clears a list, `false` disables a boolean, and an empty prompt stays empty. Null is accepted only for `model.credential`, `session.directory`, and an MCP `revision`. Null clears the credential or session directory, or leaves MCP revision negotiation to F06.
+Omitting a setting retains its earlier value. `[]` clears a list, `false` disables a boolean, and an empty prompt stays empty. Use `null` to clear a credential, a model's optional name or endpoint, or the session directory. An MCP `revision` of `null` lets the client negotiate the revision.
 
-`runtime.provenance` records the winning source and location for every configurable scalar or atomic replacement value, including defaults. Changing a model family or endpoint origin clears inherited credentials and headers before applying explicit credentials and headers from that same layer. Origin compares scheme and host without case and treats omitted HTTP/HTTPS ports as 80/443. Changing only the path or query on the same origin retains authentication.
+`runtime.provenance` records the winning source and location. Derived model fields also show the input key where applicable. Changing a provider's family or base URL origin clears inherited credentials and headers before the new layer's authentication settings apply. If an origin change clears an existing credential, supply a new credential or set it to `null` for an unauthenticated connection. Origin compares scheme, host, and port, with defaults of 80 for HTTP and 443 for HTTPS. Model endpoint overrides on another origin drop inherited authentication. Use `--credential-env` to supply a credential explicitly for a CLI endpoint override.
 
 The neutral defaults contain an empty prompt, no selected tools, no custom tools, no MCP servers, no session directory, no inherited process environment, local backends, and denied tool permissions. The coding preset supplies `coding_prompt` from `root.zig` and selects `read`, `edit`, `write`, and `exec`. The caller supplies the model and any credentials or permission overrides. The preset uses the built-in prompt text.
 
 ## Profile schema
 
-The root is a JSON object. All settings are optional in an individual patch. The final configuration requires `model.family`, `model.endpoint`, and `model.id`. File-backed layers accept static JSON from paths supplied by the caller.
+The root is a JSON object. All settings are optional in an individual patch. After merging, the configuration requires a selected provider and model.
 
 | Root key | Value | Default or behavior |
 | --- | --- | --- |
 | `version` | Integer `1` | Omitted means version 1 |
-| `model` | Object described below | Family, endpoint, and ID required after merging |
+| `providers` | Object keyed by provider ID | Each provider defines its protocol, base URL, and models |
+| `model` | String `provider/id` | Selects a configured model |
 | `cwd` | Nonempty path string | Invocation directory |
 | `system_prompt` | Atomic object with `text` and `append_files` | Empty text and list |
 | `enabled_tools` | Unique nonempty string array | `[]`; names remain data for tool owners |
@@ -83,19 +84,29 @@ The root is a JSON object. All settings are optional in an individual patch. The
 
 NUL is rejected in strings used by the schema. JSON text must be UTF-8. Integer settings reject fractional or exponent notation and values outside their target integer type. Configuration parsing bounds cannot be raised by `limits`.
 
-### Model
+### Provider and model entries
 
 | Key | Value | Default |
 | --- | --- | --- |
 | `family` | `openai_responses`, `openai_chat`, or `anthropic_messages` | Required |
-| `endpoint` | Complete HTTP or HTTPS POST URL | Required |
-| `id` | Nonempty string | Required |
-| `credential` | Null or `{"environment":"VARIABLE_NAME"}` | Null |
+| `base_url` | HTTP or HTTPS base URL | Required |
+| `credential` | `{"environment":"VARIABLE_NAME"}`, `{"literal":"value"}`, `{"auth":"provider-id"}`, or null | Null |
 | `headers` | Header array described below | `[]` |
-| `options` | JSON object, retained as `runtime.model.options_json` | `{}` |
+| `options` | JSON object of provider defaults | `{}` |
+| `models` | Object keyed by model ID | `{}` |
+
+Each value under `providers.<id>.models` accepts these fields.
+
+| Key | Value | Default |
+| --- | --- | --- |
+| `name` | Display name | Null |
+| `endpoint` | Complete HTTP or HTTPS POST URL | Use the provider route |
+| `options` | JSON object of model overrides | `{}` |
 | `max_output_tokens` | Positive unsigned 32-bit integer | `4096` |
 
-Endpoints reject missing hosts, user information, fragments, whitespace, control bytes, backslashes, and port zero. The resolver lowercases the URL scheme and preserves the remaining URL bytes. Effective output hides query values. Choose the protocol family explicitly and supply the complete POST URL. F04 owns the option allowlist and protocol-specific option validation. See [provider routes](../providers/routes.md) for endpoint and model selection.
+The resolver appends `/responses`, `/chat/completions`, or `/messages` to the base URL path for the matching family. When a model supplies an endpoint, the resolver uses that URL as written. URLs reject missing hosts, user information, fragments, whitespace, control bytes, backslashes, and port zero. The resolver lowercases the URL scheme. A model's option keys override the provider's keys in `runtime.model.options_json`. The provider adapter validates the combined options. [Provider routes](../providers/routes.md)
+
+Environment credentials resolve when the provider needs to authenticate. A literal credential supplies a fixed key. An `auth` credential records a token store reference for U05 and cannot authenticate a request in this version.
 
 Header entries have exactly `name` and `value`. Header names use HTTP token characters and must be unique without regard to case. Values are literal strings or `{"environment":"VARIABLE_NAME"}` references. Literal header values reject line breaks and control characters other than tab.
 
@@ -188,7 +199,7 @@ The host creates or opens the directory explicitly and passes it to F07. Journal
 
 Configuration limits are fixed at 64 layers, 1 MiB per JSON layer, 8 MiB total JSON, 64 open JSON containers, 1 MiB final prompt, and 16 MiB serialized effective output. Limits apply before parsing or retaining oversized file contents. Configuration allocation is proportional to bounded JSON trees and surviving prompt data. `operation.check()` runs before work, between layers, between file reads, and before return.
 
-`effectiveJson` emits a diagnostic JSON object with `runtime`, `launch`, and `prompt_files`. It retains `runtime.provenance` and uses the shared contract's union representation. Use the result for inspection. Load settings with the profile schema above. It replaces all literal header and environment values with `<redacted>`, keeps environment reference names, hides endpoint and MCP URL queries, and replaces every nonempty model-options object with a redaction marker. Other values, including prompts, command arguments, descriptions, paths, and schemas, remain visible; credential values belong in declared credential or environment fields.
+`effectiveJson` emits `providers` with nested models and the selected model under `runtime.model`. It also emits launch settings, prompt filenames, and provenance. It replaces literal credentials, header values, and environment values with `<redacted>`. It keeps reference names, hides URL queries, and redacts nonempty options. Use the profile schema above for loadable configuration.
 
 Output size is counted before allocating the exact result buffer. The serializer uses only the supplied settings. A failed output bound returns `LimitExceeded`.
 
@@ -196,4 +207,4 @@ Output size is counted before allocating the exact result buffer. The serializer
 
 [Minimal profile](examples/minimal.json) contains only the explicit provider selection. [Customized profile](examples/customized.json) includes prompt, tool, MCP, process, session, and TUI settings. The examples use fixture hosts and no real credentials. [The acceptance suite](../../tests/config/README.md) documents its direct Zig command and includes a redacted effective fixture.
 
-Root test registration and frontend wiring remain F12 work. Provider adapters validate model options before sending a request. The tool registry validates executable tool schemas before admitting a tool.
+Provider adapters validate model options before sending a request. The tool registry validates executable tool schemas before admitting a tool.

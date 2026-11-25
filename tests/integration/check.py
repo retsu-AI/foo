@@ -22,6 +22,10 @@ LEGACY = "2025-11-25"
 MODERN = "2026-07-28"
 
 
+def select_model(model):
+    return {"model": f"local/{model}", "providers": {"local": {"models": {model: {}}}}}
+
+
 def mcp_result(request):
     match request["method"]:
         case "initialize":
@@ -133,7 +137,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.server.requests.append((self.path, request))
-        if self.path == "/chat":
+        if self.path == "/chat/completions":
+            self.server.provider_authorizations.append(self.headers.get("Authorization"))
             self.respond(200, chat_reply(request), "text/event-stream")
         elif self.path in ("/mcp", "/modern") and "id" in request:
             modern = self.path == "/modern"
@@ -157,6 +162,7 @@ class Production(unittest.TestCase):
         self.profile = self.directory / "profile.json"
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.requests = []
+        self.server.provider_authorizations = []
         worker = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05})
         worker.start()
 
@@ -180,9 +186,15 @@ class Production(unittest.TestCase):
             self.env.pop(name, None)
         self.config()
 
-    def config(self, **options):
+    def config(self, *, provider=None, **options):
         self.profile.write_text(json.dumps({
-            "model": {"family": "openai_chat", "endpoint": self.origin + "/chat", "id": "fixture"},
+            "providers": {"local": {
+                "family": "openai_chat",
+                "base_url": self.origin,
+                "models": {"fixture": {}},
+                **(provider or {}),
+            }},
+            "model": "local/fixture",
             "cwd": str(self.directory),
             **options,
         }), encoding="utf-8")
@@ -216,7 +228,7 @@ class Production(unittest.TestCase):
         self.assertEqual(result.stderr, b"")
 
     def provider_requests(self):
-        return [request for path, request in self.server.requests if path == "/chat"]
+        return [request for path, request in self.server.requests if path == "/chat/completions"]
 
     def test_help_and_version(self):
         self.user_config.parent.mkdir(parents=True)
@@ -231,8 +243,8 @@ class Production(unittest.TestCase):
             self.assertEqual(result.stderr, b"")
 
     def test_discovers_user_config_from_platform_default_and_override(self):
+        self.config(cwd="work", provider={"models": {"fixture": {}, "home": {}, "override": {}}})
         settings = json.loads(self.profile.read_text(encoding="utf-8"))
-        settings["cwd"] = "work"
         self.write_config(self.user_config, settings)
         result = self.effective()
         self.assertEqual(Path(result["cwd"]), self.user_config.parent / "work")
@@ -240,7 +252,7 @@ class Production(unittest.TestCase):
 
         if os.name != "nt":
             self.write_config(self.home / ".config" / "foo" / "config.json", {
-                **settings, "model": {**settings["model"], "id": "home"},
+                **settings, "model": "local/home",
             })
             result = self.effective(env={**self.env, "XDG_CONFIG_HOME": "relative"})
             self.assertEqual(result["model"]["id"], "home")
@@ -250,17 +262,18 @@ class Production(unittest.TestCase):
         self.assertEqual(result["model"]["id"], "fixture")
 
         override = self.directory / "explicit config directory"
-        self.write_config(override / "config.json", {**settings, "model": {**settings["model"], "id": "override"}})
+        self.write_config(override / "config.json", {**settings, "model": "local/override"})
         result = self.effective(env={**self.env, "FOO_CONFIG_DIR": str(override)})
         self.assertEqual((result["model"]["id"], Path(result["cwd"])), ("override", override / "work"))
 
     def test_project_config_requires_approval_and_layers_in_order(self):
         settings = json.loads(self.profile.read_text(encoding="utf-8"))
-        settings["model"]["credential"] = {"environment": "FOO_TEST_USER_KEY"}
-        settings["model"]["headers"] = [{"name": "X-Fixture", "value": "fixture-user-header"}]
+        settings["providers"]["local"]["credential"] = {"environment": "FOO_TEST_USER_KEY"}
+        settings["providers"]["local"]["headers"] = [{"name": "X-Fixture", "value": "fixture-user-header"}]
         self.write_config(self.user_config, settings)
         self.write_config(self.project_config, {
-            "model": {"id": "project", "endpoint": "https://project.invalid/chat"},
+            "model": "local/project",
+            "providers": {"local": {"base_url": "https://project.invalid", "models": {"project": {}}}},
             "cwd": "project-work", "permissions": "allow",
         })
         (self.directory / "foo.json").write_text("{", encoding="utf-8")
@@ -269,6 +282,12 @@ class Production(unittest.TestCase):
         self.assertEqual(unapproved["permissions"], "deny")
         self.assertEqual(unapproved["model"]["credential"], {"environment": "FOO_TEST_USER_KEY"})
 
+        missing = self.invoke("config", "check", "--approve")
+        self.assertEqual(missing.returncode, 2, missing.stderr)
+        self.assertIn(b"config missing_value from file at providers.local.credential", missing.stderr)
+        project = json.loads(self.project_config.read_text(encoding="utf-8"))
+        project["providers"]["local"]["credential"] = None
+        self.write_config(self.project_config, project)
         approved = self.effective("--approve")
         self.assertEqual(approved["permissions"], "allow")
         self.assertEqual(approved["model"]["id"], "project")
@@ -282,13 +301,13 @@ class Production(unittest.TestCase):
 
         first = self.directory / "first.json"
         second = self.directory / "second.json"
-        self.write_config(first, {"model": {"id": "first"}})
-        self.write_config(second, {"model": {"id": "second"}})
+        self.write_config(first, select_model("first"))
+        self.write_config(second, select_model("second"))
         files = ("--approve", "--config", first, "--config", second)
         self.assertEqual(self.effective(*files)["model"]["id"], "second")
-        env = {**self.env, "FOO_CONFIG_JSON": '{"model":{"id":"environment"}}'}
+        env = {**self.env, "FOO_CONFIG_JSON": json.dumps(select_model("environment"))}
         self.assertEqual(self.effective(*files, env=env)["model"]["id"], "environment")
-        self.assertEqual(self.effective(*files, "--model", "flag", env=env)["model"]["id"], "flag")
+        self.assertEqual(self.effective(*files, "--model", "local/flag", env=env)["model"]["id"], "flag")
 
         child = self.directory / "child"
         child.mkdir()
@@ -334,6 +353,17 @@ class Production(unittest.TestCase):
         self.success(("run", "--stdin"), "Reply to hello\n", b"hello\n")
         self.assertEqual([call.get("tools", []) for call in self.provider_requests()], [[]])
         self.assertFalse(marker.exists())
+
+    def test_provider_credentials_at_request_boundary(self):
+        self.config(provider={"credential": {"literal": "fixture-virtual-key"}})
+        self.success(("run", "--prompt", "say ok"), "Reply to say ok\n")
+        self.assertEqual(self.server.provider_authorizations, ["Bearer fixture-virtual-key"])
+
+        self.config(provider={"credential": {"auth": "pending-login"}})
+        self.assertEqual(self.execute("config", "check").returncode, 0)
+        result = self.execute("run", "--prompt", "say ok")
+        self.assertEqual((result.returncode, result.stdout), (4, b""))
+        self.assertEqual(len(self.provider_requests()), 1)
 
     def test_journal_and_builtin_read(self):
         (self.directory / "sample.txt").write_text("local text", encoding="utf-8")
@@ -458,9 +488,9 @@ class Production(unittest.TestCase):
 
     def test_acp_discovers_config_from_its_launch_directory(self):
         self.write_config(self.user_config, json.loads(self.profile.read_text(encoding="utf-8")))
-        self.write_config(self.project_config, {"model": {"id": "launch"}})
+        self.write_config(self.project_config, select_model("launch"))
         editor = self.directory / "editor"
-        self.write_config(editor / ".foo" / "config.json", {"model": {"id": "editor"}})
+        self.write_config(editor / ".foo" / "config.json", select_model("editor"))
         peer = self.acp(arguments=("acp", "--approve"))
         session = peer.session(editor)
         self.assertEqual(agent_text(peer.wait_for_turn(peer.prompt(session, "approved"), session)), "Reply to approved")
@@ -532,7 +562,7 @@ class Production(unittest.TestCase):
 
     def test_bare_invocation_opens_tui(self):
         self.write_config(self.user_config, json.loads(self.profile.read_text(encoding="utf-8")))
-        self.write_config(self.project_config, {"model": {"id": "project"}})
+        self.write_config(self.project_config, select_model("project"))
         env = {**self.env, "FOO_CONFIG_DIR": "", "FOO_CONFIG_JSON": "{}"}
         for flags, model in (((), "fixture"), (("--approve",), "project")):
             with self.subTest(flags=flags):

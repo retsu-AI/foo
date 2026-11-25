@@ -170,7 +170,9 @@ The executable applies mechanical defaults, the selected preset, the user config
 
 Object fields merge only under documented rules. Lists of tools and prompt fragments replace rather than secretly concatenate; deletion/disable has an explicit representation. `config check` validates without starting providers, MCP servers or tools. `config show` displays the effective configuration with secrets redacted and source attribution for overridden values.
 
-The schema covers provider endpoints/family/model/credential references, model options, prompt replacement or explicitly ordered prompt files, tools and MCP servers, execution environment, run/resource limits, optional session persistence, and basic UI settings. The model identifier is data, not an enum that requires a release for every new model. Unsupported effort/sampling fields are not guessed from model-name substrings.
+Each provider declares its protocol family, base URL, credential, and models. The root `model` selects a `provider/id`. Configuration resolves that pair into the complete endpoint and model settings used by the engine. A model entry can override the endpoint and set its own options and output limit. The model ID is sent to the provider as configured.
+
+The schema also covers prompts, tool and MCP declarations, execution environments, limits, optional session persistence, and terminal bindings.
 
 System prompt replacement means replacement, including an empty prompt. Appended prompt files are opt-in and shown in effective configuration. Automatic `AGENTS.md` loading, skill discovery and coding instructions do not occur in neutral mode. The coding preset may offer explicit instruction-file inclusion, but the user can inspect and disable it.
 
