@@ -74,8 +74,13 @@ class LivePolicyTest(unittest.TestCase):
             config = json.loads(Path(args[-1]).read_text())
             self.assertEqual(config["retry_attempts"], 0)
             self.assertEqual(config["limits"]["model_turns"], 1)
-            self.assertEqual(config["model"]["max_output_tokens"], 32)
-            self.assertEqual(config["model"]["credential"], {"environment": "FOO_LIVE_SECRET"})
+            self.assertEqual(config["model"], "openai-responses/fixture")
+            provider = config["providers"]["openai-responses"]
+            self.assertEqual(provider["base_url"], "https://api.openai.com")
+            self.assertEqual(provider["credential"], {"environment": "FOO_LIVE_SECRET"})
+            self.assertEqual(provider["models"]["fixture"], {
+                "endpoint": "https://api.openai.com/v1/responses", "max_output_tokens": 32,
+            })
             self.assertEqual(env["FOO_LIVE_SECRET"], secret)
             self.assertNotIn("FOO_CONFIG_JSON", env)
             self.assertTrue(input.startswith(live.PROMPT_PREFIX.encode()))
@@ -123,6 +128,8 @@ class LivePolicyTest(unittest.TestCase):
 
         def run(args, *, env, **_):
             config = json.loads(Path(args[-1]).read_text())
+            self.assertEqual(config["model"], "local/unused")
+            self.assertEqual(config["providers"]["local"]["base_url"], "http://127.0.0.1:1")
             self.assertEqual(config["mcp_servers"][0]["transport"]["stdio"]["environment"], [
                 {"name": "MCP_SERVER_TOKEN", "value": {"environment": "FOO_LIVE_SECRET_0"}},
             ])

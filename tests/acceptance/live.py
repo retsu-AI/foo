@@ -337,14 +337,18 @@ def invoke(binary, args, config, profile, env, data=None):
 
 def probe_provider(binary, profile, case):
     family, url = ROUTES[case.route]
+    endpoint_url = urlsplit(url)
     env = child_env({"FOO_LIVE_SECRET": case.credential}, profile.ca_file, needs_tls=True)
     marker = f"foo-{secrets.token_hex(8)}"
     prompt = (PROMPT_PREFIX + marker).encode()
     reply = invoke(binary, ["run", "--stdin"], {
-        "model": {
-            "family": family, "id": case.model, "endpoint": url,
-            "max_output_tokens": case.output_tokens, "credential": {"environment": "FOO_LIVE_SECRET"},
-        },
+        "model": f"{case.route}/{case.model}",
+        "providers": {case.route: {
+            "family": family,
+            "base_url": f"{endpoint_url.scheme}://{endpoint_url.netloc}",
+            "credential": {"environment": "FOO_LIVE_SECRET"},
+            "models": {case.model: {"endpoint": url, "max_output_tokens": case.output_tokens}},
+        }},
     }, profile, env, prompt)
     if reply.strip() != marker.encode():
         raise FailedCheck("response does not match the marker")
@@ -374,7 +378,8 @@ def probe_mcp(binary, profile, case):
         transport = {"stdio": {"argv": peer.argv, "environment": server_env}}
     env = child_env(references, profile.ca_file, needs_tls=isinstance(peer, HttpPeer))
     raw = invoke(binary, ["mcp", "get", "resource", "verification", case.resource], {
-        "model": {"family": "openai_chat", "id": "unused", "endpoint": "http://127.0.0.1:1/unused"},
+        "model": "local/unused",
+        "providers": {"local": {"family": "openai_chat", "base_url": "http://127.0.0.1:1", "models": {"unused": {}}}},
         "mcp_servers": [{"id": "verification", "revision": case.revision, "transport": transport}],
     }, profile, env)
     try:
