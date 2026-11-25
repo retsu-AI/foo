@@ -176,6 +176,7 @@ const Fixture = struct {
     replies: []const Reply,
     calls: usize = 0,
     bodies: std.ArrayList([]const u8) = .empty,
+    times: std.ArrayList(u64) = .empty,
 
     fn transport(self: *Fixture) foo.io.HttpTransport {
         return .{ .context = self, .exchange_fn = exchange };
@@ -189,6 +190,7 @@ const Fixture = struct {
         delivery.* = .possibly_sent;
         if (!std.mem.eql(u8, reply.url, request.url)) return error.InvalidInput;
         try self.bodies.append(self.a, try self.a.dupe(u8, request.body.bytes));
+        try self.times.append(self.a, operation_.clock.now());
         try sink.head_fn(sink.context, operation_, .{ .status = reply.status, .headers = &.{} });
         try sink.body.write(operation_, reply.body);
     }
@@ -278,7 +280,7 @@ test "loopback callback rejects a tampered state and returns the code for the ex
     }
 }
 
-test "token responses need an access token and a positive lifetime" {
+test "token responses need an access token and a positive lifetime when one is given" {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -289,7 +291,6 @@ test "token responses need an access token and a positive lifetime" {
     try equal(3_601_000, parsed.oauth.expires_ms);
     for ([_][]const u8{
         "{\"refresh_token\":\"r1\",\"expires_in\":3600}",
-        "{\"access_token\":\"a1\",\"refresh_token\":\"r1\"}",
         "{\"access_token\":\"\",\"expires_in\":3600}",
         "{\"access_token\":\"a1\",\"expires_in\":0}",
         "not json",
@@ -539,4 +540,127 @@ test "a refresh that loses a rotation race uses the credential another process s
     };
     const revoked = auth.Resolver{ .store = store, .registry = &.{Revoked.flow}, .http = unused.transport() };
     try testing.expectError(error.Authentication, revoked.interface().resolve(a, operation(), .{ .auth = "service" }));
+}
+
+const FakeSleep = struct {
+    var clock: support.Clock = .{};
+    var vtable: std.Io.VTable = undefined;
+    const cancellation: foo.io.Cancellation = .{};
+
+    fn context() foo.io.Context {
+        clock = .{};
+        vtable = io.vtable.*;
+        vtable.sleep = sleep;
+        return .{ .io = .{ .vtable = &vtable, .userdata = io.userdata }, .clock = clock.interface(), .cancellation = &cancellation };
+    }
+
+    fn sleep(_: ?*anyopaque, timeout: std.Io.Timeout) std.Io.Cancelable!void {
+        clock.time_ms += @intCast(timeout.duration.raw.toMilliseconds());
+    }
+};
+
+const xai_device = "https://auth.x.ai/oauth2/device/code";
+const xai_token = "https://auth.x.ai/oauth2/token";
+const xai_device_form = "client_id=b1a00492-073a-47ea-816f-4c329264a828&scope=openid%20profile%20email%20offline_access%20grok-cli%3Aaccess%20api%3Aaccess&referrer=foo";
+const xai_poll_form = "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&client_id=b1a00492-073a-47ea-816f-4c329264a828&device_code=dev-1";
+
+test "xAI device login polls until the user approves and stores the refresh token" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fixture: Fixture = .{ .a = a, .replies = &.{
+        .{ .url = xai_device, .body = "{\"device_code\":\"dev-1\",\"user_code\":\"WXYZ-9876\",\"verification_uri\":\"https://accounts.x.ai/device\",\"verification_uri_complete\":\"https://accounts.x.ai/device?code=WXYZ-9876\",\"interval\":2,\"expires_in\":1800}" },
+        .{ .url = xai_token, .status = 400, .body = "{\"error\":\"authorization_pending\"}" },
+        .{ .url = xai_token, .body = "{\"access_token\":\"xai-access\",\"refresh_token\":\"xai-refresh\",\"expires_in\":7200}" },
+    } };
+    var shown: Shown = .{};
+    defer shown.notices.deinit(allocator);
+    const flow = auth.findFlow(auth.flows, "xai").?;
+    try equal(null, flow.browser);
+    try equal(null, flow.account_header);
+    const before = std.Io.Timestamp.now(io, .real).toMilliseconds();
+    const result = try flow.device.?(.{ .a = a, .operation = FakeSleep.context(), .http = fixture.transport(), .prompt = shown.prompt() });
+    try same("xai-access", result.access);
+    try same("xai-refresh", result.refresh.?);
+    try equal(null, result.account);
+    try expect(result.expires_ms >= before + 7_200_000);
+    try equal(1, shown.notices.items.len);
+    try same("https://accounts.x.ai/device?code=WXYZ-9876", shown.notices.items[0].device_code.uri);
+    try same("WXYZ-9876", shown.notices.items[0].device_code.code);
+    try equal(3, fixture.bodies.items.len);
+    try same(xai_device_form, fixture.bodies.items[0]);
+    try same(xai_poll_form, fixture.bodies.items[1]);
+    try same(xai_poll_form, fixture.bodies.items[2]);
+    try testing.expectEqualSlices(u64, &.{ 0, 2_000, 4_000 }, fixture.times.items);
+}
+
+test "xAI device login slows down when asked and fails without a refresh token" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fixture: Fixture = .{ .a = a, .replies = &.{
+        .{ .url = xai_device, .body = "{\"device_code\":\"dev-1\",\"user_code\":\"WXYZ-9876\",\"verification_uri\":\"https://accounts.x.ai/device\",\"expires_in\":600}" },
+        .{ .url = xai_token, .status = 400, .body = "{\"error\":\"slow_down\"}" },
+        .{ .url = xai_token, .body = "{\"access_token\":\"xai-access\"}" },
+    } };
+    var shown: Shown = .{};
+    defer shown.notices.deinit(allocator);
+    const flow = auth.findFlow(auth.flows, "xai").?;
+    try testing.expectError(error.Authentication, flow.device.?(.{ .a = a, .operation = FakeSleep.context(), .http = fixture.transport(), .prompt = shown.prompt() }));
+    try same("https://accounts.x.ai/device", shown.notices.items[0].device_code.uri);
+    try testing.expectEqualSlices(u64, &.{ 0, 5_000, 15_000 }, fixture.times.items);
+
+    fixture.calls = 0;
+    fixture.replies = &.{
+        .{ .url = xai_device, .body = "{\"device_code\":\"dev-1\",\"user_code\":\"WXYZ-9876\",\"verification_uri\":\"https://accounts.x.ai/device\",\"expires_in\":600}" },
+        .{ .url = xai_token, .status = 400, .body = "{\"error\":\"access_denied\"}" },
+    };
+    try testing.expectError(error.Authentication, flow.device.?(.{ .a = a, .operation = FakeSleep.context(), .http = fixture.transport(), .prompt = shown.prompt() }));
+}
+
+test "xAI device login rejects a verification page that is not HTTPS" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const flow = auth.findFlow(auth.flows, "xai").?;
+    for ([_][]const u8{
+        "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"http://accounts.x.ai/device\",\"expires_in\":600}",
+        "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"https://accounts.x.ai/device\",\"verification_uri_complete\":\"javascript:alert(1)\",\"expires_in\":600}",
+        "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"file:///etc/passwd\",\"expires_in\":600}",
+    }) |body| {
+        var fixture: Fixture = .{ .a = a, .replies = &.{.{ .url = xai_device, .body = body }} };
+        var shown: Shown = .{};
+        defer shown.notices.deinit(allocator);
+        try testing.expectError(error.Authentication, flow.device.?(.{ .a = a, .operation = FakeSleep.context(), .http = fixture.transport(), .prompt = shown.prompt() }));
+        try equal(0, shown.notices.items.len);
+        try equal(1, fixture.calls);
+    }
+}
+
+test "xAI refresh keeps the current refresh token when the issuer omits it" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fixture: Fixture = .{ .a = a, .replies = &.{
+        .{ .url = xai_token, .body = "{\"access_token\":\"xai-renewed\"}" },
+        .{ .url = xai_token, .body = "{\"access_token\":\"xai-rotated\",\"refresh_token\":\"xai-next\",\"expires_in\":60}" },
+    } };
+    const flow = auth.findFlow(auth.flows, "xai").?;
+    const request: auth.Refresh = .{ .a = a, .operation = operation(), .http = fixture.transport(), .current = oauth };
+    const before = std.Io.Timestamp.now(io, .real).toMilliseconds();
+    const kept = try flow.refresh.?(request);
+    try same("xai-renewed", kept.access);
+    try same("old-refresh", kept.refresh.?);
+    try expect(kept.expires_ms >= before + 3_600_000);
+    try same("grant_type=refresh_token&client_id=b1a00492-073a-47ea-816f-4c329264a828&refresh_token=old-refresh", fixture.bodies.items[0]);
+    const rotated = try flow.refresh.?(request);
+    try same("xai-next", rotated.refresh.?);
+}
+
+test "token responses without a lifetime last one hour" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const parsed = try oauth_wire.parseTokens(arena.allocator(), 1_000, "{\"access_token\":\"a1\"}");
+    try equal(3_601_000, parsed.oauth.expires_ms);
+    try equal(null, parsed.oauth.refresh);
 }
