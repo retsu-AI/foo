@@ -94,10 +94,11 @@ pub const help =
     \\  --approve              Load .foo/config.json from the directory where foo starts.
     \\  --config PATH          Load an explicit JSON config. Repeat in precedence order.
     \\  --preset coding        Select the built-in coding preset.
-    \\  --provider FAMILY      openai_responses, openai_chat, or anthropic_messages
-    \\  --model ID             Select the model.
-    \\  --endpoint URL         Select the complete provider POST URL.
-    \\  --credential-env NAME  Read the model credential from a named environment variable.
+    \\  --provider ID          Select the first model of a configured provider.
+    \\  --model PROVIDER/ID    Select a model from a provider.
+    \\  --family FAMILY        Set openai_responses, openai_chat, or anthropic_messages.
+    \\  --endpoint URL         Override the complete POST URL of the selected model.
+    \\  --credential-env NAME  Read the provider credential from a named environment variable.
     \\  --cwd PATH             Override the configured working directory.
     \\  --resume               Open the existing journal in the configured session directory.
     \\
@@ -135,8 +136,9 @@ pub fn execute(
     var diagnostic: ?config.Diagnostic = null;
     const effective = config.resolve(a, operation, command.config, &diagnostic) catch |err| {
         if (diagnostic) |detail| {
-            report(streams, operation.io, "config {s} from {s} at {s}", .{
-                @tagName(detail.reason), @tagName(detail.source), detail.path,
+            report(streams, operation.io, "config {s} from {s} at {s}{s}{s}", .{
+                @tagName(detail.reason),                  @tagName(detail.source),  detail.path,
+                if (detail.message != null) ": " else "", detail.message orelse "",
             });
             return if (err == error.LimitExceeded) .limit else .usage;
         }

@@ -67,17 +67,22 @@ pub const Adapter = struct {
         var budget: io.Budget = .{ .limit = request.limits.wire_message_bytes };
         try headers_list.appendSlice(a, &.{ .{ .name = "content-type", .value = "application/json" }, .{ .name = "accept", .value = "text/event-stream" } });
         if (model.family == .anthropic_messages) try headers_list.append(a, .{ .name = "anthropic-version", .value = "2023-06-01" });
-        switch (model.credential) {
-            .none => {},
-            .environment => |name| {
-                const key = if (self.environment) |environment| environment.get(name) orelse return error.Authentication else return error.Authentication;
-                if (key.len == 0 or !validValue(key)) return error.Authentication;
-                try budget.take(key.len);
-                try headers_list.append(a, .{
-                    .name = if (model.family == .anthropic_messages) "x-api-key" else "authorization",
-                    .value = if (model.family == .anthropic_messages) key else try std.fmt.allocPrint(a, "Bearer {s}", .{key}),
-                });
-            },
+        const credential: ?[]const u8 = switch (model.credential) {
+            .none => null,
+            .environment => |name| if (self.environment) |environment|
+                environment.get(name) orelse return error.Authentication
+            else
+                return error.Authentication,
+            .literal => |key| key,
+            .auth => return error.Authentication,
+        };
+        if (credential) |key| {
+            if (key.len == 0 or !validValue(key)) return error.Authentication;
+            try budget.take(key.len);
+            try headers_list.append(a, .{
+                .name = if (model.family == .anthropic_messages) "x-api-key" else "authorization",
+                .value = if (model.family == .anthropic_messages) key else try std.fmt.allocPrint(a, "Bearer {s}", .{key}),
+            });
         }
         if (model.headers.len > 128) return error.LimitExceeded;
         for (model.headers) |header| {

@@ -53,12 +53,13 @@ class Cli(unittest.TestCase):
     def write_config(self, **options):
         self.profile.write_text(
             json.dumps({
-                "model": {
+                "providers": {"local": {
                     "family": "openai_responses",
-                    "endpoint": "https://example.invalid/responses",
-                    "id": "fixture",
-                    **options.pop("model", {}),
-                },
+                    "base_url": "https://example.invalid",
+                    "models": {"fixture": {}, "later-layer": {}},
+                    **options.pop("provider", {}),
+                }},
+                "model": "local/fixture",
                 **options,
             }),
             encoding="utf-8",
@@ -171,16 +172,16 @@ class Cli(unittest.TestCase):
         self.assertTrue(result.stderr)
 
     def test_usage_config_credentials_and_redaction(self):
-        self.write_config(model={
+        self.write_config(provider={
             "credential": {"environment": CREDENTIAL},
-            "endpoint": "https://example.invalid/responses?token=fixture-query-secret",
+            "base_url": "https://example.invalid?token=fixture-query-secret",
             "headers": [{"name": "X-Private", "value": "fixture-header-secret"}],
         })
         valid = self.run_cli("config", "check", *self.options())
         self.assertEqual(valid.returncode, 0, valid.stderr)
         second = self.directory / "second.json"
-        second.write_text('{"model":{"id":"later-layer"}}', encoding="utf-8")
-        show = self.run_cli("config", "show", *self.options(), "--config", str(second), "--model", "override")
+        second.write_text('{"model":"local/later-layer"}', encoding="utf-8")
+        show = self.run_cli("config", "show", *self.options(), "--config", str(second), "--model", "local/override")
         self.assertEqual(show.returncode, 0, show.stderr)
         effective = json.loads(show.stdout)
         self.assertEqual(effective["runtime"]["model"]["id"], "override")
@@ -199,6 +200,52 @@ class Cli(unittest.TestCase):
         invalid = self.run_cli("config", "check", *self.options())
         self.assertEqual((invalid.returncode, invalid.stdout), (2, b""))
         self.assertTrue(invalid.stderr)
+
+    def test_model_selection_and_provider_overrides(self):
+        self.profile.write_text(json.dumps({
+            "providers": {
+                "openai": {
+                    "family": "openai_responses",
+                    "base_url": "https://openai.invalid/v1",
+                    "models": {"large": {}, "mini": {"max_output_tokens": 2048}},
+                },
+                "gateway": {
+                    "family": "openai_chat",
+                    "base_url": "https://gateway.invalid/v1/",
+                    "models": {"z-first": {}, "a-second": {}},
+                },
+            },
+            "model": "openai/large",
+        }), encoding="utf-8")
+
+        def show(*flags):
+            result = self.run_cli("config", "show", *self.options(), *flags)
+            self.assertEqual((result.returncode, result.stderr), (0, b""))
+            return json.loads(result.stdout)["runtime"]
+
+        settings = show("--model", "openai/mini", "--provider", "gateway")
+        self.assertEqual(settings["model"]["id"], "mini")
+        self.assertEqual(settings["model"]["max_output_tokens"], 2048)
+        provenance = {entry["key"]: entry for entry in settings["provenance"]}
+        self.assertEqual(provenance["model.id"]["source"], "command_line")
+        self.assertEqual(provenance["model.max_output_tokens"]["input_key"],
+                         "providers.openai.models.mini.max_output_tokens")
+        self.assertEqual(show("--provider", "gateway")["model"]["id"], "z-first")
+        self.assertEqual(show("--provider", "gateway", "--model", "a-second")["model"]["id"], "a-second")
+        model = show("--provider", "gateway", "--family", "anthropic_messages")["model"]
+        self.assertEqual(model["endpoint"], "https://gateway.invalid/v1/messages")
+        self.assertEqual(model["family"], "anthropic_messages")
+        model = show("--provider", "gateway", "--endpoint", "https://override.invalid/custom",
+                     "--credential-env", CREDENTIAL)["model"]
+        self.assertEqual(model["endpoint"], "https://override.invalid/custom")
+        self.assertEqual(model["credential"], {"environment": CREDENTIAL})
+
+    def test_legacy_model_object_has_migration_message(self):
+        self.profile.write_text('{"model":{"id":"fixture"}}', encoding="utf-8")
+        check = self.run_cli("config", "check", *self.options())
+        self.assertEqual((check.returncode, check.stdout), (2, b""))
+        self.assertIn(b'config invalid_value from file at model:', check.stderr)
+        self.assertIn(b'model is a string "provider/id"; define providers under "providers"', check.stderr)
 
     def test_provider_and_resource_outcomes(self):
         for prompt, code in (("provider-error", 4), ("output-limit", 3)):

@@ -15,6 +15,7 @@ pub const Diagnostic = struct {
     path: []const u8,
     source: cfg.Source,
     location: ?[]const u8 = null,
+    message: ?[]const u8 = null,
     reason: enum { invalid_value, unknown_key, missing_value, invalid_json, unsupported_version, limit_exceeded, file_io, invalid_layer },
 };
 pub const Layer = struct {
@@ -22,10 +23,18 @@ pub const Layer = struct {
     location: ?[]const u8 = null,
     data: union(enum) { json: []const u8, file: []const u8, optional_file: []const u8 },
 };
+pub const ModelPatch = struct {
+    selection: ?[]const u8 = null,
+    provider: ?[]const u8 = null,
+    endpoint: ?[]const u8 = null,
+    family: ?cfg.Family = null,
+    credential_env: ?[]const u8 = null,
+};
 pub const Input = struct {
     cwd: []const u8,
     preset: enum { none, coding } = .none,
     layers: []const Layer = &.{},
+    model_patch: ModelPatch = .{},
 };
 pub const Process = struct {
     file_bytes: usize = 8 * 1024 * 1024,
@@ -58,7 +67,9 @@ pub const CustomTool = struct {
     timeout_ms: u64 = 30_000,
 };
 pub const Launch = struct { process: Process = .{}, session: Session = .{}, tui: Tui = .{}, custom_tools: []const CustomTool = &.{} };
+pub const ProviderMap = std.StringArrayHashMapUnmanaged(cfg.Provider);
 pub const Effective = struct {
+    providers: ProviderMap = .empty,
     runtime: cfg.Resolved,
     launch: Launch = .{},
     prompt_files: []const []const u8 = &.{},
@@ -141,7 +152,7 @@ pub fn resolve(a: std.mem.Allocator, operation: foo.io.Context, input: Input, di
             try state.apply(tree);
         }
     }
-    try state.finish();
+    try state.finish(input.model_patch);
     try operation.check();
     return state.settings;
 }
@@ -151,9 +162,10 @@ pub fn effectiveJson(a: std.mem.Allocator, settings: Effective) Error![]const u8
     defer arena.deinit();
     const scratch = arena.allocator();
     var safe = settings;
+    safe.runtime.model.credential = redactedCredential(safe.runtime.model.credential);
     safe.runtime.model.endpoint = try redactedUrl(scratch, safe.runtime.model.endpoint);
     safe.runtime.model.headers = try redactedHeaders(scratch, safe.runtime.model.headers);
-    safe.runtime.model.options_json = if (std.mem.eql(u8, safe.runtime.model.options_json, "{}")) "{}" else "\"<redacted>\"";
+    safe.runtime.model.options_json = redactedOptions(safe.runtime.model.options_json);
     const servers = try scratch.dupe(cfg.McpServer, safe.runtime.mcp_servers);
     for (servers) |*server| switch (server.transport) {
         .stdio => |*v| v.environment = try redactedEnvironment(scratch, v.environment),
@@ -167,16 +179,88 @@ pub fn effectiveJson(a: std.mem.Allocator, settings: Effective) Error![]const u8
     const custom_tools = try scratch.dupe(CustomTool, safe.launch.custom_tools);
     for (custom_tools) |*tool| tool.environment = try redactedEnvironment(scratch, tool.environment);
     safe.launch.custom_tools = custom_tools;
+    const output = .{
+        .providers = ProviderObject{ .providers = try redactedProviders(scratch, settings.providers) },
+        .runtime = safe.runtime,
+        .launch = safe.launch,
+        .prompt_files = safe.prompt_files,
+    };
     var counting_buffer: [256]u8 = undefined;
     var counter = std.Io.Writer.Discarding.init(&counting_buffer);
-    std.json.Stringify.value(safe, .{ .whitespace = .indent_2 }, &counter.writer) catch return error.LimitExceeded;
+    std.json.Stringify.value(output, .{ .whitespace = .indent_2 }, &counter.writer) catch return error.LimitExceeded;
     const size = std.math.cast(usize, counter.fullCount()) orelse return error.LimitExceeded;
     if (size > max_effective_bytes) return error.LimitExceeded;
     const buffer = try a.alloc(u8, size);
     errdefer a.free(buffer);
     var writer: std.Io.Writer = .fixed(buffer);
-    std.json.Stringify.value(safe, .{ .whitespace = .indent_2 }, &writer) catch return error.LimitExceeded;
+    std.json.Stringify.value(output, .{ .whitespace = .indent_2 }, &writer) catch return error.LimitExceeded;
     return writer.buffered();
+}
+
+const ProviderObject = struct {
+    providers: ProviderMap,
+
+    pub fn jsonStringify(self: ProviderObject, json: *std.json.Stringify) std.json.Stringify.Error!void {
+        try json.beginObject();
+        for (self.providers.keys(), self.providers.values()) |id, provider| {
+            try json.objectField(id);
+            try json.write(.{
+                .family = provider.family,
+                .base_url = provider.base_url,
+                .credential = provider.credential,
+                .headers = provider.headers,
+                .options_json = provider.options_json,
+                .models = ModelObject{ .models = provider.models },
+            });
+        }
+        try json.endObject();
+    }
+};
+
+const ModelObject = struct {
+    models: []const cfg.ModelEntry,
+
+    pub fn jsonStringify(self: ModelObject, json: *std.json.Stringify) std.json.Stringify.Error!void {
+        try json.beginObject();
+        for (self.models) |model| {
+            try json.objectField(model.id);
+            try json.write(.{
+                .name = model.name,
+                .options_json = model.options_json,
+                .max_output_tokens = model.max_output_tokens,
+                .endpoint = model.endpoint,
+            });
+        }
+        try json.endObject();
+    }
+};
+
+fn redactedProviders(a: std.mem.Allocator, providers: ProviderMap) Error!ProviderMap {
+    var safe: ProviderMap = .empty;
+    try safe.ensureTotalCapacity(a, providers.count());
+    for (providers.keys(), providers.values()) |id, provider| {
+        var copy = provider;
+        copy.base_url = try redactedUrl(a, copy.base_url);
+        copy.credential = redactedCredential(copy.credential);
+        copy.headers = try redactedHeaders(a, copy.headers);
+        copy.options_json = redactedOptions(copy.options_json);
+        const models = try a.dupe(cfg.ModelEntry, copy.models);
+        for (models) |*model| {
+            model.endpoint = if (model.endpoint) |endpoint| try redactedUrl(a, endpoint) else null;
+            model.options_json = redactedOptions(model.options_json);
+        }
+        copy.models = models;
+        safe.putAssumeCapacity(id, copy);
+    }
+    return safe;
+}
+
+fn redactedCredential(credential: cfg.SecretRef) cfg.SecretRef {
+    return if (credential == .literal) .{ .literal = "<redacted>" } else credential;
+}
+
+fn redactedOptions(options_json: []const u8) []const u8 {
+    return if (std.mem.eql(u8, options_json, "{}")) "{}" else "\"<redacted>\"";
 }
 
 fn redactedHeaders(a: std.mem.Allocator, entries: []const cfg.Header) Error![]const cfg.Header {

@@ -19,10 +19,31 @@ pub const Limits = struct {
 };
 pub const Source = enum { defaults, preset, file, environment, command_line };
 pub const precedence = [_]Source{ .defaults, .preset, .file, .environment, .command_line };
-pub const Provenance = struct { key: []const u8, source: Source, location: ?[]const u8 = null };
-pub const SecretRef = union(enum) { none, environment: []const u8 };
+pub const Provenance = struct {
+    key: []const u8,
+    source: Source,
+    location: ?[]const u8 = null,
+    input_key: ?[]const u8 = null,
+};
+pub const SecretRef = union(enum) { none, environment: []const u8, literal: []const u8, auth: []const u8 };
 pub const Value = union(enum) { literal: []const u8, environment: []const u8 };
 pub const Header = struct { name: []const u8, value: Value };
+pub const Provider = struct {
+    family: Family,
+    base_url: []const u8,
+    credential: SecretRef = .none,
+    headers: []const Header = &.{},
+    options_json: []const u8 = "{}",
+    models: []const ModelEntry = &.{},
+};
+pub const default_max_output_tokens = 4096;
+pub const ModelEntry = struct {
+    id: []const u8,
+    name: ?[]const u8 = null,
+    options_json: []const u8 = "{}",
+    max_output_tokens: u32 = default_max_output_tokens,
+    endpoint: ?[]const u8 = null,
+};
 pub const Model = struct {
     family: Family,
     endpoint: []const u8,
@@ -30,7 +51,7 @@ pub const Model = struct {
     credential: SecretRef = .none,
     headers: []const Header = &.{},
     options_json: []const u8 = "{}",
-    max_output_tokens: u32 = 4096,
+    max_output_tokens: u32 = default_max_output_tokens,
 };
 pub const Backend = enum { local, client };
 pub const PermissionMode = enum { allow, ask, deny };

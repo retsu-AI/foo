@@ -42,19 +42,13 @@ const Flag = enum {
     @"--model",
     @"--endpoint",
     @"--provider",
+    @"--family",
     @"--credential-env",
     @"--cwd",
     @"--prompt",
     @"--stdin",
     @"--resume",
     @"--arguments",
-};
-
-const ModelPatch = struct {
-    id: ?[]const u8 = null,
-    endpoint: ?[]const u8 = null,
-    family: ?foo.config.Family = null,
-    credential: ?struct { environment: []const u8 } = null,
 };
 
 const Error = error{ InvalidArguments, LimitExceeded, OutOfMemory };
@@ -89,7 +83,6 @@ pub fn parseWithDiscovery(
     var mcp_command = if (mode == .mcp) try parseMcp(argv, &offset) else null;
     var layers: std.ArrayList(config.Layer) = .empty;
     var used: std.EnumSet(Flag) = .empty;
-    var patch: ModelPatch = .{};
     var cwd_override: ?[]const u8 = null;
     var prompt: ?Prompt = null;
     var session: SessionMode = .fresh;
@@ -124,13 +117,14 @@ pub fn parseWithDiscovery(
                 if (!std.mem.eql(u8, name, "coding")) return error.InvalidArguments;
                 input.preset = .coding;
             },
-            .@"--model" => patch.id = try value(argv, &offset, config.max_config_bytes),
-            .@"--endpoint" => patch.endpoint = try value(argv, &offset, config.max_config_bytes),
-            .@"--provider" => patch.family = std.meta.stringToEnum(
+            .@"--model" => input.model_patch.selection = try value(argv, &offset, config.max_config_bytes),
+            .@"--endpoint" => input.model_patch.endpoint = try value(argv, &offset, config.max_config_bytes),
+            .@"--provider" => input.model_patch.provider = try value(argv, &offset, config.max_config_bytes),
+            .@"--family" => input.model_patch.family = std.meta.stringToEnum(
                 foo.config.Family,
                 try value(argv, &offset, config.max_config_bytes),
             ) orelse return error.InvalidArguments,
-            .@"--credential-env" => patch.credential = .{ .environment = try value(argv, &offset, config.max_config_bytes) },
+            .@"--credential-env" => input.model_patch.credential_env = try value(argv, &offset, config.max_config_bytes),
             .@"--cwd" => cwd_override = try value(argv, &offset, config.max_config_bytes),
         }
     }
@@ -139,12 +133,8 @@ pub fn parseWithDiscovery(
         .source = .environment,
         .data = .{ .json = json },
     });
-    const has_model = patch.id != null or patch.endpoint != null or patch.family != null or patch.credential != null;
-    if (has_model or cwd_override != null) {
-        const patch_json = try std.json.Stringify.valueAlloc(a, .{
-            .model = if (has_model) patch else null,
-            .cwd = cwd_override,
-        }, .{ .emit_null_optional_fields = false });
+    if (cwd_override) |path| {
+        const patch_json = try std.json.Stringify.valueAlloc(a, .{ .cwd = path }, .{});
         if (patch_json.len > config.max_config_bytes) return error.LimitExceeded;
         try addLayer(a, &layers, .{
             .source = .command_line,

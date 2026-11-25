@@ -22,7 +22,7 @@ const Request = struct {
 };
 
 const minimal_model =
-    \\{"model":{"family":"openai_responses","endpoint":"https://fixture.invalid/v1/responses","id":"explicit-model"}}
+    \\{"providers":{"demo":{"family":"openai_responses","base_url":"https://fixture.invalid/v1","models":{"explicit-model":{}}}},"model":"demo/explicit-model"}
 ;
 const invocation_cwd = switch (@import("builtin").os.tag) {
     .windows => "C:\\foo-fixture",
@@ -50,14 +50,15 @@ test "layers apply by source and keep file order and empty overrides" {
         .preset = .coding,
         .layers = &.{
             .{ .source = .command_line, .location = "--overrides", .data = .{ .json =
-            \\{"model":{"id":"cli-model"},"system_prompt":{"text":"","append_files":[]},"enabled_tools":[]}
+            \\{"model":"demo/cli-model","system_prompt":{"text":"","append_files":[]},"enabled_tools":[]}
             } },
             .{ .source = .file, .location = "user.json", .data = .{ .json = minimal_model } },
             .{ .source = .environment, .location = "FOO_CONFIG", .data = .{ .json =
-            \\{"model":{"id":"environment-model"},"limits":{"pending_requests":5}}
+            \\{"model":"demo/environment-model","limits":{"pending_requests":5}}
             } },
             .{ .source = .file, .location = "project.json", .data = .{ .json =
-            \\{"model":{"id":"project-model","max_output_tokens":1024},"limits":{"pending_requests":4,"pending_events":3},"enabled_tools":["read"]}
+            \\{"model":"demo/project-model","providers":{"demo":{"models":{"project-model":{},"environment-model":{},"cli-model":{"max_output_tokens":1024}}}},
+            \\ "limits":{"pending_requests":4,"pending_events":3},"enabled_tools":["read"]}
             } },
         },
     });
@@ -87,7 +88,7 @@ test "same source preserves explicit file order" {
         .layers = &.{
             .{ .source = .file, .location = "first.json", .data = .{ .json = minimal_model } },
             .{ .source = .file, .location = "last.json", .data = .{ .json =
-            \\{"model":{"id":"last-model"}}
+            \\{"providers":{"demo":{"models":{"last-model":{}}}},"model":"demo/last-model"}
             } },
         },
     });
@@ -195,13 +196,13 @@ test "redacted settings preserve credential references and provider options for 
 
 test "strict settings reject malformed, unsupported, and misspelled values" {
     const cases = [_]struct { json: []const u8, path_hint: []const u8 }{
-        .{ .json = "{\"model\":{\"endpont\":\"https://fixture.invalid\"}}", .path_hint = "endpont" },
+        .{ .json = "{\"providers\":{\"demo\":{\"endpont\":\"https://fixture.invalid\"}}}", .path_hint = "endpont" },
         .{ .json = "{\"version\":2}", .path_hint = "version" },
-        .{ .json = "{\"model\":{\"family\":\"guessed\"}}", .path_hint = "family" },
-        .{ .json = "{\"model\":{\"endpoint\":\"https://name:bad-value@fixture.invalid/v1\"}}", .path_hint = "endpoint" },
-        .{ .json = "{\"model\":{\"id\":\"first\",\"id\":\"duplicate-value\"}}", .path_hint = "" },
+        .{ .json = "{\"providers\":{\"demo\":{\"family\":\"guessed\"}}}", .path_hint = "family" },
+        .{ .json = "{\"providers\":{\"demo\":{\"models\":{\"explicit-model\":{\"endpoint\":\"https://name:bad-value@fixture.invalid/v1\"}}}}}", .path_hint = "endpoint" },
+        .{ .json = "{\"model\":\"demo/explicit-model\",\"model\":\"duplicate-value\"}", .path_hint = "" },
         .{ .json = "{\"limits\":{\"pending_requests\":0}}", .path_hint = "pending_requests" },
-        .{ .json = "{\"model\":{\"credential\":{\"command\":\"bad-value\"}}}", .path_hint = "command" },
+        .{ .json = "{\"providers\":{\"demo\":{\"credential\":{\"command\":\"bad-value\"}}}}", .path_hint = "command" },
         .{ .json = "{\"system_prompt\":", .path_hint = "" },
     };
     for (cases) |case| {
@@ -305,8 +306,8 @@ test "an invalid lower layer fails even if a higher layer replaces its value" {
         .cwd = invocation_cwd,
         .layers = &.{
             .{ .source = .file, .data = .{ .json = minimal_model } },
-            .{ .source = .file, .location = "bad.json", .data = .{ .json = "{\"model\":{\"max_output_tokens\":0}}" } },
-            .{ .source = .command_line, .data = .{ .json = "{\"model\":{\"max_output_tokens\":2000}}" } },
+            .{ .source = .file, .location = "bad.json", .data = .{ .json = "{\"providers\":{\"demo\":{\"models\":{\"explicit-model\":{\"max_output_tokens\":0}}}}}" } },
+            .{ .source = .command_line, .data = .{ .json = "{\"providers\":{\"demo\":{\"models\":{\"explicit-model\":{\"max_output_tokens\":2000}}}}}" } },
         },
     }));
     const diagnostic = call.diagnostic orelse return error.MissingDiagnostic;
@@ -333,39 +334,45 @@ test "the configuration byte limit applies before parsing" {
 
 test "model credentials and headers follow the endpoint origin" {
     const cases = [_]struct {
-        patch: []const u8,
+        patch: config.ModelPatch,
         credential: ?[]const u8,
-        endpoint: ?[]const u8 = null,
+        endpoint: []const u8,
         headers: usize,
     }{
         .{
-            .patch = "{\"model\":{\"endpoint\":\"HTTPS://API.DEEPSEEK.COM:443/v1/chat/Completions\"}}",
+            .patch = .{ .endpoint = "HTTPS://API.DEEPSEEK.COM:443/v1/chat/Completions" },
             .credential = "DEEPSEEK_API_KEY",
             .endpoint = "https://API.DEEPSEEK.COM:443/v1/chat/Completions",
             .headers = 2,
         },
         .{
-            .patch = "{\"model\":{\"endpoint\":\"https://other.invalid/v1/chat/completions?key=fixture-query-secret\"}}",
+            .patch = .{ .endpoint = "https://other.invalid/v1/chat/completions?key=fixture-query-secret" },
             .credential = null,
+            .endpoint = "https://other.invalid/v1/chat/completions?key=fixture-query-secret",
             .headers = 0,
         },
         .{
-            .patch = "{\"model\":{\"family\":\"openai_responses\",\"credential\":{\"environment\":\"EXPLICIT_REPLACEMENT\"}}}",
+            .patch = .{ .family = .openai_responses },
+            .credential = null,
+            .endpoint = "https://api.deepseek.com/responses",
+            .headers = 0,
+        },
+        .{
+            .patch = .{ .endpoint = "https://other.invalid/responses", .credential_env = "EXPLICIT_REPLACEMENT" },
             .credential = "EXPLICIT_REPLACEMENT",
+            .endpoint = "https://other.invalid/responses",
             .headers = 0,
         },
     };
     for (cases) |case| {
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
-        var call: Request = .{};
         const allocator = arena.allocator();
+        var call: Request = .{};
         const result = try call.resolve(allocator, .{
             .cwd = invocation_cwd,
-            .layers = &.{
-                .{ .source = .file, .data = .{ .json = @embedFile("fixtures/deepseek.json") } },
-                .{ .source = .command_line, .data = .{ .json = case.patch } },
-            },
+            .layers = &.{.{ .source = .file, .data = .{ .json = @embedFile("fixtures/deepseek.json") } }},
+            .model_patch = case.patch,
         });
         if (case.credential) |env| {
             try same(env, result.runtime.model.credential.environment);
@@ -374,11 +381,8 @@ test "model credentials and headers follow the endpoint origin" {
             try equal(foo.config.Source.command_line, (try sourceOf(result, "model.credential")).source);
         }
         try equal(case.headers, result.runtime.model.headers.len);
-        if (case.endpoint) |endpoint| try same(endpoint, result.runtime.model.endpoint);
-        if (has(case.patch, "fixture-query-secret")) {
-            try expect(has(result.runtime.model.endpoint, "fixture-query-secret"));
-            try expect(!has(try config.effectiveJson(allocator, result), "fixture-query-secret"));
-        }
+        try same(case.endpoint, result.runtime.model.endpoint);
+        try expect(!has(try config.effectiveJson(allocator, result), "fixture-query-secret"));
     }
 }
 
@@ -457,4 +461,278 @@ test "rendered effective configuration matches the redaction fixture" {
         .process_environment = launch.get("process").?.object.get("environment").?,
     }, .{ .whitespace = .indent_2 });
     try same(std.mem.trimEnd(u8, @embedFile("fixtures/effective-redaction.json"), "\n"), selected);
+}
+
+test "provider and model fields merge independently across files" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var call: Request = .{};
+    const settings = try call.resolve(allocator, .{
+        .cwd = invocation_cwd,
+        .layers = &.{
+            .{ .source = .file, .location = "user.json", .data = .{ .json =
+            \\{"providers":{"gateway":{"family":"anthropic_messages","credential":{"environment":"USER_KEY"},
+            \\ "options":{"shared":"provider","base_only":true,"nested":{"provider":true}},
+            \\ "models":{"vendor/main":{"name":"Main","options":{"shared":"model","nested":{"model":true}}},"unused":{}}}},
+            \\ "model":"gateway/vendor/main"}
+            } },
+            .{ .source = .file, .location = "project.json", .data = .{ .json =
+            \\{"providers":{"gateway":{"base_url":"https://fixture.invalid/v1///?token=base-query-secret",
+            \\ "credential":{"environment":"PROJECT_KEY"},"models":{"vendor/main":{"max_output_tokens":2048}}}}}
+            } },
+        },
+    });
+    const provider = settings.providers.get("gateway").?;
+    try equal(2, provider.models.len);
+    try same("Main", provider.models[0].name.?);
+    try same("vendor/main", settings.runtime.model.id);
+    try same("https://fixture.invalid/v1/messages?token=base-query-secret", settings.runtime.model.endpoint);
+    try same("PROJECT_KEY", settings.runtime.model.credential.environment);
+    try equal(@as(u32, 2048), settings.runtime.model.max_output_tokens);
+    try same(
+        "{\"shared\":\"model\",\"base_only\":true,\"nested\":{\"model\":true}}",
+        settings.runtime.model.options_json,
+    );
+    const family = try sourceOf(settings, "model.family");
+    try same("user.json", family.location.?);
+    try same("providers.gateway.family", family.input_key.?);
+    const cap = try sourceOf(settings, "model.max_output_tokens");
+    try same("project.json", cap.location.?);
+    try same("providers.gateway.models.vendor/main.max_output_tokens", cap.input_key.?);
+    try same("project.json", (try sourceOf(settings, "providers.gateway.credential")).location.?);
+    try same("user.json", (try sourceOf(settings, "providers.gateway.models.vendor/main.name")).location.?);
+    try expect(!has(try config.effectiveJson(allocator, settings), "base-query-secret"));
+}
+
+test "null removes whole entries and their provenance while preserving the rest of the order" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var call: Request = .{};
+    const settings = try call.resolve(arena.allocator(), .{
+        .cwd = invocation_cwd,
+        .layers = &.{
+            .{ .source = .file, .location = "user.json", .data = .{ .json =
+            \\{"providers":{"a":{"family":"openai_responses","models":{"stale":{"name":"Stale"}}},
+            \\ "a.b":{"family":"openai_chat","base_url":"https://fixture.invalid","models":{
+            \\ "old":{"name":"Old"},"first":{},"readded":{"name":"Old name","max_output_tokens":7}}}}}
+            } },
+            .{ .source = .file, .data = .{ .json =
+            \\{"providers":{"a":null,"a.b":{"models":{"old":null,"readded":null,"second":{}}}}}
+            } },
+            .{ .source = .file, .location = "project.json", .data = .{ .json =
+            \\{"providers":{"a.b":{"models":{"readded":{"name":"Fresh"}}}}}
+            } },
+        },
+        .model_patch = .{ .provider = "a.b" },
+    });
+    try equal(1, settings.providers.count());
+    try same("first", settings.runtime.model.id);
+    const models = settings.providers.get("a.b").?.models;
+    try equal(3, models.len);
+    try same("second", models[1].id);
+    try same("readded", models[2].id);
+    try equal(@as(u32, 4096), models[2].max_output_tokens);
+    try same("Fresh", models[2].name.?);
+    try same("project.json", (try sourceOf(settings, "providers.a.b.models.readded.name")).location.?);
+    try same("user.json", (try sourceOf(settings, "providers.a.b.family")).location.?);
+    for ([_][]const u8{
+        "providers.a.family",
+        "providers.a.models.stale.name",
+        "providers.a.b.models.old.name",
+        "providers.a.b.models.readded.max_output_tokens",
+    }) |key| try std.testing.expectError(error.MissingProvenance, sourceOf(settings, key));
+}
+
+test "unknown file selections fail with the source of model" {
+    for ([_][]const u8{
+        "{\"model\":\"unknown/explicit-model\"}",
+        "{\"model\":\"demo/unknown\"}",
+        "{\"providers\":{\"demo\":null}}",
+        "{\"providers\":{\"demo\":{\"models\":{\"explicit-model\":null}}}}",
+    }, 0..) |json, i| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var call: Request = .{};
+        try std.testing.expectError(error.InvalidConfiguration, call.resolve(arena.allocator(), .{
+            .cwd = invocation_cwd,
+            .layers = &.{
+                .{ .source = .file, .location = "user.json", .data = .{ .json = minimal_model } },
+                .{ .source = .file, .location = "project.json", .data = .{ .json = json } },
+            },
+        }));
+        const diagnostic = call.diagnostic.?;
+        try same("model", diagnostic.path);
+        try expect(diagnostic.reason == .invalid_value);
+        try same(if (i < 2) "project.json" else "user.json", diagnostic.location.?);
+    }
+}
+
+test "typed CLI selects existing or ad hoc models and prefers qualified selection" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var call: Request = .{};
+    const layers: []const config.Layer = &.{.{ .source = .file, .data = .{ .json = minimal_model } }};
+    for ([_]struct { patch: config.ModelPatch, id: []const u8, location: []const u8 }{
+        .{ .patch = .{ .provider = "demo" }, .id = "explicit-model", .location = "--provider" },
+        .{ .patch = .{ .provider = "demo", .selection = "another" }, .id = "another", .location = "--model" },
+        .{ .patch = .{ .provider = "ignored", .selection = "demo/vendor/custom" }, .id = "vendor/custom", .location = "--model" },
+    }) |case| {
+        const settings = try call.resolve(arena.allocator(), .{
+            .cwd = invocation_cwd,
+            .layers = layers,
+            .model_patch = case.patch,
+        });
+        try same(case.id, settings.runtime.model.id);
+        try same("https://fixture.invalid/v1/responses", settings.runtime.model.endpoint);
+        try equal(@as(u32, 4096), settings.runtime.model.max_output_tokens);
+        const origin = try sourceOf(settings, "model.id");
+        try equal(foo.config.Source.command_line, origin.source);
+        try same(case.location, origin.location.?);
+    }
+}
+
+test "changing the provider origin requires an explicit replacement credential" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var call: Request = .{};
+    const layers = [_]config.Layer{
+        .{ .source = .file, .location = "user.json", .data = .{ .json = @embedFile("fixtures/deepseek.json") } },
+        .{ .source = .file, .location = "project.json", .data = .{ .json =
+        \\{"providers":{"deepseek":{"base_url":"https://other.invalid/v1","family":"openai_responses"}}}
+        } },
+        .{ .source = .environment, .location = "FOO_CONFIG", .data = .{ .json =
+        \\{"providers":{"deepseek":{"credential":null}}}
+        } },
+    };
+    try std.testing.expectError(error.InvalidConfiguration, call.resolve(arena.allocator(), .{
+        .cwd = invocation_cwd,
+        .layers = layers[0..2],
+    }));
+    const diagnostic = call.diagnostic.?;
+    try expect(diagnostic.reason == .missing_value);
+    try same("providers.deepseek.credential", diagnostic.path);
+    try same("project.json", diagnostic.location.?);
+
+    const cleared = try call.resolve(arena.allocator(), .{ .cwd = invocation_cwd, .layers = &layers });
+    try expect(cleared.runtime.model.credential == .none);
+    try equal(0, cleared.runtime.model.headers.len);
+    try same("https://other.invalid/v1/responses", cleared.runtime.model.endpoint);
+    try same("FOO_CONFIG", (try sourceOf(cleared, "model.credential")).location.?);
+    try std.testing.expectError(error.MissingProvenance, sourceOf(cleared, "providers.deepseek.headers"));
+
+    const reset = try call.resolve(arena.allocator(), .{
+        .cwd = invocation_cwd,
+        .layers = layers[0..2],
+        .model_patch = .{ .credential_env = "NEW_KEY" },
+    });
+    try same("NEW_KEY", reset.runtime.model.credential.environment);
+    try equal(0, reset.runtime.model.headers.len);
+}
+
+test "model endpoint preserves its path and receives only same-origin inherited auth" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var call: Request = .{};
+    const settings = try call.resolve(arena.allocator(), .{
+        .cwd = invocation_cwd,
+        .layers = &.{
+            .{ .source = .file, .data = .{ .json = @embedFile("fixtures/deepseek.json") } },
+            .{ .source = .file, .location = "gateway.json", .data = .{ .json =
+            \\{"providers":{"deepseek":{"models":{"deepseek-v4-pro":{"endpoint":"https://gateway.invalid/per-model"}}}}}
+            } },
+        },
+    });
+    try same("https://gateway.invalid/per-model", settings.runtime.model.endpoint);
+    try expect(settings.runtime.model.credential == .none);
+    try equal(0, settings.runtime.model.headers.len);
+    const origin = try sourceOf(settings, "model.endpoint");
+    try same("gateway.json", origin.location.?);
+    try same("providers.deepseek.models.deepseek-v4-pro.endpoint", origin.input_key.?);
+}
+
+test "show redacts literals and queries in every provider and model" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var call: Request = .{};
+    const settings = try call.resolve(allocator, .{
+        .cwd = invocation_cwd,
+        .layers = &.{.{ .source = .file, .data = .{ .json =
+        \\{"providers":{
+        \\ "gateway":{"family":"openai_chat","base_url":"https://host.invalid?literal=provider-query-secret",
+        \\ "credential":{"literal":"literal-key-secret"},"headers":[{"name":"X-Trace","value":"literal-header-secret"}],
+        \\ "options":{"long":"provider-option-secret"},"models":{"chosen":{"options":{"short":"model-option-secret"},
+        \\ "endpoint":"https://host.invalid/choose?literal=model-query-secret"}}},
+        \\ "oauth":{"family":"openai_responses","base_url":"https://auth.invalid","credential":{"auth":"auth-profile"},"models":{"spare":{}}}
+        \\},"model":"gateway/chosen"}
+        } }},
+    });
+    try same("literal-key-secret", settings.runtime.model.credential.literal);
+    try same("literal-header-secret", settings.runtime.model.headers[0].value.literal);
+    try same("auth-profile", settings.providers.get("oauth").?.credential.auth);
+    const rendered = try config.effectiveJson(allocator, settings);
+    for ([_][]const u8{
+        "provider-query-secret",  "literal-key-secret",  "literal-header-secret",
+        "provider-option-secret", "model-option-secret", "model-query-secret",
+    }) |secret| try expect(!has(rendered, secret));
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, allocator, rendered, .{});
+    const providers = parsed.object.get("providers").?.object;
+    const gateway = providers.get("gateway").?.object;
+    const chosen = gateway.get("models").?.object.get("chosen").?.object;
+    try same("<redacted>", gateway.get("credential").?.object.get("literal").?.string);
+    try same("https://host.invalid/choose?<redacted>", chosen.get("endpoint").?.string);
+    try same("auth-profile", providers.get("oauth").?.object.get("credential").?.object.get("auth").?.string);
+}
+
+test "old model objects get the migration message and their own file location" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var call: Request = .{};
+    try std.testing.expectError(error.InvalidConfiguration, call.resolve(arena.allocator(), .{
+        .cwd = invocation_cwd,
+        .layers = &.{.{ .source = .file, .location = "old.json", .data = .{ .json = "{\"model\":{\"id\":\"old-model\"}}" } }},
+    }));
+    const diagnostic = call.diagnostic.?;
+    try same("model", diagnostic.path);
+    try expect(diagnostic.reason == .invalid_value);
+    try same("old.json", diagnostic.location.?);
+    try same("model is a string \"provider/id\"; define providers under \"providers\"", diagnostic.message.?);
+}
+
+test "long provider IDs do not amplify empty entries and bound generated paths" {
+    const storage = try std.testing.allocator.alloc(u8, 16 * 1024 * 1024);
+    defer std.testing.allocator.free(storage);
+    var provider_id: [32 * 1024]u8 = undefined;
+    @memset(&provider_id, 'p');
+    for ([_]bool{ false, true }) |has_fields| {
+        var json = std.Io.Writer.Allocating.init(std.testing.allocator);
+        defer json.deinit();
+        try json.writer.print(
+            "{{\"model\":\"{s}/m0\",\"providers\":{{\"{s}\":{{\"family\":\"openai_chat\",\"base_url\":\"https://example.invalid\",\"models\":{{",
+            .{ &provider_id, &provider_id },
+        );
+        for (0..1024) |index| {
+            if (index != 0) try json.writer.writeByte(',');
+            try json.writer.print("\"m{d}\":{s}", .{ index, if (has_fields) "{\"max_output_tokens\":123}" else "{}" });
+        }
+        try json.writer.writeAll("}}}}");
+
+        var fixed = std.heap.FixedBufferAllocator.init(storage);
+        var arena = std.heap.ArenaAllocator.init(if (has_fields) std.testing.allocator else fixed.allocator());
+        defer arena.deinit();
+        var call: Request = .{};
+        const result = call.resolve(arena.allocator(), .{
+            .cwd = invocation_cwd,
+            .layers = &.{.{ .source = .file, .data = .{ .json = json.written() } }},
+        });
+        if (has_fields) {
+            try std.testing.expectError(error.LimitExceeded, result);
+            try expect(call.diagnostic.?.reason == .limit_exceeded);
+        } else {
+            const effective = try result;
+            try same("m0", effective.runtime.model.id);
+            try equal(1024, effective.providers.get(&provider_id).?.models.len);
+        }
+    }
 }

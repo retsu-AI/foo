@@ -1,14 +1,30 @@
 {
   "version": 1,
-  "model": {
-    "family": "openai_chat",
-    "endpoint": "https://gateway.invalid/v1/chat/completions",
-    "id": "gateway-model",
-    "credential": {"environment": "GATEWAY_API_KEY"},
-    "headers": [{"name": "x-tenant", "value": "example"}],
-    "options": {"chat_litellm": true, "chat_reasoning_content": true},
-    "max_output_tokens": 4096
+  "providers": {
+    "gateway": {
+      "family": "openai_chat",
+      "base_url": "https://gateway.invalid/v1",
+      "credential": {"environment": "GATEWAY_API_KEY"},
+      "headers": [{"name": "x-tenant", "value": "example"}],
+      "options": {"chat_litellm": true, "chat_reasoning_content": true},
+      "models": {
+        "gateway-model": {"max_output_tokens": 4096},
+        "gateway-small": {"name": "Gateway Small", "max_output_tokens": 2048}
+      }
+    },
+    "anthropic": {
+      "family": "anthropic_messages",
+      "base_url": "https://anthropic.invalid/v1",
+      "credential": {"environment": "ANTHROPIC_API_KEY"},
+      "models": {
+        "claude": {
+          "endpoint": "https://anthropic.invalid/custom/messages",
+          "max_output_tokens": 8192
+        }
+      }
+    }
   },
+  "model": "gateway/gateway-model",
   "cwd": "../../..",
   "system_prompt": {"text": "Inspect files before editing. Report the checks you ran.", "append_files": []},
   "enabled_tools": ["read", "format_check"],

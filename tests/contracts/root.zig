@@ -432,6 +432,22 @@ test "resolved configuration requires an explicit model and nonzero bounds" {
     try std.testing.expectError(error.InvalidConfiguration, settings.validate());
 }
 
+test "providers describe shared defaults and individual model endpoints" {
+    const provider: foo.config.Provider = .{
+        .family = .openai_responses,
+        .base_url = "https://fixture.invalid/v1",
+        .credential = .{ .auth = "fixture-login" },
+        .models = &.{
+            .{ .id = "default" },
+            .{ .id = "custom", .name = "Custom", .endpoint = "https://fixture.invalid/custom", .max_output_tokens = 2048 },
+        },
+    };
+    try std.testing.expectEqualStrings("fixture-login", provider.credential.auth);
+    try std.testing.expectEqual(@as(u32, 4096), provider.models[0].max_output_tokens);
+    try std.testing.expectEqual(null, provider.models[0].endpoint);
+    try std.testing.expectEqualStrings("https://fixture.invalid/custom", provider.models[1].endpoint.?);
+}
+
 fn copyUnderAllocationFailure(allocator: std.mem.Allocator) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
