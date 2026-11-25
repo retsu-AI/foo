@@ -1,0 +1,27 @@
+{
+  "repository": "retsu-AI/foo",
+  "run": 45531957745,
+  "commit": "0f4534afa753193cf55a275d45d2855bb0e3186f",
+  "zig_version": "0.17.1",
+  "optimize": "ReleaseSafe",
+  "targets": {
+    "x86_64-linux": {
+      "runner": "ubuntu-24.04",
+      "archive": "foo-0f4534afa753-x86_64-linux.tar.gz",
+      "sha256": "29a47dd5c6fd91e55c712c0f94fd52909b187a40c27bca1d380cafa4e8245388",
+      "cpu": "x86_64"
+    },
+    "aarch64-macos": {
+      "runner": "macos-15",
+      "archive": "foo-0f4534afa753-aarch64-macos.tar.gz",
+      "sha256": "22d7071eda14ab58d1d2619d94a0d80b8ef3069181df0de1af32b3aba05f74cc",
+      "cpu": "apple_m1"
+    },
+    "x86_64-windows": {
+      "runner": "windows-2022",
+      "archive": "foo-0f4534afa753-x86_64-windows.zip",
+      "sha256": "17b89f8d35ce53e20d42ed3990129e7b819de6ba156f4a319de384ea769c9833",
+      "cpu": "x86_64"
+    }
+  }
+}

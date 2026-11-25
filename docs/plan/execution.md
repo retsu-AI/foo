@@ -69,7 +69,7 @@ finishable(package) = every(package.dependencies, status == complete)
 
 Use `in_progress` only after assignment and worktree creation; `review` means a concrete patch and handoff are ready; `complete` means the reviewed package was integrated and its package acceptance passed. `blocked` must name the missing prerequisite. A queued task, authored test, green fake test, merged module, cross-compiled binary, live protocol test, and qualified release are different evidence states.
 
-The [work-package board](index.html#packages) computes availability using the manifest. F12 integrates the candidate for F13. Linear holds current assignments and workflow state. F13 may author fixtures now, but remains incomplete until native and live qualification is done against F12's candidate. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
+The [work-package board](index.html#packages) computes availability using the manifest. F12 integrates the candidate for F13. Linear holds current assignments and workflow state. F13 owns the native acceptance corpus and the remaining live and manual qualification. F12 produces a release candidate; it does not declare that release qualified or authorize publishing it.
 
 ## Build commands and remaining targets
 
