@@ -134,53 +134,55 @@ Lanes 1 to 7 and 10 passed at the PR head with text captures instead of screensh
 
 **Files.**
 
-- [ ] Edit `src/contracts/events.zig`. `Stop` at line 7 and `Outcome` at line 8.
-- [ ] Edit `src/core/root.zig`. The provider error mapping at line 218 and `ioStop` at line 484.
-- [ ] Edit `src/providers/root.zig`. `Exchange.head` at line 152.
-- [ ] Edit `src/contracts/io.zig`. The `Error` set at line 3. Edit `src/transport/root.zig` `curlResult` at line 293.
-- [ ] Edit `src/cli/root.zig`. `Exit.fromOutcome` at line 67 and the terminal report.
-- [ ] Edit `src/tui/root.zig` line 237 and `src/acp/projection.zig` line 12.
-- [ ] Edit `src/cli/README.md` for the JSONL record and the `tests/core`, `tests/cli`, and `tests/acp` fixtures that assert `provider_error`.
+- [x] Edit `src/contracts/events.zig`. `Stop` at line 7 and `Outcome` at line 8.
+- [x] Edit `src/core/root.zig`. The provider error mapping at line 218 and `ioStop` at line 484.
+- [x] Edit `src/providers/root.zig`. `Exchange.head` at line 152.
+- [x] Edit `src/contracts/io.zig`. The `Error` set at line 3. Edit `src/transport/root.zig` `curlResult` at line 293.
+- [x] Edit `src/cli/root.zig`. `Exit.fromOutcome` at line 67 and the terminal report.
+- [x] Edit `src/tui/root.zig` line 237 and `src/acp/projection.zig` line 12.
+- [x] Edit `src/cli/README.md` for the JSONL record and the `tests/core`, `tests/cli`, and `tests/acp` fixtures that assert `provider_error`.
 
 **Build.**
 
-- [ ] Add `Outcome.detail: ?Detail`. `Detail` is `union(enum) { authentication: struct { endpoint: []const u8, status: ?u16 }, rate_limited: struct { endpoint: []const u8, retry_after_ms: ?u64 }, rejected: struct { endpoint: []const u8, status: u16 }, transport: struct { endpoint: []const u8, kind: enum { trust, connect, disconnected, deadline } } }`. `Stop` keeps its seven variants. A `provider_error` outcome always carries a `detail`.
-- [ ] Add `Exchange.status: ?u16` and `Exchange.retry_after_ms: ?u64` in `src/providers/root.zig` and fill them in `head()` so the status and `retry-after` header travel with `error.Authentication`, `error.RateLimited`, and `error.Rejected`. Map a curl TLS verification failure to `kind = .trust` by adding `error.Untrusted` to `foo.io.Error` at `src/contracts/io.zig:3`, returning it from `curlResult` at `src/transport/root.zig:293` for `CURLE_PEER_FAILED_VERIFICATION`, and mapping it to `transport.kind = .trust` in core.
-- [ ] In `src/core/root.zig`, map `error.Authentication`, `error.RateLimited`, `error.Rejected`, `error.Untrusted`, `error.Unavailable`, and `error.Disconnected` to the matching `Detail` with the endpoint from `settings.model.endpoint`.
-- [ ] In `src/cli/root.zig`, print one line per detail. `foo: authentication failed for <endpoint> (HTTP 401). Set <VAR>` for an environment credential. `foo: rate limited by <endpoint>, retry after 2 s`. `foo: could not reach <endpoint>: certificate not trusted`. `foo: <endpoint> rejected the request (HTTP 400)`. Keep the `provider` exit code. U05 changes the second sentence for `auth` credentials.
-- [ ] In `src/tui/root.zig`, show the same line in the status row. In `src/acp/projection.zig`, put the line in the stop update's message.
-- [ ] Emit `detail` in the JSONL `rpc` outcome record. The field is optional and additive. Document it in `src/cli/README.md`.
+- [x] Add `Outcome.detail: ?Detail`. `Detail` is `union(enum) { authentication: struct { endpoint: []const u8, status: ?u16 }, rate_limited: struct { endpoint: []const u8, retry_after_ms: ?u64 }, rejected: struct { endpoint: []const u8, status: u16 }, transport: struct { endpoint: []const u8, kind: enum { trust, connect, disconnected, deadline } } }`. `Stop` keeps its seven variants. A `provider_error` outcome always carries a `detail`.
+- [x] Add `Exchange.status: ?u16` and `Exchange.retry_after_ms: ?u64` in `src/providers/root.zig` and fill them in `head()` so the status and `retry-after` header travel with `error.Authentication`, `error.RateLimited`, and `error.Rejected`. Map a curl TLS verification failure to `kind = .trust` by adding `error.Untrusted` to `foo.io.Error` at `src/contracts/io.zig:3`, returning it from `curlResult` at `src/transport/root.zig:293` for `CURLE_PEER_FAILED_VERIFICATION`, and mapping it to `transport.kind = .trust` in core.
+- [x] In `src/core/root.zig`, map `error.Authentication`, `error.RateLimited`, `error.Rejected`, `error.Untrusted`, `error.Unavailable`, and `error.Disconnected` to the matching `Detail` with the endpoint from `settings.model.endpoint`.
+- [x] In `src/cli/root.zig`, print one line per detail. `foo: authentication failed for <endpoint> (HTTP 401). Set <VAR>` for an environment credential. `foo: rate limited by <endpoint>, retry after 2 s`. `foo: could not reach <endpoint>: certificate not trusted`. `foo: <endpoint> rejected the request (HTTP 400)`. Keep the `provider` exit code. U05 changes the second sentence for `auth` credentials.
+- [x] In `src/tui/root.zig`, show the same line in the status row. In `src/acp/projection.zig`, put the line in the stop update's message.
+- [x] Emit `detail` in the JSONL `rpc` outcome record. The field is optional and additive. Document it in `src/cli/README.md`.
 
 **You see.**
 
-- [ ] `zig-out/bin/foo run --prompt hi --config /tmp/opencode/ca-proto/probe.json` prints `foo: authentication failed for https://api.openai.com/v1/chat/completions (HTTP 401). Set OPENAI_API_KEY` and exits with code 4.
-- [ ] The same run with `FOO_CA_FILE=tests/transport/tls/unrelated-ca.pem` prints `foo: could not reach https://api.openai.com/v1/chat/completions: certificate not trusted`.
+- [x] `zig-out/bin/foo run --prompt hi --config /tmp/opencode/ca-proto/probe.json` prints `foo: authentication failed for https://api.openai.com/v1/chat/completions (HTTP 401). Set OPENAI_API_KEY` and exits with code 4.
+- [x] The same run with `FOO_CA_FILE=tests/transport/tls/unrelated-ca.pem` prints `foo: could not reach https://api.openai.com/v1/chat/completions: certificate not trusted`.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `tests/core/root.zig` gains one scripted case per `Detail` variant through the fake provider's failure modes. Run `nix develop .#ci -c zig build test -Dmodule=core`.
-- [ ] `tests/providers/root.zig` gains a 429 case with `retry-after: 2` asserting `retry_after_ms == 2000`. Run `nix develop .#ci -c zig build test -Dmodule=providers`.
-- [ ] `tests/cli/check.py` gains a JSONL fixture with a `detail` object on the outcome record. Run `nix develop .#ci -c zig build test -Dmodule=cli`.
+- [x] `tests/core/root.zig` gains one scripted case per `Detail` variant through the fake provider's failure modes. Run `nix develop .#ci -c zig build test -Dmodule=core`.
+- [x] `tests/providers/root.zig` gains a 429 case with `retry-after: 2` asserting `retry_after_ms == 2000`. Run `nix develop .#ci -c zig build test -Dmodule=providers`.
+- [x] `tests/cli/check.py` gains a JSONL fixture with a `detail` object on the outcome record. Run `nix develop .#ci -c zig build test -Dmodule=cli`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` model at the PR head, per the boot recipe.
 
-- [ ] Lane 1. Regression lane against trunk. Run the probe config with no key at trunk and head. Save `detail-auth.png`. Pass when trunk prints `run ended with provider_error` and head prints the authentication line with HTTP 401.
-- [ ] Lane 2. Set the credential variable to `invalid`. Save `detail-bad-key.png`. Pass when the line names HTTP 401 and the variable.
-- [ ] Lane 3. Point `endpoint` at `https://127.0.0.1:9`. Save `detail-connect.png`. Pass when the line says `could not reach` and names the connect failure.
-- [ ] Lane 4. `FOO_CA_FILE=tests/transport/tls/unrelated-ca.pem` against `api.openai.com`. Save `detail-trust.png`. Pass when the line says `certificate not trusted`.
-- [ ] Lane 5. `foo rpc` with the failing config. Save `detail-rpc.png`. Pass when the outcome record has `detail.authentication.status == 401` and every other field matches trunk.
-- [ ] Lane 6. `foo tui` with the failing config. Save `detail-tui.png`. Pass when the status row shows the authentication line and the terminal restores on quit.
-- [ ] Lane 7. `foo acp` driven by `tests/acp/test_stdio.py` with a 401 loopback fixture. Save `detail-acp.png`. Pass when the stop update carries the message.
-- [ ] Lane 8. A loopback fixture returning 429 with `retry-after: 2`. Save `detail-429.png`. Pass when the line says `retry after 2 s`.
-- [ ] Lane 9. A loopback fixture returning 400. Save `detail-400.png`. Pass when the line says `rejected the request (HTTP 400)`.
-- [ ] Lane 10. Run `nix develop .#ci -c zig build check`. Save `detail-check.png`. Pass when every suite passes.
+- [x] Lane 1. Regression lane against trunk. Run the probe config with no key at trunk and head. Save `detail-auth.png`. Pass when trunk prints `run ended with provider_error` and head prints the authentication line with HTTP 401.
+- [x] Lane 2. Set the credential variable to `invalid`. Save `detail-bad-key.png`. Pass when the line names HTTP 401 and the variable.
+- [x] Lane 3. Point `endpoint` at `https://127.0.0.1:9`. Save `detail-connect.png`. Pass when the line says `could not reach` and names the connect failure.
+- [x] Lane 4. `FOO_CA_FILE=tests/transport/tls/unrelated-ca.pem` against `api.openai.com`. Save `detail-trust.png`. Pass when the line says `certificate not trusted`.
+- [x] Lane 5. `foo rpc` with the failing config. Save `detail-rpc.png`. Pass when the outcome record has `detail.authentication.status == 401` and every other field matches trunk.
+- [x] Lane 6. `foo tui` with the failing config. Save `detail-tui.png`. Pass when the status row shows the authentication line and the terminal restores on quit.
+- [x] Lane 7. `foo acp` driven by `tests/acp/test_stdio.py` with a 401 loopback fixture. Save `detail-acp.png`. Pass when the stop update carries the message.
+- [x] Lane 8. A loopback fixture returning 429 with `retry-after: 2`. Save `detail-429.png`. Pass when the line says `retry after 2 s`.
+- [x] Lane 9. A loopback fixture returning 400. Save `detail-400.png`. Pass when the line says `rejected the request (HTTP 400)`.
+- [x] Lane 10. Run `nix develop .#ci -c zig build check`. Save `detail-check.png`. Pass when every suite passes.
+
+Lanes 1 to 9 passed at the PR head with text captures instead of screenshots. Lanes 1, 2, 4, 5, 6, and 7 ran against `api.openai.com` with `OPENAI_API_KEY=invalid`, because no live key was present. Lane 1 also showed that an unset variable stops at the existing pre-run credential check, which prints `missing or invalid credential in environment variable OPENAI_API_KEY` and exits with `usage`. Lanes 3, 8, and 9 used a loopback fixture. Lane 6 drove `foo tui` through `tests/platform-terminal/pty_driver.py` at 160 columns. At 80 columns the status row truncates the line after `(HTTP 401)`. Lane 7 found the line in the JSON-RPC error message of the `session/prompt` response, because ACP has no error stop reason. Lane 10 passed on Linux.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. `foo run` wall time for a completed one-turn run against the `tests/integration` loopback provider, at trunk and head.
-- [ ] Probe. `hyperfine --warmup 3 -r 20` on the loopback run command, interleaved trunk and head.
-- [ ] Baseline. Record the trunk mean first.
-- [ ] Rule. Head mean is within 3 percent of trunk mean.
+- [x] Metric. `foo run` wall time for a completed one-turn run against the `tests/integration` loopback provider, at trunk and head.
+- [x] Probe. `hyperfine --warmup 3 -r 20` on the loopback run command, interleaved trunk and head.
+- [x] Baseline. Record the trunk mean first.
+- [x] Rule. Head mean is within 3 percent of trunk mean. Over four interleaved ReleaseSafe runs of 20, trunk measured 6.9 ms and 6.8 ms and head 6.7 ms and 6.5 ms, so head is not slower.
 
 **Review gate.** None. U02 is not review-gated.
 

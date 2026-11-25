@@ -5,6 +5,7 @@ const scripted = @import("fixture.zig");
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
+const expectEqualDeep = std.testing.expectEqualDeep;
 const expectEqualSlices = std.testing.expectEqualSlices;
 const expectEqualStrings = std.testing.expectEqualStrings;
 const Fixture = scripted.Fixture;
@@ -160,6 +161,66 @@ test "a possibly sent transport failure discards partial text and invalidates ag
     try expectEqualStrings("partial", fixture.delta_text.items);
 }
 
+test "every provider failure names its reason and the configured endpoint" {
+    const endpoint = scripted.model.endpoint;
+    const cases = [_]struct { step: scripted.Step, detail: foo.events.Detail }{
+        .{
+            .step = .{ .failure = error.Authentication, .status = .{ .status = 401 } },
+            .detail = .{ .authentication = .{ .endpoint = endpoint, .status = 401 } },
+        },
+        .{
+            .step = .{ .failure = error.RateLimited, .status = .{ .status = 429, .retry_after_ms = 2000 } },
+            .detail = .{ .rate_limited = .{ .endpoint = endpoint, .retry_after_ms = 2000 } },
+        },
+        .{
+            .step = .{ .failure = error.Rejected, .status = .{ .status = 400 } },
+            .detail = .{ .rejected = .{ .endpoint = endpoint, .status = 400 } },
+        },
+        .{
+            .step = .{ .failure = error.Unavailable, .status = .{ .status = 503 } },
+            .detail = .{ .rejected = .{ .endpoint = endpoint, .status = 503 } },
+        },
+        .{
+            .step = .{ .failure = error.Untrusted, .delivery = .unsent },
+            .detail = .{ .transport = .{ .endpoint = endpoint, .kind = .trust } },
+        },
+        .{
+            .step = .{ .failure = error.Unavailable, .delivery = .unsent },
+            .detail = .{ .transport = .{ .endpoint = endpoint, .kind = .connect } },
+        },
+        .{
+            .step = .{ .failure = error.Disconnected, .delivery = .unsent },
+            .detail = .{ .transport = .{ .endpoint = endpoint, .kind = .connect } },
+        },
+        .{
+            .step = .{ .failure = error.Disconnected },
+            .detail = .{ .transport = .{ .endpoint = endpoint, .kind = .disconnected } },
+        },
+        .{
+            .step = .{ .failure = error.Protocol },
+            .detail = .{ .protocol = .{ .endpoint = endpoint } },
+        },
+    };
+    for (cases) |case| {
+        var fixture: Fixture = .{ .steps = &.{case.step} };
+        defer fixture.deinit();
+
+        const report = try fixture.execute();
+        try fixture.expectTerminal(.provider_error, report);
+        try expectEqual(1, fixture.journal_outcomes.items.len);
+        try expectEqualDeep(@as(?foo.events.Detail, case.detail), report.outcome.detail);
+    }
+}
+
+test "a deadline during the provider request stays an interrupted run without detail" {
+    var fixture: Fixture = .{ .steps = &.{.{ .failure = error.DeadlineExceeded }} };
+    defer fixture.deinit();
+
+    const report = try fixture.execute();
+    try fixture.expectTerminal(.interrupted, report);
+    try expectEqual(null, report.outcome.detail);
+}
+
 test "provider refusal has a distinct terminal reason from natural stop" {
     var refused = answer;
     refused.stop = .refusal;
@@ -169,6 +230,7 @@ test "provider refusal has a distinct terminal reason from natural stop" {
     const report = try fixture.execute();
     try fixture.expectTerminal(.provider_error, report);
     try expectEqual(.refusal, report.outcome.provider_stop.?);
+    try expectEqual(null, report.outcome.detail);
     try expectEqual(1, fixture.requests.items.len);
     try expectEqual(0, fixture.invocations.items.len);
 }
@@ -184,7 +246,9 @@ test "a duplicate call ID or conflicting stop cannot dispatch a batch" {
         var fixture: Fixture = .{ .steps = &.{.{ .response = response }} };
         defer fixture.deinit();
 
-        try fixture.expectTerminal(.provider_error, try fixture.execute());
+        const report = try fixture.execute();
+        try fixture.expectTerminal(.provider_error, report);
+        try expectEqual(.protocol, std.meta.activeTag(report.outcome.detail.?));
         try expectEqual(0, fixture.invocations.items.len);
         try expectEqual(1, fixture.messages_published.items.len);
     }

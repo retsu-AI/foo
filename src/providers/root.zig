@@ -61,7 +61,7 @@ pub const Adapter = struct {
                         continue;
                     }
                 }
-                return failure;
+                return exchange.report(sink, failure);
             }
             exchanged catch |err| {
                 const transient = err == error.Unavailable or err == error.Disconnected;
@@ -142,6 +142,7 @@ const Exchange = struct {
     received: io.Budget,
     status: ?u16 = null,
     failure: ?p.Error = null,
+    retry_after_ms: ?u64 = null,
 
     fn init(a: std.mem.Allocator, backing: std.mem.Allocator, operation: io.Context, request: p.Request, sink: p.Sink) p.Error!Exchange {
         const limit = request.limits.wire_message_bytes;
@@ -161,6 +162,16 @@ const Exchange = struct {
         };
     }
 
+    fn report(self: *const Exchange, sink: p.Sink, err: p.Error) p.Error {
+        if (sink.failure) |failure| {
+            if (self.status) |status| {
+                if (status < 200 or status > 299) failure.status = status;
+            }
+            if (self.retry_after_ms) |ms| failure.retry_after_ms = ms;
+        }
+        return err;
+    }
+
     fn fail(self: *Exchange, err: p.Error) io.Error {
         self.failure = err;
         return error.IoFailure;
@@ -171,6 +182,11 @@ const Exchange = struct {
         try operation.check();
         if (self.status != null) return self.fail(error.Protocol);
         self.status = value.status;
+        if (value.status < 200 or value.status > 299) {
+            for (value.headers) |header| {
+                if (std.ascii.eqlIgnoreCase(header.name, "retry-after")) self.retry_after_ms = retryAfter(header.value);
+            }
+        }
         switch (value.status) {
             200...299 => {},
             401, 403 => return self.fail(error.Authentication),
@@ -225,6 +241,18 @@ const Exchange = struct {
         }
     }
 };
+
+/// Only delta-seconds; an HTTP-date needs a wall clock the adapter lacks.
+fn retryAfter(value: []const u8) ?u64 {
+    const digits = std.mem.trim(u8, value, " \t");
+    if (digits.len == 0) return null;
+    var seconds: u64 = 0;
+    for (digits) |digit| {
+        if (!std.ascii.isDigit(digit)) return null;
+        seconds = seconds *| 10 +| (digit - '0');
+    }
+    return seconds *| 1000;
+}
 
 fn mapFraming(err: framing.Error) p.Error {
     return switch (err) {

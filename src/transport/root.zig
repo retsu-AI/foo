@@ -298,6 +298,7 @@ fn curlResult(result: curl.CURLcode) io.Error!void {
     return switch (result) {
         curl.CURLE_OK => {},
         curl.CURLE_OPERATION_TIMEDOUT => error.DeadlineExceeded,
+        curl.CURLE_PEER_FAILED_VERIFICATION => error.Untrusted,
         curl.CURLE_OUT_OF_MEMORY => error.OutOfMemory,
         curl.CURLE_TOO_LARGE, curl.CURLE_FILESIZE_EXCEEDED => error.LimitExceeded,
         curl.CURLE_UNSUPPORTED_PROTOCOL, curl.CURLE_URL_MALFORMAT => error.InvalidInput,

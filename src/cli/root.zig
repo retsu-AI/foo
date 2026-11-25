@@ -314,7 +314,9 @@ fn runPlain(
     if (outcome.uncertain_effects) report(streams, operation.io, "unresolved tool effects", .{});
     if (plain.failure) |err| return failed(streams, operation, err);
     if (status != .success) {
-        report(streams, operation.io, "run ended with {s}", .{@tagName(outcome.reason)});
+        if (outcome.detail) |detail| {
+            report(streams, operation.io, "{f}", .{detail.reason(invocation.settings.model.credential)});
+        } else report(streams, operation.io, "run ended with {s}", .{@tagName(outcome.reason)});
         return status;
     }
     if (plain.last) |last| {

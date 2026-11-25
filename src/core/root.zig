@@ -171,7 +171,7 @@ const Run = struct {
             return switch (err) {
                 error.LimitExceeded => self.reach(.transcript_bytes),
                 error.OutOfMemory => error.OutOfMemory,
-                error.IncompatibleReplay => self.stop(.provider_error),
+                error.IncompatibleReplay => self.invalid(),
                 error.InvalidInput => self.stop(.host_error),
             };
     }
@@ -201,11 +201,13 @@ const Run = struct {
         try self.checkOperation();
         var stream: Stream = .{ .run = self, .budget = .{ .limit = settings.limits.wire_message_bytes } };
         var delivery: io.Delivery = .unsent;
+        var failure: provider.Failure = .{};
         self.report.model_turns += 1;
         const adapter = self.input.services.provider;
         const result = adapter.stream_fn(adapter.context, temporary, self.operation, request, .{
             .context = &stream,
             .emit_fn = Stream.emit,
+            .failure = &failure,
         }, &delivery);
         if (result) |response| {
             self.addUsage(response.usage);
@@ -217,26 +219,27 @@ const Run = struct {
         try self.checkOperation();
         const response = result catch |err| return switch (err) {
             error.LimitExceeded => self.reach(.wire_message_bytes),
-            else => self.stop(ioStop(err, .provider_error)),
+            error.Cancelled, error.DeadlineExceeded => self.stop(ioStop(err, .host_error)),
+            else => self.fail(providerDetail(err, failure, delivery, publicEndpoint(settings.model.endpoint))),
         };
         if (response.stop == .output_limit) return self.reach(.max_output_tokens);
-        if (response.message.role != .assistant) return self.stop(.provider_error);
+        if (response.message.role != .assistant) return self.invalid();
         if (validation.payloadBytes(response.message) > settings.limits.wire_message_bytes) return self.reach(.wire_message_bytes);
         try self.chargeTranscript(validation.messageBytes(response.message));
 
         var new_ids: std.StringHashMapUnmanaged(void) = .empty;
         var result_overhead: usize = 0;
         for (response.message.blocks) |block| {
-            validation.checkBlock(.assistant, block, settings.model) catch return self.stop(.provider_error);
+            validation.checkBlock(.assistant, block, settings.model) catch return self.invalid();
             if (block != .tool_call) continue;
             const id = block.tool_call.id;
-            if (self.call_ids.contains(id) or prepared_ids.contains(id)) return self.stop(.provider_error);
+            if (self.call_ids.contains(id) or prepared_ids.contains(id)) return self.invalid();
             const entry = try new_ids.getOrPut(temporary, id);
-            if (entry.found_existing) return self.stop(.provider_error);
+            if (entry.found_existing) return self.invalid();
             result_overhead +|= validation.block_overhead +| id.len;
         }
         const count = new_ids.count();
-        if ((response.stop == .tool_use) != (count != 0)) return self.stop(.provider_error);
+        if ((response.stop == .tool_use) != (count != 0)) return self.invalid();
         if (count > settings.limits.tool_calls - self.report.tool_calls) return self.reach(.tool_calls);
         try self.chargeTranscript(result_overhead);
         try self.call_ids.ensureUnusedCapacity(self.retained, count);
@@ -439,7 +442,17 @@ const Run = struct {
 
     fn stop(self: *Run, reason: events.Stop) error{Stopped} {
         self.report.outcome.reason = reason;
+        if (reason != .provider_error) self.report.outcome.detail = null;
         return error.Stopped;
+    }
+
+    fn fail(self: *Run, detail: events.Detail) error{Stopped} {
+        self.report.outcome.detail = detail;
+        return self.stop(.provider_error);
+    }
+
+    fn invalid(self: *Run) error{Stopped} {
+        return self.fail(.{ .protocol = .{ .endpoint = publicEndpoint(self.input.settings.model.endpoint) } });
     }
 
     fn reach(self: *Run, limit: Limit) error{Stopped} {
@@ -487,6 +500,30 @@ fn ioStop(err: anyerror, fallback: events.Stop) events.Stop {
         error.DeadlineExceeded => .interrupted,
         else => fallback,
     };
+}
+
+fn providerDetail(err: provider.Error, failure: provider.Failure, delivery: io.Delivery, endpoint: []const u8) events.Detail {
+    return switch (err) {
+        error.Authentication => .{ .authentication = .{ .endpoint = endpoint, .status = failure.status } },
+        error.RateLimited => .{ .rate_limited = .{ .endpoint = endpoint, .retry_after_ms = failure.retry_after_ms } },
+        error.Rejected, error.Unavailable => if (failure.status) |status|
+            .{ .rejected = .{ .endpoint = endpoint, .status = status } }
+        else if (err == error.Unavailable)
+            .{ .transport = .{ .endpoint = endpoint, .kind = .connect } }
+        else
+            .{ .protocol = .{ .endpoint = endpoint } },
+        error.Untrusted => .{ .transport = .{ .endpoint = endpoint, .kind = .trust } },
+        error.Disconnected, error.IoFailure => .{ .transport = .{
+            .endpoint = endpoint,
+            .kind = if (delivery == .unsent and failure.status == null) .connect else .disconnected,
+        } },
+        else => .{ .protocol = .{ .endpoint = endpoint } },
+    };
+}
+
+/// Outcomes reach journals and terminals; a query string can carry a key.
+fn publicEndpoint(endpoint: []const u8) []const u8 {
+    return endpoint[0 .. std.mem.indexOfAny(u8, endpoint, "?#") orelse endpoint.len];
 }
 
 fn hasSystemMessage(messages: []const provider.Message) bool {

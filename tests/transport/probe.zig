@@ -105,7 +105,7 @@ pub fn main(init: std.process.Init) !void {
         },
         .tls_failure, .platform_trust_failure => {
             try probe.exchange(request(url), .normal, null, 5000).expectError(
-                error.IoFailure,
+                error.Untrusted,
                 .unsent,
             );
         },

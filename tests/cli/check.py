@@ -257,6 +257,36 @@ class Cli(unittest.TestCase):
         limited = self.run_cli("run", "--stdin", *self.options(), data=b"a" * 1024)
         self.assertEqual((limited.returncode, limited.stdout), (3, b""))
 
+    def test_provider_failures_name_their_reason(self):
+        endpoint = "https://example.invalid/responses"
+        self.write_config(provider={"credential": {"environment": CREDENTIAL}})
+        environment = {**self.environment, CREDENTIAL: "fixture-key"}
+        for prompt, line in (
+            ("unauthorized", f"foo: authentication failed for {endpoint} (HTTP 401). Set {CREDENTIAL}\n"),
+            ("rate-limited", f"foo: rate limited by {endpoint}, retry after 2 s\n"),
+            ("provider-error", f"foo: {endpoint} sent an invalid response\n"),
+        ):
+            with self.subTest(prompt=prompt):
+                result = self.run_cli("run", "--prompt", prompt, *self.options(), env=environment)
+                self.assertEqual((result.returncode, result.stdout, result.stderr.decode()), (4, b"", line))
+
+    def test_rpc_result_carries_failure_detail(self):
+        with self.start("rpc", *self.options()) as child:
+            reader = Reader(child.stdout)
+            self.send(child, "auth", "prompt", prompt="unauthorized")
+            result = reader.until(lambda row: row.get("id") == "auth" and row["type"] == "result")
+            self.assertEqual(result["outcome"], {
+                "reason": "provider_error",
+                "uncertain_effects": False,
+                "detail": {"authentication": {"endpoint": "https://example.invalid/responses", "status": 401}},
+            })
+            self.send(child, "done", "prompt", prompt="hello")
+            result = reader.until(lambda row: row.get("id") == "done" and row["type"] == "result")
+            self.assertNotIn("detail", result["outcome"])
+            child.stdin.close()
+            reader.collect()
+            self.assertEqual(child.wait(timeout=TIMEOUT), 0)
+
     def test_resume_loads_committed_context_explicitly(self):
         missing_directory = self.run_cli("run", "--resume", "--prompt", "second", *self.options())
         self.assertEqual(missing_directory.returncode, 2)

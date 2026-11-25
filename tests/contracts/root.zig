@@ -497,3 +497,35 @@ test "duplex child keeps diagnostics separate and cleanup survives run cancellat
     try child.release_fn(child.context, cleanup);
     try std.testing.expectError(error.Unavailable, child.stdin.write(cleanup, "extra"));
 }
+
+test "outcome JSON omits a null detail and round-trips a present one" {
+    const plain: foo.events.Outcome = .{ .reason = .completed };
+    const bare = try std.json.Stringify.valueAlloc(std.testing.allocator, plain, .{});
+    defer std.testing.allocator.free(bare);
+    try std.testing.expectEqualStrings("{\"reason\":\"completed\",\"provider_stop\":null,\"uncertain_effects\":false}", bare);
+
+    const failed: foo.events.Outcome = .{ .reason = .provider_error, .detail = .{ .rejected = .{ .endpoint = "https://example.invalid", .status = 400 } } };
+    const encoded = try std.json.Stringify.valueAlloc(std.testing.allocator, failed, .{});
+    defer std.testing.allocator.free(encoded);
+    const parsed = try std.json.parseFromSlice(foo.events.Outcome, std.testing.allocator, encoded, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(u16, 400), parsed.value.detail.?.rejected.status);
+    try std.testing.expectEqualStrings("https://example.invalid", parsed.value.detail.?.rejected.endpoint);
+}
+
+test "authentication reason names the credential action" {
+    const detail: foo.events.Detail = .{ .authentication = .{ .endpoint = "https://example.invalid", .status = 401 } };
+    var buffer: [256]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "authentication failed for https://example.invalid (HTTP 401). Run foo auth login litellm",
+        try std.fmt.bufPrint(&buffer, "{f}", .{detail.reason(.{ .auth = "litellm" })}),
+    );
+    try std.testing.expectEqualStrings(
+        "authentication failed for https://example.invalid (HTTP 401). Set FIXTURE_KEY",
+        try std.fmt.bufPrint(&buffer, "{f}", .{detail.reason(.{ .environment = "FIXTURE_KEY" })}),
+    );
+    try std.testing.expectEqualStrings(
+        "authentication failed for https://example.invalid (HTTP 401)",
+        try std.fmt.bufPrint(&buffer, "{f}", .{detail.reason(.none)}),
+    );
+}

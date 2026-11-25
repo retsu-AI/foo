@@ -28,6 +28,7 @@ The adapter accepts text and resource links. Linked names and URIs reach the run
 | Cancelled | `cancelled` |
 | Provider output limit | `max_tokens` |
 | Provider refusal | `refusal` |
+| Other provider failures | Correlated JSON-RPC internal error whose message is the failure reason, for example `authentication failed for <endpoint> (HTTP 401)` |
 | Other limits or infrastructure failures | Correlated JSON-RPC error |
 
 The agent sends the active prompt's final response after its updates. Refused turns are excluded from subsequent prompts. Cancellation retires in-flight editor requests so a late response cannot approve a later tool operation. Approval applies to one prepared operation.

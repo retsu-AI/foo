@@ -514,7 +514,7 @@ pub fn array(object: Object, field: []const u8) Error![]const Value {
 fn mapped(err: Error) foo.io.Error {
     return switch (err) {
         error.Cancelled, error.DeadlineExceeded, error.LimitExceeded, error.Unavailable, error.InvalidInput, error.Disconnected, error.IoFailure, error.OutOfMemory => |common| common,
-        error.MalformedPeer => error.IoFailure,
+        error.MalformedPeer, error.Untrusted => error.IoFailure,
         else => error.Unavailable,
     };
 }

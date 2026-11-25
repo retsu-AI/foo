@@ -7,6 +7,7 @@ pub const Error = error{
     Unavailable,
     InvalidInput,
     Disconnected,
+    Untrusted,
     IoFailure,
     OutOfMemory,
 };

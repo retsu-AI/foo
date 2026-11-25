@@ -601,7 +601,7 @@ fn mcpError(err: anyerror) io.Error {
         error.LimitExceeded => error.LimitExceeded,
         error.OutOfMemory => error.OutOfMemory,
         error.Disconnected => error.Disconnected,
-        error.IoFailure => error.IoFailure,
+        error.IoFailure, error.Untrusted => error.IoFailure,
         else => error.Unavailable,
     };
 }

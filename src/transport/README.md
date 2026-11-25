@@ -55,8 +55,9 @@ the easy handle before freeing callback state. Client shutdown closes the pool.
 - Request validation returns `InvalidInput`. Size limits return
   `LimitExceeded`. `Client.init` returns `Unavailable` when the platform
   root store is empty.
-  Connection loss and premature EOF return `Disconnected`. TLS validation and
-  other backend failures return `IoFailure`. The adapter passes through errors
+  Connection loss and premature EOF return `Disconnected`. A peer certificate
+  or hostname that fails verification returns `Untrusted`. Other backend
+  failures return `IoFailure`. The adapter passes through errors
   from the caller's source and sink. It returns no native error text.
 
 ## Proxy and TLS

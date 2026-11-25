@@ -19,7 +19,7 @@ foo rpc --config profile.json
 
 `foo` and `zig build run` open the TUI with the user config when run without arguments. Use `foo --approve` or `zig build run -- --approve` to include the project's `.foo/config.json`. [Configuration paths and precedence](../config/README.md#configuration-files)
 
-`run` requires exactly one prompt source. `--stdin` reads UTF-8 until EOF and retains the bytes, including trailing newlines. Plain stdout contains committed assistant text. A successful nonempty output ends with a newline. Diagnostics go to stderr. The same output rules apply to terminals and pipes.
+`run` requires exactly one prompt source. `--stdin` reads UTF-8 until EOF and retains the bytes, including trailing newlines. Plain stdout contains committed assistant text. A successful nonempty output ends with a newline. Diagnostics go to stderr. A provider failure prints one reason line, such as `foo: authentication failed for <endpoint> (HTTP 401). Set <VARIABLE>`, `foo: rate limited by <endpoint>, retry after 2 s`, `foo: <endpoint> rejected the request (HTTP 400)`, `foo: could not reach <endpoint>: certificate not trusted`, or `foo: <endpoint> sent an invalid response`. The same output rules apply to terminals and pipes.
 
 Repeat `--config` to apply explicit files in command order. Set `--preset coding` to select the coding preset. Use `--provider`, `--model`, `--endpoint`, `--credential-env`, or `--cwd` to override values. See `foo --help` and the [configuration reference](../config/README.md).
 
@@ -67,7 +67,21 @@ While output is blocked, the command reader can still process cancel. The runner
 | 7 | Interrupted run. Review any unresolved tool effects before continuing. |
 | 130 | Cancellation or a handled process signal |
 
-In RPC mode, individual run outcomes are in `result.outcome`. The exit code describes the process transport. The process entrypoint handles SIGINT and SIGTERM on Linux and macOS and console Ctrl+C and Ctrl+Break on Windows. It joins active work before returning. Signal cancellation can interrupt a blocked stream while the runner completes cooperative cleanup.
+In RPC mode, individual run outcomes are in `result.outcome`. A `provider_error` outcome other than a refusal carries an optional `detail` object with one key:
+
+| Key | Fields |
+| --- | --- |
+| `authentication` | `endpoint`, optional `status` |
+| `rate_limited` | `endpoint`, optional `retry_after_ms` from a delta-seconds `retry-after` header |
+| `rejected` | `endpoint`, `status` |
+| `transport` | `endpoint`, `kind` of `trust`, `connect`, `disconnected`, or `deadline` |
+| `protocol` | `endpoint` |
+
+```json
+{"version":1,"id":"p1","run":1,"type":"result","outcome":{"reason":"provider_error","uncertain_effects":false,"detail":{"authentication":{"endpoint":"https://api.openai.com/v1/chat/completions","status":401}}}}
+```
+
+The endpoint omits any query string or fragment. The exit code describes the process transport. The process entrypoint handles SIGINT and SIGTERM on Linux and macOS and console Ctrl+C and Ctrl+Break on Windows. It joins active work before returning. Signal cancellation can interrupt a blocked stream while the runner completes cooperative cleanup.
 
 ## Integration and verification
 
