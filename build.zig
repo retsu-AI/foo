@@ -114,7 +114,11 @@ pub fn build(b: *std.Build) void {
         if (builtin.os.tag == .windows) addTransportPath(b, smoke, prefix);
         integration.dependOn(&smoke.step);
 
-        const release_cpu = std.Target.Cpu.baseline(target.result.cpu.arch, target.result.os);
+        var baseline_query = target.query;
+        baseline_query.cpu_model = .baseline;
+        baseline_query.cpu_features_add = .empty;
+        baseline_query.cpu_features_sub = .empty;
+        const release_cpu = b.resolveTargetQuery(baseline_query).result.cpu;
         if (optimize != .safe) {
             release_step.dependOn(&b.addFail("Use -Doptimize=ReleaseSafe to build a candidate").step);
         } else if (target.result.cpu.model != release_cpu.model or !target.result.cpu.features.eql(release_cpu.features)) {
