@@ -164,7 +164,9 @@ const Exchange = struct {
 
     fn report(self: *const Exchange, sink: p.Sink, err: p.Error) p.Error {
         if (sink.failure) |failure| {
-            if (self.status) |status| failure.status = status;
+            if (self.status) |status| {
+                if (status < 200 or status > 299) failure.status = status;
+            }
             if (self.retry_after_ms) |ms| failure.retry_after_ms = ms;
         }
         return err;

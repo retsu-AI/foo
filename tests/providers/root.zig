@@ -666,6 +666,7 @@ test "protocol error events abort without committing the partial response" {
         } else |failure| {
             try expect(failure != error.Disconnected);
         }
+        try equal(provider.Failure{}, run.failure);
         try same("Café ☕", run.recorded_text.items);
         try equal(io.Delivery.possibly_sent, run.delivery);
         try equal(1, wire.calls);
