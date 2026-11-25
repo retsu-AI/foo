@@ -884,3 +884,39 @@ test "only a bearer with a registered refresh token can retry an HTTP 401" {
         }
     }
 }
+
+test "openai-codex sends the stored bearer, account header and Responses body to the ChatGPT backend" {
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var run: Run = .{ .allocator = a };
+    const operation: io.Context = .{ .io = std.testing.io, .cancellation = &run.cancellation, .clock = run.clock.interface() };
+    const store = auth.Store{ .directory = try tmp.dir.realPathFileAlloc(operation.io, ".", a) };
+    try store.put(a, operation, "openai-codex", .{ .oauth = .{
+        .access = "codex-access",
+        .refresh = "codex-refresh",
+        .expires_ms = std.math.maxInt(i64),
+        .account = "codex-account",
+    } });
+    var wire: Wire = .{ .allocator = a, .body = profiles[0].body };
+    const resolver = auth.Resolver{ .store = store };
+    var adapter: providers.Adapter = .{ .transport = wire.transport(), .credentials = resolver.interface() };
+    var request = requestFor(.openai_responses, "https://chatgpt.com/backend-api/codex/responses");
+    request.model.id = "gpt-6.1-terra";
+    request.model.credential = .{ .auth = "openai-codex" };
+    request.model.headers = &.{.{ .name = "originator", .value = .{ .literal = "foo" } }};
+    _ = try run.stream(&adapter, request);
+    try same("https://chatgpt.com/backend-api/codex/responses", wire.url);
+    try same("Bearer codex-access", wire.header("authorization").?);
+    try same("codex-account", wire.header("chatgpt-account-id").?);
+    try same("foo", wire.header("originator").?);
+    const json = try parse(a, wire.request_body);
+    try expect(is(json, "model", "gpt-6.1-terra"));
+    try equal(false, (try member(json, "store")).bool);
+    try same("reasoning.encrypted_content", (try member(json, "include")).array.items[0].string);
+
+    request.model.headers = &.{.{ .name = "ChatGPT-Account-Id", .value = .{ .literal = "other" } }};
+    try std.testing.expectError(error.InvalidInput, run.stream(&adapter, request));
+}

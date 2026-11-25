@@ -358,6 +358,54 @@ test "device polling waits while pending and slows down when asked" {
     try testing.expectEqualSlices(u64, &.{ 2_000, 1_000 }, State.waits[0..State.count]);
 }
 
+test "Codex device login exchanges the returned code with the device redirect" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const access = try jwt(a, account_claims);
+    const tokens = try std.fmt.allocPrint(a, "{{\"access_token\":\"{s}\",\"refresh_token\":\"r1\",\"expires_in\":36000}}", .{access});
+    var fixture: Fixture = .{ .a = a, .replies = &.{
+        .{ .url = "https://auth.openai.com/api/accounts/deviceauth/usercode", .body = "{\"device_auth_id\":\"dev-1\",\"user_code\":\"ABCD-1234\",\"interval\":\"5\"}" },
+        .{ .url = "https://auth.openai.com/api/accounts/deviceauth/token", .body = "{\"authorization_code\":\"code-1\",\"code_verifier\":\"verifier-1\"}" },
+        .{ .url = "https://auth.openai.com/oauth/token", .body = tokens },
+    } };
+    var shown: Shown = .{};
+    defer shown.notices.deinit(allocator);
+    const flow = auth.findFlow(auth.flows, "openai-codex").?;
+    const before = std.Io.Timestamp.now(io, .real).toMilliseconds();
+    const result = try flow.device.?(.{ .a = a, .operation = operation(), .http = fixture.transport(), .prompt = shown.prompt() });
+    try same(access, result.access);
+    try same("r1", result.refresh.?);
+    try same("acct-fixture", result.account.?);
+    try expect(result.expires_ms >= before + 36_000_000);
+    try same("https://auth.openai.com/codex/device", shown.notices.items[0].device_code.uri);
+    try same("ABCD-1234", shown.notices.items[0].device_code.code);
+    try same("{\"client_id\":\"app_EMoamEEZ73f0CkXaXp7hrann\"}", fixture.bodies.items[0]);
+    try same("{\"device_auth_id\":\"dev-1\",\"user_code\":\"ABCD-1234\"}", fixture.bodies.items[1]);
+    try same("grant_type=authorization_code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&code=code-1&code_verifier=verifier-1&redirect_uri=https%3A%2F%2Fauth.openai.com%2Fdeviceauth%2Fcallback", fixture.bodies.items[2]);
+}
+
+test "Codex refresh keeps the refresh token and reads the account from the new access token" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const access = try jwt(a, account_claims);
+    const tokens = try std.fmt.allocPrint(a, "{{\"access_token\":\"{s}\",\"expires_in\":36000}}", .{access});
+    var fixture: Fixture = .{ .a = a, .replies = &.{
+        .{ .url = "https://auth.openai.com/oauth/token", .body = tokens },
+        .{ .url = "https://auth.openai.com/oauth/token", .status = 400, .body = "{\"error\":\"invalid_grant\"}" },
+    } };
+    const flow = auth.findFlow(auth.flows, "openai-codex").?;
+    try same("chatgpt-account-id", flow.account_header.?);
+    const request: auth.Refresh = .{ .a = a, .operation = operation(), .http = fixture.transport(), .current = oauth };
+    const result = try flow.refresh.?(request);
+    try same(access, result.access);
+    try same("old-refresh", result.refresh.?);
+    try same("acct-fixture", result.account.?);
+    try same("grant_type=refresh_token&client_id=app_EMoamEEZ73f0CkXaXp7hrann&refresh_token=old-refresh", fixture.bodies.items[0]);
+    try testing.expectError(error.Authentication, flow.refresh.?(request));
+}
+
 test "resolver refreshes an expiring token before use and fills the flow's account header" {
     var tmp = testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
