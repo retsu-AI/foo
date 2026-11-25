@@ -404,6 +404,11 @@ test "Codex refresh keeps the refresh token and reads the account from the new a
     try same("acct-fixture", result.account.?);
     try same("grant_type=refresh_token&client_id=app_EMoamEEZ73f0CkXaXp7hrann&refresh_token=old-refresh", fixture.bodies.items[0]);
     try testing.expectError(error.Authentication, flow.refresh.?(request));
+
+    var bare: Fixture = .{ .a = a, .replies = &.{.{ .url = "https://auth.openai.com/oauth/token", .body = "{\"access_token\":\"opaque-access\",\"expires_in\":36000}" }} };
+    const without_claim = try flow.refresh.?(.{ .a = a, .operation = operation(), .http = bare.transport(), .current = oauth });
+    try same("opaque-access", without_claim.access);
+    try equal(null, without_claim.account);
 }
 
 test "resolver refreshes an expiring token before use and fills the flow's account header" {
@@ -449,6 +454,17 @@ test "resolver refreshes an expiring token before use and fills the flow's accou
     try same(access, saved.access);
     try same("r0", saved.refresh.?);
     try expect(saved.expires_ms >= now + 36_000_000);
+
+    var failing: Fixture = .{ .a = a, .replies = &.{
+        .{ .url = "https://issuer.invalid/token", .status = 503, .body = "" },
+        .{ .url = "https://issuer.invalid/token", .status = 503, .body = "" },
+    } };
+    const offline = auth.Resolver{ .store = store, .registry = &.{Service.flow}, .http = failing.transport() };
+    try store.put(allocator, operation(), "service", .{ .oauth = .{ .access = "closing-access", .refresh = "r1", .expires_ms = now + 30_000, .account = "acct-stored" } });
+    try same("closing-access", (try offline.interface().resolve(a, operation(), .{ .auth = "service" })).bearer.token);
+    try store.put(allocator, operation(), "service", .{ .oauth = .{ .access = "expired-access", .refresh = "r1", .expires_ms = now - 1_000, .account = "acct-stored" } });
+    try expect(std.meta.isError(offline.interface().resolve(a, operation(), .{ .auth = "service" })));
+    try equal(2, failing.calls);
 
     try store.put(allocator, operation(), "gateway", .{ .oauth = oauth });
     const unregistered = (try source.resolve(a, operation(), .{ .auth = "gateway" })).bearer;

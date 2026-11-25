@@ -123,7 +123,12 @@ pub const Resolver = struct {
         if (flow) |registered| {
             const now_ms = std.Io.Timestamp.now(operation.io, .real).toMilliseconds();
             if (current.expires_ms -| now_ms < refresh_window_ms) {
-                if (try self.renew(scratch.allocator(), operation, registered, current)) |latest| current = latest;
+                // A token that has not expired yet stays usable when the refresh endpoint fails.
+                const renewed = self.renew(scratch.allocator(), operation, registered, current) catch |err| switch (err) {
+                    error.Cancelled, error.OutOfMemory => |e| return e,
+                    else => if (current.expires_ms > now_ms) null else return err,
+                };
+                if (renewed) |latest| current = latest;
             }
         }
         const token = try a.dupe(u8, current.access);

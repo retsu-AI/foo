@@ -89,7 +89,7 @@ fn device(login: root.Login) Error!OAuth {
 
 fn refresh(request: root.Refresh) Error!OAuth {
     const http: oauth.Client = .{ .a = request.a, .operation = request.operation, .http = request.http };
-    return credential(request.a, try http.refresh(token_url, client_id, request.current));
+    return tokenCredential(request.a, try http.refresh(token_url, client_id, request.current), .optional);
 }
 
 fn client(login: root.Login) oauth.Client {
@@ -97,10 +97,15 @@ fn client(login: root.Login) oauth.Client {
 }
 
 fn credential(a: std.mem.Allocator, tokens: oauth.Tokens) Error!OAuth {
+    return tokenCredential(a, tokens, .required);
+}
+
+/// A refresh may omit the claim; the resolver then keeps the stored account.
+fn tokenCredential(a: std.mem.Allocator, tokens: oauth.Tokens, account: enum { required, optional }) Error!OAuth {
     var result = tokens.oauth;
     if (result.refresh == null) return error.Authentication;
     result.account = oauth.jwtClaim(a, result.access, account_claim) orelse
-        oauth.jwtClaim(a, tokens.id_token orelse return error.Authentication, account_claim) orelse
-        return error.Authentication;
+        if (tokens.id_token) |id| oauth.jwtClaim(a, id, account_claim) else null;
+    if (result.account == null and account == .required) return error.Authentication;
     return result;
 }
