@@ -699,3 +699,40 @@ test "old model objects get the migration message and their own file location" {
     try same("old.json", diagnostic.location.?);
     try same("model is a string \"provider/id\"; define providers under \"providers\"", diagnostic.message.?);
 }
+
+test "long provider IDs do not amplify empty entries and bound generated paths" {
+    const storage = try std.testing.allocator.alloc(u8, 16 * 1024 * 1024);
+    defer std.testing.allocator.free(storage);
+    var provider_id: [32 * 1024]u8 = undefined;
+    @memset(&provider_id, 'p');
+    for ([_]bool{ false, true }) |has_fields| {
+        var json = std.Io.Writer.Allocating.init(std.testing.allocator);
+        defer json.deinit();
+        try json.writer.print(
+            "{{\"model\":\"{s}/m0\",\"providers\":{{\"{s}\":{{\"family\":\"openai_chat\",\"base_url\":\"https://example.invalid\",\"models\":{{",
+            .{ &provider_id, &provider_id },
+        );
+        for (0..1024) |index| {
+            if (index != 0) try json.writer.writeByte(',');
+            try json.writer.print("\"m{d}\":{s}", .{ index, if (has_fields) "{\"max_output_tokens\":123}" else "{}" });
+        }
+        try json.writer.writeAll("}}}}");
+
+        var fixed = std.heap.FixedBufferAllocator.init(storage);
+        var arena = std.heap.ArenaAllocator.init(if (has_fields) std.testing.allocator else fixed.allocator());
+        defer arena.deinit();
+        var call: Request = .{};
+        const result = call.resolve(arena.allocator(), .{
+            .cwd = invocation_cwd,
+            .layers = &.{.{ .source = .file, .data = .{ .json = json.written() } }},
+        });
+        if (has_fields) {
+            try std.testing.expectError(error.LimitExceeded, result);
+            try expect(call.diagnostic.?.reason == .limit_exceeded);
+        } else {
+            const effective = try result;
+            try same("m0", effective.runtime.model.id);
+            try equal(1024, effective.providers.get(&provider_id).?.models.len);
+        }
+    }
+}

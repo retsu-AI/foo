@@ -16,6 +16,7 @@ location: ?[]const u8 = null,
 settings: root.Effective,
 provenance: std.ArrayList(cfg.Provenance) = .empty,
 catalog: Catalog = .{},
+path_bytes_remaining: usize = root.max_effective_bytes,
 
 pub fn report(self: *Self, path_name: []const u8, reason: @FieldType(root.Diagnostic, "reason")) void {
     self.diagnostic.* = .{ .path = path_name, .source = self.source, .location = self.location, .reason = reason };
@@ -54,11 +55,19 @@ fn origin(self: *Self, key: []const u8) void {
     }
 }
 pub fn join(self: *Self, parent: []const u8, key: []const u8) Error![]const u8 {
-    if (parent.len == 0) return self.a.dupe(u8, key);
-    return std.fmt.allocPrint(self.a, "{s}.{s}", .{ parent, key });
+    if (parent.len == 0) return key;
+    try self.takePathBytes(parent.len + 1 + key.len);
+    return std.mem.concat(self.a, u8, &.{ parent, ".", key });
 }
 fn index(self: *Self, parent: []const u8, n: usize) Error![]const u8 {
-    return std.fmt.allocPrint(self.a, "{s}[{d}]", .{ parent, n });
+    const len = parent.len + 2 + std.fmt.count("{d}", .{n});
+    try self.takePathBytes(len);
+    const buffer = try self.a.alloc(u8, len);
+    return std.fmt.bufPrint(buffer, "{s}[{d}]", .{ parent, n }) catch unreachable;
+}
+fn takePathBytes(self: *Self, bytes: usize) Error!void {
+    if (bytes > self.path_bytes_remaining) return self.limit("$");
+    self.path_bytes_remaining -= bytes;
 }
 pub fn object(self: *Self, value: Value, path_name: []const u8, allowed: []const []const u8) Error!std.json.ObjectMap {
     if (value != .object) return self.fail(if (path_name.len == 0) "$" else path_name, .invalid_value);

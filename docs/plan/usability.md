@@ -252,14 +252,14 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 - [x] Lane 9. `foo --help`. Save `schema-help.png`. Pass when `--family`, `--provider ID`, and `--model PROVIDER/ID` appear and `--provider FAMILY` does not.
 - [x] Lane 10. Run `nix develop .#ci -c zig build check`. Save `schema-check.png`. Pass when every suite passes.
 
-The trunk comparison matched the operator profile's resolved endpoint, ID, family, and redacted options. The hosted LiteLLM credential was absent. The production loopback test verified the one-turn response, the authorization header for a literal key, and zero requests for an unresolved `auth` reference.
+The trunk comparison matched the operator profile's resolved endpoint, ID, family, and redacted options. The hosted LiteLLM credential was absent. The production loopback test verified the one-turn response, the authorization header for a literal key, and zero requests for an unresolved `auth` reference. The resource regression exercised a long provider ID with many models. Empty entries resolve within the test's memory budget. Large provenance paths return `limit_exceeded`.
 
 **Verify, perf.**
 
 - [x] Metric. `foo config check` wall time on `customized.json`, at trunk and head.
 - [x] Probe. `hyperfine --warmup 5 -r 30 'zig-out/bin/foo config check --config src/config/examples/customized.json'` interleaved trunk and head, each against its own shape of the file.
 - [x] Baseline. Record the trunk mean first.
-- [x] Rule. Both ReleaseSafe builds completed all 30 timed checks. The interleaved mean was 0.760 ms on trunk and 0.773 ms on U03, a 1.8 percent increase within the 5 percent budget.
+- [x] Rule. Both ReleaseSafe builds completed all 30 timed checks. The interleaved mean was 0.889 ms on trunk and 0.849 ms on U03, within the 5 percent budget.
 
 **Review gate.** The operator reviews before merge.
 

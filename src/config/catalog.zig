@@ -185,6 +185,7 @@ fn applyProvider(state: *Parse, provider: *Provider, path: []const u8, value: Va
             }
             const model = try provider.models.getOrPut(state.a, id);
             if (!model.found_existing) model.value_ptr.* = .{};
+            if (entry == .object and entry.object.count() == 0) continue;
             try applyModel(state, model.value_ptr, try state.join(p, id), entry);
         }
     }

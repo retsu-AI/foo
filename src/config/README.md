@@ -197,7 +197,7 @@ The host creates or opens the directory explicitly and passes it to F07. Journal
 
 ## Resource bounds and effective output
 
-Configuration limits are fixed at 64 layers, 1 MiB per JSON layer, 8 MiB total JSON, 64 open JSON containers, 1 MiB final prompt, and 16 MiB serialized effective output. Limits apply before parsing or retaining oversized file contents. Configuration allocation is proportional to bounded JSON trees and surviving prompt data. `operation.check()` runs before work, between layers, between file reads, and before return.
+Configuration limits are fixed at 64 layers, 1 MiB per JSON layer, 8 MiB total JSON, 64 open JSON containers, and 1 MiB final prompt. Generated setting paths and serialized effective output each have a 16 MiB limit. Limits apply before parsing or retaining oversized file contents. `operation.check()` runs before work, between layers, between file reads, and before return.
 
 `effectiveJson` emits `providers` with nested models and the selected model under `runtime.model`. It also emits launch settings, prompt filenames, and provenance. It replaces literal credentials, header values, and environment values with `<redacted>`. It keeps reference names, hides URL queries, and redacts nonempty options. Use the profile schema above for loadable configuration.
 
