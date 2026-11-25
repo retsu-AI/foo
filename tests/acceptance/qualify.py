@@ -55,6 +55,8 @@ def unpack(archives, destination, pin, target):
             raise ValueError(f"Candidate {key} differs from the pin")
     if manifest["target"] != target:
         raise ValueError("Candidate target differs from the native host")
+    if manifest["cpu"] != expected["cpu"]:
+        raise ValueError("Candidate CPU model differs from the pin")
     files = {p.relative_to(destination).as_posix(): p for p in destination.rglob("*") if p.is_file() and p != embedded}
     if files.keys() != manifest["files"].keys():
         raise ValueError("Extracted file list differs from the manifest")
@@ -80,6 +82,7 @@ def candidate_env(lane, directory):
     if lane != "live":
         settings = directory / "empty-user-config"
         settings.mkdir()
+        environment["FOO_CONFIG_DIR"] = str(settings)
         environment["XDG_CONFIG_HOME"] = str(settings)
         environment["APPDATA"] = str(settings)
         environment.pop("FOO_CA_FILE", None)

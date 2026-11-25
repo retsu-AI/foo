@@ -23,7 +23,7 @@ class CandidateGate(unittest.TestCase):
         program.write_bytes(payload)
         manifest = {
             "commit": "a" * 40, "zig_version": "0.17.1", "optimize": "ReleaseSafe",
-            "target": target, "files": {binary: digest(program)},
+            "target": target, "cpu": "x86_64", "files": {binary: digest(program)},
         }
         detached = json.dumps(manifest).encode()
         archive = self.root / f"candidate{suffix}"
@@ -44,7 +44,7 @@ class CandidateGate(unittest.TestCase):
         archive.with_name(archive.name + ".manifest.json").write_bytes(detached)
         archive.with_name(archive.name + ".sha256").write_text(f"{digest(archive)}  {archive.name}\n")
         self.pin = {
-            **manifest, "targets": {target: {"archive": archive.name, "sha256": digest(archive)}},
+            **manifest, "targets": {target: {"archive": archive.name, "sha256": digest(archive), "cpu": "x86_64"}},
         }
         return archive
 

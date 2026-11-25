@@ -9,7 +9,7 @@ Use the pinned compiler and Python 3.12 or newer. Download the archive, checksum
 ```sh
 nix develop .#ci -c python tests/acceptance/qualify.py download /tmp/foo-candidate
 nix develop .#ci -c zig build acceptance -- /tmp/foo-candidate --output /tmp/foo-results
-nix develop .#ci -c zig build bench -- /tmp/foo-candidate --output /tmp/foo-results --samples 5
+nix develop .#ci -c zig build bench -- /tmp/foo-candidate --output /tmp/foo-results --samples 20
 ```
 
 On GitHub, dispatch the [Nightly workflow](../../.github/workflows/nightly.yml) with `qualification=true` to run the native matrix against the pinned archives. The workflow retains the raw results and build identities.

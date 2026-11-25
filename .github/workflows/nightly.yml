@@ -25,7 +25,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: nightly-${{ github.event.pull_request.number || github.ref }}
+  group: nightly-${{ inputs.qualification && 'qualification-' || '' }}${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   native:
@@ -133,7 +133,7 @@ jobs:
         run: python tests/acceptance/qualify.py offline qualification-input --output qualification-output
       - name: Measure native candidate
         if: ${{ !cancelled() && steps.offline.outcome == 'success' }}
-        run: python tests/acceptance/qualify.py bench qualification-input --output qualification-output --samples 5
+        run: python tests/acceptance/qualify.py bench qualification-input --output qualification-output --samples 20
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && steps.offline.outcome != 'skipped' }}
         with:
