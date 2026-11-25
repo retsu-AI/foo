@@ -21,7 +21,7 @@ pub fn main(init: std.process.Init) !void {
 
     const runtime = try foo.transport.Runtime.init();
     defer runtime.deinit();
-    var client = try runtime.client(init.gpa, .{});
+    var client = try runtime.client(init.gpa, init.io, .{});
     defer client.deinit();
     var adapter: providers.Adapter = .{ .transport = client.interface(), .environment = init.environ_map };
     const provider = adapter.interface();

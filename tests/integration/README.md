@@ -15,7 +15,8 @@ provider, MCP, and ACP fixtures. It checks the provider requests, tool results,
 journal replay, command exit status, terminal restoration, and stdout framing.
 
 Use `--config PATH` to load a profile. `FOO_CONFIG_JSON` adds an explicit
-environment layer. For HTTPS, set `FOO_CA_FILE` to the path of a PEM trust bundle under 1 MiB.
+environment layer. HTTPS trusts the platform root store. To use other roots, set
+`FOO_CA_FILE` or `SSL_CERT_FILE` to a PEM bundle under 2 MiB. `FOO_CA_FILE` wins.
 Only configured tools are available to the model. ACP accepts editor MCP
 descriptors that match a server explicitly configured on the agent. Client
 file and terminal tools require the configured client backend and the

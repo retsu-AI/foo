@@ -2,6 +2,8 @@ const std = @import("std");
 const curl = @import("curl");
 const io = @import("../contracts/io.zig");
 const headers = @import("headers.zig");
+pub const trust = @import("trust.zig");
+pub const Trust = trust.Trust;
 
 pub const Limits = struct {
     request_bytes: usize = 16 * 1024 * 1024,
@@ -18,13 +20,13 @@ pub const Proxy = union(enum) {
 };
 
 pub const Options = struct {
-    ca_pem: ?[]const u8 = null,
+    trust: Trust = .platform,
     proxy: Proxy = .direct,
     limits: Limits = .{},
 };
 
 const max_url_bytes = 8192;
-const max_ca_bytes = 1024 * 1024;
+const max_ca_bytes = 2 * 1024 * 1024;
 const max_proxy_credential_bytes = 4096;
 const poll_ms = 20;
 const pool_connections: c_long = 4;
@@ -45,8 +47,8 @@ pub const Runtime = struct {
         curl.curl_global_cleanup();
     }
 
-    pub fn client(_: Runtime, allocator: std.mem.Allocator, options: Options) io.Error!Client {
-        return Client.init(allocator, options);
+    pub fn client(_: Runtime, allocator: std.mem.Allocator, system_io: std.Io, options: Options) io.Error!Client {
+        return Client.init(allocator, system_io, options);
     }
 };
 
@@ -58,18 +60,21 @@ const HttpProxy = struct {
 pub const Client = struct {
     allocator: std.mem.Allocator,
     multi: *curl.CURLM,
-    ca_pem: ?[]const u8,
+    ca_pem: []const u8,
     proxy: ?HttpProxy,
     limits: Limits,
     busy: std.atomic.Value(bool) = .init(false),
 
-    fn init(allocator: std.mem.Allocator, options: Options) io.Error!Client {
-        if (options.ca_pem) |pem| {
-            if (pem.len == 0) return error.InvalidInput;
-            if (pem.len > max_ca_bytes) return error.LimitExceeded;
-        }
-        const ca_pem = if (options.ca_pem) |pem| try allocator.dupe(u8, pem) else null;
-        errdefer if (ca_pem) |pem| allocator.free(pem);
+    fn init(allocator: std.mem.Allocator, system_io: std.Io, options: Options) io.Error!Client {
+        const ca_pem = switch (options.trust) {
+            .platform => try trust.platformPem(allocator, system_io, .now(system_io, .real)),
+            .pem => |pem| pem: {
+                if (pem.len == 0) return error.InvalidInput;
+                if (pem.len > max_ca_bytes) return error.LimitExceeded;
+                break :pem try allocator.dupe(u8, pem);
+            },
+        };
+        errdefer allocator.free(ca_pem);
 
         const proxy: ?HttpProxy = switch (options.proxy) {
             .direct => null,
@@ -100,7 +105,7 @@ pub const Client = struct {
     pub fn deinit(self: *Client) void {
         std.debug.assert(!self.busy.load(.acquire));
         _ = curl.curl_multi_cleanup(self.multi);
-        if (self.ca_pem) |pem| self.allocator.free(pem);
+        self.allocator.free(self.ca_pem);
         if (self.proxy) |proxy| freeProxy(self.allocator, proxy);
         self.* = undefined;
     }
@@ -117,7 +122,6 @@ pub const Client = struct {
         try operation.check();
 
         const scheme = try validateUrl(request.url, .origin);
-        if (scheme == .https and self.ca_pem == null) return error.Unavailable;
         const length = bodyLength(request.body);
         if (length) |amount| {
             if (amount > self.limits.request_bytes) return error.LimitExceeded;
@@ -191,7 +195,7 @@ pub const Client = struct {
             }
         }
         if (scheme == .https) {
-            const pem = self.ca_pem.?;
+            const pem = self.ca_pem;
             var blob: curl.curl_blob = .{ .data = @constCast(pem.ptr), .len = pem.len, .flags = curl.CURL_BLOB_NOCOPY };
             try set(easy, curl.CURLOPT_SSL_VERIFYPEER, @as(c_long, 1));
             try set(easy, curl.CURLOPT_SSL_VERIFYHOST, @as(c_long, 2));

@@ -113,12 +113,29 @@ pub const App = struct {
 
     fn httpClient(self: *App, operation: io.Context) io.Error!foo.transport.Client {
         if (self.transport == null) {
-            const roots = if (self.environ.get("FOO_CA_FILE")) |path| try loadRoots(self.allocator, operation, path) else null;
-            errdefer if (roots) |pem| self.allocator.free(pem);
+            const roots = try self.trustedRoots(operation);
+            errdefer self.allocator.free(roots);
             self.transport = try foo.transport.Runtime.init();
             self.roots = roots;
         }
-        return self.transport.?.client(self.allocator, .{ .ca_pem = self.roots });
+        return self.transport.?.client(self.allocator, operation.io, .{ .trust = .{ .pem = self.roots.? } });
+    }
+
+    fn trustedRoots(self: *App, operation: io.Context) io.Error![]const u8 {
+        if (foo.transport.trust.override(self.environ)) |source| {
+            return loadRoots(self.allocator, operation, source.path) catch |err| switch (err) {
+                error.Cancelled, error.OutOfMemory => |e| e,
+                else => {
+                    diagnose(operation.io, "cannot load {s} {s}: {s}", .{ source.variable, source.path, @errorName(err) });
+                    return error.Unavailable;
+                },
+            };
+        }
+        return foo.transport.trust.platformPem(self.allocator, operation.io, .now(operation.io, .real)) catch |err| {
+            if (err == error.Unavailable)
+                diagnose(operation.io, "no trusted certificate roots found. Set FOO_CA_FILE or SSL_CERT_FILE to a PEM bundle", .{});
+            return err;
+        };
     }
 
     fn spawner(self: *App, operation: io.Context) io.Error!io.Spawner {
@@ -519,16 +536,26 @@ const HttpPeer = struct {
     }
 };
 
-fn loadRoots(allocator: alloc, operation: io.Context, path: []const u8) io.Error![]const u8 {
-    const max_bytes = 1024 * 1024;
+fn loadRoots(allocator: alloc, operation: io.Context, path: []const u8) (io.Error || error{FileNotFound})![]const u8 {
+    const max_bytes = 2 * 1024 * 1024;
     const dir: std.Io.Dir = .cwd();
-    const stat = dir.statFile(operation.io, path, .{}) catch |err| return fileError(err);
+    const stat = dir.statFile(operation.io, path, .{}) catch |err| return switch (err) {
+        error.FileNotFound => error.FileNotFound,
+        else => fileError(err),
+    };
     if (stat.kind != .file or stat.size == 0) return error.InvalidInput;
     if (stat.size > max_bytes) return error.LimitExceeded;
     return dir.readFileAlloc(operation.io, path, allocator, .limited(max_bytes + 1)) catch |err| return switch (err) {
         error.StreamTooLong => error.LimitExceeded,
         else => fileError(err),
     };
+}
+
+fn diagnose(std_io: std.Io, comptime format: []const u8, args: anytype) void {
+    var buffer: [256]u8 = undefined;
+    var stderr = std.Io.File.stderr().writer(std_io, &buffer);
+    stderr.interface.print("foo: " ++ format ++ "\n", args) catch {};
+    stderr.interface.flush() catch {};
 }
 
 fn executableGuardian(a: alloc, std_io: std.Io) io.Error![]u8 {

@@ -189,7 +189,7 @@ class Transport(unittest.TestCase):
             self.assert_no_accept(server)
 
     def test_streams_large_body_with_fixed_client_allocator(self):
-        with listen() as server, self.probe("large", url(server)) as process:
+        with listen() as server, self.probe("large", url(server), ca="ca.pem") as process:
             with accept(server) as peer, peer.makefile("rb") as stream:
                 self.assertEqual(read_head(stream)[0], b"GET /fixture HTTP/1.1\r\n")
                 peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2097152\r\n\r\n")
@@ -278,9 +278,7 @@ class Transport(unittest.TestCase):
             self.assert_no_accept(origin)
 
     def test_tls_chain_and_hostname_verification(self):
-        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        # The committed private key is for this localhost fixture only.
-        tls.load_cert_chain(TLS / "loopback.pem", TLS / "loopback-key.pem")
+        tls = self.tls_server()
         with listen() as server:
             loopback = url(server, "https", "localhost")
             with self.probe("trusted", loopback, ca="ca.pem"):
@@ -295,13 +293,55 @@ class Transport(unittest.TestCase):
             ):
                 with self.subTest(ca=ca, url=target):
                     with self.probe("tls_failure", target, ca=ca):
-                        with accept(server) as peer:
-                            try:
-                                with tls.wrap_socket(peer, server_side=True) as secure:
-                                    self.assert_disconnected(secure)
-                            except (ssl.SSLError, ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
-                                pass
-                    self.assert_no_accept(server)
+                        self.reject_handshake(tls, server)
+
+    def tls_server(self):
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        # The committed private key is for this localhost fixture only.
+        tls.load_cert_chain(TLS / "loopback.pem", TLS / "loopback-key.pem")
+        return tls
+
+    def trust_env(self, **overrides):
+        env = os.environ.copy()
+        env.pop("FOO_CA_FILE", None)
+        env.pop("SSL_CERT_FILE", None)
+        env.update({name: str(TLS / file) for name, file in overrides.items()})
+        return env
+
+    def reject_handshake(self, tls, server):
+        with accept(server) as peer:
+            try:
+                with tls.wrap_socket(peer, server_side=True) as secure:
+                    self.assert_disconnected(secure)
+            except (ssl.SSLError, ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                pass
+        self.assert_no_accept(server)
+
+    def test_platform_trust_rejects_fixture_ca(self):
+        tls = self.tls_server()
+        with listen() as server:
+            target = url(server, "https", "localhost")
+            with self.probe("platform_trust_failure", target, env=self.trust_env()):
+                self.reject_handshake(tls, server)
+
+    def test_ssl_cert_file_override(self):
+        tls = self.tls_server()
+        with listen() as server:
+            target = url(server, "https", "localhost")
+            env = self.trust_env(SSL_CERT_FILE="ca.pem")
+            with self.probe("platform_trust", target, env=env):
+                with accept(server) as peer, tls.wrap_socket(peer, server_side=True) as secure:
+                    with secure.makefile("rb") as stream:
+                        self.assertEqual(read_head(stream)[0], b"GET /fixture HTTP/1.1\r\n")
+                        respond(secure, b"trusted", close=True)
+
+    def test_foo_ca_file_precedes_ssl_cert_file(self):
+        tls = self.tls_server()
+        with listen() as server:
+            target = url(server, "https", "localhost")
+            env = self.trust_env(FOO_CA_FILE="unrelated-ca.pem", SSL_CERT_FILE="ca.pem")
+            with self.probe("platform_trust_failure", target, env=env):
+                self.reject_handshake(tls, server)
 
     def test_refused_connection_is_unsent(self):
         with listen() as recovery:

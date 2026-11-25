@@ -8,7 +8,7 @@ codes and decides whether to retry or follow a redirect.
 ## Ownership
 
 Initialize one `Runtime` for the process and hold it until all clients have shut
-down. Create a `Client` with `runtime.client(allocator, options)`. Each client
+down. Create a `Client` with `runtime.client(allocator, io, options)`. Each client
 copies its CA and proxy settings and keeps a pool of up to four idle
 connections. Keep the client at a stable address after obtaining
 `client.interface()`. Use one active exchange per client.
@@ -16,7 +16,7 @@ connections. Keep the client at a stable address after obtaining
 ```zig
 const runtime = try foo.transport.Runtime.init();
 defer runtime.deinit();
-var client = try runtime.client(allocator, .{ .ca_pem = trusted_roots });
+var client = try runtime.client(allocator, io, .{});
 defer client.deinit();
 
 const transport = client.interface();
@@ -53,7 +53,8 @@ the easy handle before freeing callback state. Client shutdown closes the pool.
   `possibly_sent` just before the origin request can leave the client. A
   connection or TLS failure before that point leaves it `unsent`.
 - Request validation returns `InvalidInput`. Size limits return
-  `LimitExceeded`. A missing HTTPS trust bundle returns `Unavailable`.
+  `LimitExceeded`. `Client.init` returns `Unavailable` when the platform
+  root store is empty.
   Connection loss and premature EOF return `Disconnected`. TLS validation and
   other backend failures return `IoFailure`. The adapter passes through errors
   from the caller's source and sink. It returns no native error text.
@@ -64,8 +65,9 @@ the easy handle before freeing callback state. Client shutdown closes the pool.
 | --- | --- |
 | Direct | The default. Proxy environment variables are ignored. |
 | Explicit HTTP proxy | Uses CONNECT, with optional Basic credentials scoped to the proxy. The caller receives only the origin response. Basic credentials travel in plaintext to an HTTP proxy. |
-| Explicit PEM trust bundle | Required for HTTPS. The client accepts at most 1 MiB and checks both certificate trust and hostname. The caller selects and updates the roots. |
-| Native trust and environment CA overrides | The focused OpenSSL build uses the supplied PEM bundle exclusively. |
+| Platform trust | The default, `.trust = .platform`. `Client.init` reads the platform root store once with `std.crypto.Certificate.Bundle.rescan`: the Linux bundle paths, the macOS system keychain, or the Windows `ROOT` store. The client checks both certificate trust and hostname. |
+| Explicit PEM trust bundle | `.trust = .{ .pem = bytes }` replaces the platform roots. The client accepts at most 2 MiB. |
+| Environment CA overrides | The transport ignores them. The app calls `trust.override`, which picks `FOO_CA_FILE`, then `SSL_CERT_FILE`, and passes that file as a PEM bundle. The focused OpenSSL build uses only the roots the client holds. |
 
 ## Build and verify
 

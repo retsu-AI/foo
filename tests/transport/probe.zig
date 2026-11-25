@@ -4,6 +4,7 @@ const io = foo.io;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 const large_body_bytes = 2 * 1024 * 1024;
+const max_ca_bytes = 2 * 1024 * 1024;
 
 const Mode = enum {
     stream,
@@ -15,6 +16,8 @@ const Mode = enum {
     proxy_limited,
     trusted,
     tls_failure,
+    platform_trust,
+    platform_trust_failure,
     first_byte_deadline,
     body_cancel,
     tls_cancel,
@@ -34,18 +37,25 @@ pub fn main(init: std.process.Init) !void {
     const extra = args.next();
     const ca_path = args.next();
 
-    const ca_pem = if (ca_path) |path|
-        try std.Io.Dir.cwd().readFileAlloc(init.io, path, init.gpa, .limited(8192))
+    const platform = mode == .platform_trust or mode == .platform_trust_failure;
+    const ca_file = if (platform)
+        if (foo.transport.trust.override(init.environ_map)) |source| source.path else null
+    else
+        ca_path;
+    const ca_pem = if (ca_file) |path|
+        try std.Io.Dir.cwd().readFileAlloc(init.io, path, init.gpa, .limited(max_ca_bytes))
     else
         null;
     defer if (ca_pem) |bytes| init.gpa.free(bytes);
+    const trust: foo.transport.Trust = if (ca_pem) |bytes| .{ .pem = bytes } else .platform;
 
     const runtime = try foo.transport.Runtime.init();
     defer runtime.deinit();
     var storage: [8192]u8 = undefined;
     var bounded = std.heap.FixedBufferAllocator.init(&storage);
-    var client = try runtime.client(if (mode == .large) bounded.allocator() else init.gpa, .{
-        .ca_pem = ca_pem,
+    const started = std.Io.Timestamp.now(init.io, .awake);
+    var client = try runtime.client(if (mode == .large) bounded.allocator() else init.gpa, init.io, .{
+        .trust = trust,
         .proxy = switch (mode) {
             .proxy, .proxy_rejected, .proxy_limited => .{ .http = .{
                 .url = extra orelse return error.MissingProxyUrl,
@@ -60,6 +70,7 @@ pub fn main(init: std.process.Init) !void {
         },
     });
     defer client.deinit();
+    if (platform) report(init.io, "init_ms={d}\n", .{started.durationTo(.now(init.io, .awake)).toMilliseconds()});
 
     var probe: Probe = .{ .system_io = init.io, .http = client.interface() };
     switch (mode) {
@@ -86,7 +97,13 @@ pub fn main(init: std.process.Init) !void {
             try result.expectError(error.LimitExceeded, .unsent);
         },
         .trusted => try (try probe.success(request(url))).expect(200, "trusted"),
-        .tls_failure => {
+        .platform_trust => {
+            var req = request(url);
+            req.max_response_bytes = large_body_bytes;
+            const response = try probe.exchange(req, .discard, null, 10000).expectSuccess();
+            report(init.io, "status={d}\n", .{response.status.?});
+        },
+        .tls_failure, .platform_trust_failure => {
             try probe.exchange(request(url), .normal, null, 5000).expectError(
                 error.IoFailure,
                 .unsent,
@@ -181,7 +198,7 @@ const Result = struct {
 };
 
 const Response = struct {
-    const Gate = enum { normal, announce, wait_for_input, count_only };
+    const Gate = enum { normal, announce, wait_for_input, count_only, discard };
 
     gate: Gate,
     status: ?u16 = null,
@@ -217,6 +234,7 @@ const Response = struct {
     fn write(context: *anyopaque, operation: io.Context, bytes: []const u8) io.Error!void {
         const self: *Response = @ptrCast(@alignCast(context));
         if (self.status == null) return error.InvalidInput;
+        if (self.gate == .discard) return;
         const first = self.body_len == 0;
         if (self.gate == .count_only) {
             if (!std.mem.allEqual(u8, bytes, 'z')) return error.InvalidInput;
@@ -257,6 +275,12 @@ const Upload = struct {
         return count;
     }
 };
+
+fn report(system_io: std.Io, comptime format: []const u8, args: anytype) void {
+    var buffer: [64]u8 = undefined;
+    const line = std.fmt.bufPrint(&buffer, format, args) catch unreachable;
+    std.Io.File.stderr().writeStreamingAll(system_io, line) catch {};
+}
 
 fn readSignal(system_io: std.Io) bool {
     var byte: [1]u8 = undefined;

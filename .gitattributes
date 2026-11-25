@@ -3,3 +3,4 @@
 *.patch text eol=lf
 tests/providers/fixtures/*.sse text eol=lf
 tests/config/fixtures/effective-redaction.json text eol=lf
+tests/transport/tls/*.pem text eol=lf

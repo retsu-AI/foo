@@ -10,3 +10,7 @@ pub const transport = @import("transport/root.zig");
 pub const wire = @import("wire/root.zig");
 
 pub const version = "0.0.0-rc";
+
+test {
+    _ = transport.trust;
+}
