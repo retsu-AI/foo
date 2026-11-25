@@ -110,14 +110,14 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 - [x] Lane 9. Run the MCP Streamable HTTP suite from `src/mcp/README.md` with no `FOO_CA_FILE`. Save `trust-mcp.png`. Pass when the suite passes unchanged.
 - [x] Lane 10. Run the probe in a container with no `/etc/ssl` tree, built with `docker run --rm -v $PWD/zig-out:/app` on a `scratch`-like image or `nix shell nixpkgs#busybox --ignore-environment`. Save `trust-no-roots.png`. Pass when the message is `no trusted certificate roots found` and the exit code is `host`.
 
-Lanes 1 to 7 and 10 passed at the PR head with text captures instead of screenshots. Lane 1 traced the connection with `strace`, because a 401 and a TLS failure both print `provider_error` before U02. The CLI lanes used a provider-format copy of `probe.json`, because U03 retired the old root `model` object. Lane 8 passed on Linux, and native CI ran the transport suite on macOS and Windows.
+Lanes 1 to 7 and 10 passed at the PR head with text captures instead of screenshots. Lane 1 traced the connection with `strace`, because a 401 and a TLS failure both print `provider_error` before U02. The CLI lanes used a provider-format copy of `probe.json`, because U03 retired the old root `model` object. Lane 8 passed on Linux, and native CI ran the transport suite on macOS and Windows. Lane 9 ran `zig build test -Dmodule=mcp` in Debug and ReleaseSafe with both variables unset, and it passed.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
 - [x] Metric. `Client.init` wall time with `.platform` trust, printed by the probe, and the `trusted` loopback fixture round trip. Trunk has no platform scan, so the diff-added work is the scan and the PEM encode. The budget for that work is 25 ms on this host, where the prototype measured 5 ms for 118 roots.
 - [x] Probe. `hyperfine --warmup 3 -r 10 'probe platform_trust_failure <loopback-url>' 'probe trusted <loopback-url> - tests/transport/tls/ca.pem'` interleaved, at trunk with `trusted` only and at head with both.
 - [x] Baseline. Record the trunk `trusted` mean first.
-- [x] Rule. Head `platform_trust` mean minus head `trusted` mean is under 25 ms. Head `trusted` mean is within 5 percent of trunk `trusted` mean. Over 300 interleaved ReleaseSafe runs per side, the platform scan added 2.9 ms. Head `trusted` measured 2.90 ms against 3.07 ms on trunk, inside the 4 percent spread between two trunk runs.
+- [x] Rule. Head `platform_trust_failure` mean minus head `trusted` mean is under 25 ms. Head `trusted` mean is within 5 percent of trunk `trusted` mean. Over 300 interleaved ReleaseSafe runs per side, `platform_trust_failure` measured 5.76 ms and head `trusted` 2.90 ms, so the scan adds 2.86 ms. Head `trusted` was 5.5 percent faster than trunk's 3.07 ms. A second run of the same trunk binary measured 2.94 ms, so the difference is noise and no slowdown.
 
 **Review gate.** None. U01 is not review-gated.
 
