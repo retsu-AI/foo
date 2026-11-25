@@ -195,8 +195,15 @@ pub fn build(b: *std.Build) void {
     if (!std.mem.eql(u8, selected, "codemode") or selected_step != null) {
         test_step.dependOn(selected_step orelse &b.addFail(b.fmt("Unknown test module: {s}", .{selected})).step);
     }
-    for ([_][]const u8{ "acceptance", "acceptance-live", "bench" }) |name| {
-        b.step(name, "Reserved for F13").dependOn(&b.addFail(b.fmt("'{s}' is unavailable until F13", .{name})).step);
+    for ([_]struct { name: []const u8, lane: []const u8, description: []const u8 }{
+        .{ .name = "acceptance", .lane = "offline", .description = "Run the offline corpus against a pinned native archive" },
+        .{ .name = "acceptance-live", .lane = "live", .description = "Run explicitly configured live interoperability checks" },
+        .{ .name = "bench", .lane = "bench", .description = "Measure the pinned native candidate" },
+    }) |qualification| {
+        const command = pythonCommand(b, "tests/acceptance/qualify.py");
+        command.addArg(qualification.lane);
+        command.addPassthruArgs();
+        b.step(qualification.name, qualification.description).dependOn(&command.step);
     }
 }
 

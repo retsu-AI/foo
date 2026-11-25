@@ -1,0 +1,24 @@
+{
+  "repository": "retsu-AI/foo",
+  "run": 45306085275,
+  "commit": "deb154a6195a9c1f952c97fb4089bfdc086b9d6c",
+  "zig_version": "0.17.1",
+  "optimize": "ReleaseSafe",
+  "targets": {
+    "x86_64-linux": {
+      "runner": "ubuntu-24.04",
+      "archive": "foo-deb154a6195a-x86_64-linux.tar.gz",
+      "sha256": "c03e3478c8bf382b71bae5c6ea2ed01c0af21844ba349bedc912201461431891"
+    },
+    "aarch64-macos": {
+      "runner": "macos-15",
+      "archive": "foo-deb154a6195a-aarch64-macos.tar.gz",
+      "sha256": "b2977987195d2ee82726d154a82f444ad559b52dd8f957969af9aa341db4c649"
+    },
+    "x86_64-windows": {
+      "runner": "windows-2022",
+      "archive": "foo-deb154a6195a-x86_64-windows.zip",
+      "sha256": "73623b27378eb345157571d649cb9a59df49d36f75155ae2ac411e6484c07849"
+    }
+  }
+}

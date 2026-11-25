@@ -18,6 +18,10 @@ on:
         description: Build and retain unpublished candidate archives
         type: boolean
         default: false
+      qualification:
+        description: Run F13 offline acceptance and measurements on the pinned F12 archives
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -26,6 +30,7 @@ concurrency:
 jobs:
   native:
     name: Native checks (${{ matrix.os }})
+    if: "!inputs.qualification"
     strategy:
       fail-fast: false
       matrix:
@@ -91,7 +96,7 @@ jobs:
           retention-days: 30
   nix:
     name: Nix checks (Linux)
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && !inputs.qualification
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -102,3 +107,37 @@ jobs:
           nix flake check
           nix develop .#ci -c python docs/plan/build.py --check
           nix develop .#ci -c python docs/plan/test_build.py
+  qualification:
+    name: Candidate qualification (${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch' && inputs.qualification
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download the pinned candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tests/acceptance/qualify.py download qualification-input
+      - name: Run offline acceptance
+        id: offline
+        run: python tests/acceptance/qualify.py offline qualification-input --output qualification-output
+      - name: Measure native candidate
+        if: ${{ !cancelled() && steps.offline.outcome == 'success' }}
+        run: python tests/acceptance/qualify.py bench qualification-input --output qualification-output --samples 5
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.offline.outcome != 'skipped' }}
+        with:
+          name: qualification-${{ matrix.os }}-${{ github.sha }}
+          path: qualification-output/
+          if-no-files-found: error
+          retention-days: 30
