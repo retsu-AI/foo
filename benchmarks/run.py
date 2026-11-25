@@ -57,7 +57,12 @@ def sha256(path):
 def write_profile(directory, server, *, tool=False, journal=False):
     profile = directory / "profile.json"
     settings = {
-        "model": {"family": "openai_chat", "endpoint": f"http://127.0.0.1:{server.server_port}/chat", "id": "benchmark"},
+        "providers": {"local": {
+            "family": "openai_chat",
+            "base_url": f"http://127.0.0.1:{server.server_port}",
+            "models": {"benchmark": {}},
+        }},
+        "model": "local/benchmark",
         "cwd": str(directory),
         "limits": LIMITS,
     }

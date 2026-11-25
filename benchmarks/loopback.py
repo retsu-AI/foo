@@ -50,7 +50,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         received = time.perf_counter_ns()
-        if self.path != "/chat":
+        if self.path != "/chat/completions":
             self.send_error(404)
             return
         body = self.rfile.read(int(self.headers["Content-Length"]))
