@@ -29,7 +29,11 @@ pub const Detail = union(enum) {
                 .authentication => |v| {
                     try writer.print("authentication failed for {s}", .{v.endpoint});
                     if (v.status) |status| try writer.print(" (HTTP {d})", .{status});
-                    if (self.credential == .environment) try writer.print(". Set {s}", .{self.credential.environment});
+                    switch (self.credential) {
+                        .environment => |name| try writer.print(". Set {s}", .{name}),
+                        .auth => |id| try writer.print(". Run foo auth login {s}", .{id}),
+                        .none, .literal => {},
+                    }
                 },
                 .rate_limited => |v| {
                     try writer.print("rate limited by {s}", .{v.endpoint});

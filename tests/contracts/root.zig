@@ -512,3 +512,20 @@ test "outcome JSON omits a null detail and round-trips a present one" {
     try std.testing.expectEqual(@as(u16, 400), parsed.value.detail.?.rejected.status);
     try std.testing.expectEqualStrings("https://example.invalid", parsed.value.detail.?.rejected.endpoint);
 }
+
+test "authentication reason names the credential action" {
+    const detail: foo.events.Detail = .{ .authentication = .{ .endpoint = "https://example.invalid", .status = 401 } };
+    var buffer: [256]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "authentication failed for https://example.invalid (HTTP 401). Run foo auth login litellm",
+        try std.fmt.bufPrint(&buffer, "{f}", .{detail.reason(.{ .auth = "litellm" })}),
+    );
+    try std.testing.expectEqualStrings(
+        "authentication failed for https://example.invalid (HTTP 401). Set FIXTURE_KEY",
+        try std.fmt.bufPrint(&buffer, "{f}", .{detail.reason(.{ .environment = "FIXTURE_KEY" })}),
+    );
+    try std.testing.expectEqualStrings(
+        "authentication failed for https://example.invalid (HTTP 401)",
+        try std.fmt.bufPrint(&buffer, "{f}", .{detail.reason(.none)}),
+    );
+}
