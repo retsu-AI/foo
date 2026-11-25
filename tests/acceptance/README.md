@@ -2,6 +2,8 @@
 
 The [candidate pin](candidate.json) identifies one ReleaseSafe archive per native target. The runner matches the host to a target, verifies the downloaded archive and detached manifest, and checks every extracted file before starting foo. Each lane writes an identity file with the archive hash, manifest, fixture revision, and measurement host.
 
+The [F13 qualification report](qualification.md) records the measured results and open release gates for this pin.
+
 ## Run the corpus and benchmarks
 
 Use the pinned compiler and Python 3.12 or newer. Download the archive, checksum, and manifest for the current host.

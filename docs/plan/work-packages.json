@@ -571,7 +571,7 @@
         "Remaining failures or unavailable evidence are explicit; affected results are renewed after candidate changes."
       ],
       "handoff": [
-        "See tests/acceptance/README.md for the pinned archive checks, native corpus, measurements, and live policy.",
+        "See tests/acceptance/qualification.md for candidate hashes, measured results, and raw artifacts. The acceptance README gives rerun commands.",
         "Measured budgets and declared limitations; no unsupported speed or compatibility claims.",
         "Concrete release recommendation for the owner, with publication as a separate authorized action."
       ],
