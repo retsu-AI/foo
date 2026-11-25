@@ -501,3 +501,42 @@ test "OAuth requests carry a bounded deadline that keeps an earlier caller deadl
     _ = try bounded.post("https://issuer.invalid/token", .{ .json = "{}" });
     try equal(1_500, recorder.deadline.?);
 }
+
+test "a refresh that loses a rotation race uses the credential another process saved" {
+    var tmp = testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const store = try in(tmp.dir);
+    defer allocator.free(store.directory);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const Race = struct {
+        var winner: ?auth.Store = null;
+        var calls: usize = 0;
+
+        fn refresh(request: auth.Refresh) auth.Error!auth.OAuth {
+            calls += 1;
+            try winner.?.put(request.a, request.operation, "service", .{ .oauth = .{ .access = "winner-access", .refresh = "r1", .expires_ms = std.math.maxInt(i32) * 1000, .account = "acct" } });
+            return error.Authentication;
+        }
+        const flow: auth.Flow = .{ .provider = "service", .refresh = refresh, .account_header = "x-account" };
+    };
+    Race.winner = store;
+    Race.calls = 0;
+    var unused: Fixture = .{ .a = a, .replies = &.{} };
+    const resolver = auth.Resolver{ .store = store, .registry = &.{Race.flow}, .http = unused.transport() };
+    try store.put(allocator, operation(), "service", .{ .oauth = .{ .access = "loser-access", .refresh = "r0", .expires_ms = 1, .account = "acct" } });
+    const resolved = (try resolver.interface().resolve(a, operation(), .{ .auth = "service" })).bearer;
+    try same("winner-access", resolved.token);
+    try equal(1, Race.calls);
+
+    try store.put(allocator, operation(), "service", .{ .oauth = .{ .access = "loser-access", .refresh = "r0", .expires_ms = 1, .account = "acct" } });
+    const Revoked = struct {
+        fn refresh(_: auth.Refresh) auth.Error!auth.OAuth {
+            return error.Authentication;
+        }
+        const flow: auth.Flow = .{ .provider = "service", .refresh = refresh };
+    };
+    const revoked = auth.Resolver{ .store = store, .registry = &.{Revoked.flow}, .http = unused.transport() };
+    try testing.expectError(error.Authentication, revoked.interface().resolve(a, operation(), .{ .auth = "service" }));
+}

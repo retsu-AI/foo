@@ -161,12 +161,23 @@ pub const Resolver = struct {
         const http = self.http orelse return null;
         const store = self.store orelse return null;
         if (current.refresh == null) return null;
-        var updated = try refresh_fn(.{ .a = arena, .operation = operation, .http = http, .current = current });
+        var updated = refresh_fn(.{ .a = arena, .operation = operation, .http = http, .current = current }) catch |err| switch (err) {
+            error.Cancelled, error.OutOfMemory => |e| return e,
+            // Another process may have spent this refresh token on a rotating issuer and saved the result.
+            else => return try newerEntry(arena, operation, store, flow.provider, current) orelse err,
+        };
         if (updated.account == null) updated.account = current.account;
         if (try store.replaceOAuth(arena, operation, flow.provider, current, updated)) return updated;
         const latest = try store.read(arena, operation);
         const entry = latest.entries.get(flow.provider) orelse return null;
         return if (entry == .oauth) entry.oauth else null;
+    }
+
+    fn newerEntry(arena: std.mem.Allocator, operation: foo.io.Context, store: Store, provider: []const u8, current: OAuth) Error!?OAuth {
+        const latest = try store.read(arena, operation);
+        const entry = latest.entries.get(provider) orelse return null;
+        if (entry != .oauth or std.mem.eql(u8, entry.oauth.access, current.access)) return null;
+        return entry.oauth;
     }
 };
 
