@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "policy": {
+    "allowed_https_endpoints": [],
+    "allowed_stdio_launches": [],
+    "provider_request_limit": 0,
+    "provider_output_token_limit": 0,
+    "spend_cap_microusd": 0,
+    "project_cap_confirmed": false,
+    "mcp_operation_limit": 0,
+    "timeout_seconds": 30
+  },
+  "providers": [],
+  "mcp": [],
+  "acp": []
+}
