@@ -46,6 +46,44 @@ def call(name, arguments, call_id):
     return chat(delta) + chat({}, "tool_calls") + b"data: [DONE]\n\n"
 
 
+def stream(*events):
+    return "".join(f"event: {kind}\ndata: {json.dumps({'type': kind, **payload})}\n\n"
+                   for kind, payload in events).encode()
+
+
+def responses_answer(text):
+    response = {"id": "response", "object": "response", "status": "in_progress", "output": []}
+    message = {"id": "message", "type": "message", "role": "assistant", "status": "in_progress", "content": []}
+    item = {"item_id": "message", "output_index": 0, "content_index": 0}
+    empty = {"type": "output_text", "text": "", "annotations": []}
+    part = {**empty, "text": text}
+    completed = {**message, "status": "completed", "content": [part]}
+    return stream(
+        ("response.created", {"response": response}),
+        ("response.output_item.added", {"output_index": 0, "item": message}),
+        ("response.content_part.added", {**item, "part": empty}),
+        ("response.output_text.delta", {**item, "delta": text}),
+        ("response.output_text.done", {**item, "text": text}),
+        ("response.content_part.done", {**item, "part": part}),
+        ("response.output_item.done", {"output_index": 0, "item": completed}),
+        ("response.completed", {"response": {**response, "status": "completed", "output": [completed]}}),
+    )
+
+
+def messages_answer(text):
+    return stream(
+        ("message_start", {"message": {
+            "id": "message", "type": "message", "role": "assistant", "model": "fixture", "content": [],
+            "stop_reason": None, "usage": {"input_tokens": 8, "output_tokens": 1},
+        }}),
+        ("content_block_start", {"index": 0, "content_block": {"type": "text", "text": ""}}),
+        ("content_block_delta", {"index": 0, "delta": {"type": "text_delta", "text": text}}),
+        ("content_block_stop", {"index": 0}),
+        ("message_delta", {"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 4}}),
+        ("message_stop", {}),
+    )
+
+
 @dataclass(frozen=True)
 class Reply:
     body: bytes
@@ -55,7 +93,7 @@ class Reply:
 
 class ScriptedHandler(Handler):
     def do_POST(self):
-        if self.path != "/chat" or self.server.replies is None:
+        if self.path not in ("/chat", "/responses", "/messages") or self.server.replies is None:
             return super().do_POST()
 
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -159,6 +197,23 @@ class Acceptance(Production):
         self.config(session={"directory": str(journal)}, **settings)
         return journal / "journal.jsonl"
 
+    def test_one_shot_responses_and_messages(self):
+        prompt = "Return the greeting."
+        text = "Café ☕"
+        self.script(Reply(responses_answer(text)), Reply(messages_answer(text)))
+        for family, route, request_key in (
+            ("openai_responses", "/responses", "input"),
+            ("anthropic_messages", "/messages", "messages"),
+        ):
+            with self.subTest(family=family):
+                self.config(model={"family": family, "endpoint": self.origin + route, "id": "fixture"})
+                self.success(("run", "--prompt", prompt), text + "\n")
+                actual_route, request = self.server.requests[-1]
+                self.assertEqual(actual_route, route)
+                self.assertEqual(request["model"], "fixture")
+                self.assertIs(request["stream"], True)
+                self.assertIn(prompt, json.dumps(request[request_key]))
+
     def test_repository_bug_fix(self):
         original = "def price(subtotal, tax):\n    return subtotal - tax\n"
         fixed = "def price(subtotal, tax):\n    return subtotal + tax\n"
@@ -220,8 +275,8 @@ class Acceptance(Production):
 from pathlib import Path
 import sys
 Path("build-receipt").write_bytes(b"compiler ran")
-sys.stdout.write("build progress\\n" * 16384)
-sys.stderr.write("fixture compiler failure\\n")
+sys.stdout.buffer.write(b"build progress\\n" * 16384)
+sys.stderr.buffer.write(b"fixture compiler failure\\n")
 raise SystemExit(23)
 """.lstrip())
         output_limit = 8192
@@ -230,7 +285,7 @@ raise SystemExit(23)
         def inspect_tool(content):
             build = json.loads(content)
             self.assertEqual(build["exit_code"], 23)
-            self.assertEqual(build["stdout_bytes"], len("build progress\n") * 16384)
+            self.assertEqual(build["stdout_bytes"], len(b"build progress\n") * 16384)
             self.assertGreater(build["stdout_bytes"], len(build["stdout"]))
             self.assertIn("fixture compiler failure", build["stderr"])
             self.assertTrue(build["cleanup_confirmed"])
@@ -397,6 +452,7 @@ raise SystemExit(23)
 
 CASES = {
     "one-shot-answers": "test_one_shot_config_and_disabled_tools",
+    "one-shot-responses-and-messages": "test_one_shot_responses_and_messages",
     "repository-bug-fix": "test_repository_bug_fix",
     "concurrent-unrelated-edit": "test_refactor_preserves_concurrent_unrelated_edit",
     "build-failure-bounded-diagnostics": "test_build_failure_returns_bounded_diagnostics",
