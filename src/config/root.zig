@@ -20,7 +20,7 @@ pub const Diagnostic = struct {
 pub const Layer = struct {
     source: cfg.Source,
     location: ?[]const u8 = null,
-    data: union(enum) { json: []const u8, file: []const u8 },
+    data: union(enum) { json: []const u8, file: []const u8, optional_file: []const u8 },
 };
 pub const Input = struct {
     cwd: []const u8,
@@ -85,7 +85,7 @@ pub fn resolve(a: std.mem.Allocator, operation: foo.io.Context, input: Input, di
         try state.mark("enabled_tools");
     }
     for (input.layers) |layer| {
-        if (layer.source == .defaults or layer.source == .preset or (layer.source != .file and layer.data == .file)) {
+        if (layer.source == .defaults or layer.source == .preset or (layer.source != .file and layer.data != .json)) {
             state.source = layer.source;
             state.location = if (layer.location) |v| try a.dupe(u8, v) else null;
             return state.fail("layers", .invalid_layer);
@@ -109,11 +109,17 @@ pub fn resolve(a: std.mem.Allocator, operation: foo.io.Context, input: Input, di
                     }
                     break :blk bytes;
                 },
-                .file => |path| blk: {
+                .file, .optional_file => |path| blk: {
                     const absolute = try state.path(path, "$file");
                     state.location = absolute;
                     state.base = std.fs.path.dirname(absolute) orelse input.cwd;
-                    break :blk try state.readFile(absolute, "$", max_config_bytes);
+                    break :blk state.readFile(absolute, "$", max_config_bytes) catch |err| switch (err) {
+                        error.FileNotFound => {
+                            if (layer.data == .optional_file) continue;
+                            return state.fileError("$", err);
+                        },
+                        else => |shared| return shared,
+                    };
                 },
             };
             if (bytes.len > max_config_bytes or bytes.len > max_total_config_bytes - total_bytes) return state.limit("$");

@@ -166,7 +166,7 @@ The MCP/ACP owner pins protocol versions and implements only the profiles listed
 
 Use JSON to avoid another parser dependency and to support machine-generated configuration. Reject unknown keys, duplicate keys where observable, unsupported versions, invalid combinations and excessive nesting/size. Error messages include the setting path and source.
 
-The precedence is explicit and short: built-in mechanical defaults, an explicitly chosen preset, the user's explicit configuration file(s) in command order, declared environment overrides, then CLI overrides. No recursive walk for project configuration, no managed/MDM layer, no remote organization document, and no implicit execution of config helpers. Loading a repository's file requires an explicit file argument or a user-owned configuration reference.
+The executable applies mechanical defaults, the selected preset, the user configuration file, the approved project configuration file, explicit `--config` files in command order, environment overrides, and CLI field overrides. Each later layer takes precedence. `--approve` admits `.foo/config.json` from the invocation directory for one launch. An explicit `--config` path also selects a file. Embedders supply their own layers. [Configuration paths and merge rules](../src/config/README.md#configuration-files)
 
 Object fields merge only under documented rules. Lists of tools and prompt fragments replace rather than secretly concatenate; deletion/disable has an explicit representation. `config check` validates without starting providers, MCP servers or tools. `config show` displays the effective configuration with secrets redacted and source attribution for overridden values.
 

@@ -21,12 +21,18 @@ fn run(init: std.process.Init) !cli.Exit {
     var values: std.ArrayList([]const u8) = .empty;
     defer values.deinit(init.gpa);
     while (args.next()) |arg| try values.append(init.gpa, arg);
+    const argv: []const []const u8 = if (values.items.len == 0)
+        &.{"tui"}
+    else if (values.items.len == 1 and eql(values.items[0], "--approve"))
+        &.{ "tui", "--approve" }
+    else
+        values.items;
 
-    if (values.items.len == 0 or (values.items.len == 1 and isHelp(values.items[0]))) {
+    if (argv.len == 1 and isHelp(argv[0])) {
         try std.Io.File.stdout().writeStreamingAll(init.io, cli.help);
         return .success;
     }
-    if (values.items.len == 1 and eql(values.items[0], "--version")) {
+    if (argv.len == 1 and eql(argv[0], "--version")) {
         try std.Io.File.stdout().writeStreamingAll(init.io, "foo " ++ foo.version ++ "\n");
         return .success;
     }
@@ -47,14 +53,15 @@ fn run(init: std.process.Init) !cli.Exit {
     };
     defer app.deinit();
     const environment_json = init.environ_map.get("FOO_CONFIG_JSON");
-    const command = values.items[0];
+    const command = argv[0];
     if (eql(command, "tui") or eql(command, "acp") or eql(command, "mcp")) {
-        return cli.withProcessSignals(operation, otherFrontend, .{ &app, cwd, values.items, environment_json });
+        return cli.withProcessSignals(operation, otherFrontend, .{ &app, cwd, argv, environment_json });
     }
-    return cli.executeProcess(init.gpa, operation, values.items, .{
+    return cli.executeProcess(init.gpa, operation, argv, .{
         .cwd = cwd,
         .environ = init.environ_map,
         .environment_json = environment_json,
+        .discover_config = true,
         .runtime = app.cliRuntime(),
     });
 }
@@ -63,7 +70,7 @@ fn otherFrontend(operation: foo.io.Context, app: *runtime.App, cwd: []const u8, 
     var arena = std.heap.ArenaAllocator.init(app.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const command = cli.arguments.parse(allocator, argv, cwd, environment_json) catch |err| {
+    const command = cli.arguments.parseWithDiscovery(allocator, argv, cwd, environment_json, app.environ) catch |err| {
         report(operation.io, @errorName(err));
         return switch (err) {
             error.InvalidArguments => .usage,

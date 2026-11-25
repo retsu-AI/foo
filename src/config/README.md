@@ -17,15 +17,29 @@ pub fn resolve(
 pub fn effectiveJson(allocator: std.mem.Allocator, settings: Effective) Error![]const u8;
 ```
 
-`Input.cwd` is an absolute invocation directory. `Input.preset` is `none` by default or explicitly `coding`. `Input.layers` contains `Layer` records with a `foo.config.Source`, optional `location`, and either `.data.json` bytes or `.data.file` filename.
+`Input.cwd` is an absolute invocation directory. `Input.preset` is `none` by default or explicitly `coding`. `Input.layers` contains `Layer` records with a `foo.config.Source`, optional `location`, and data supplied as `.json`, `.file`, or `.optional_file`.
 
-Only `file`, `environment`, and `command_line` are accepted layer sources. Only a `file` layer can use `.data.file`. An environment layer is a JSON patch supplied by the caller after its own declared environment handling. Only caller-supplied environment patches take part in precedence.
+Only `file`, `environment`, and `command_line` are accepted layer sources. The `.file` and `.optional_file` data variants require the `file` source. An `.optional_file` layer is skipped when the file is missing. An environment layer is a JSON patch supplied by the caller after its own declared environment handling. Only caller-supplied environment patches take part in precedence.
 
 `Effective.runtime` is `foo.config.Resolved`. `Effective.launch` contains `process`, `session`, `tui`, and `custom_tools`. `Effective.prompt_files` lists normalized surviving prompt filenames. Strings and arrays in the result remain valid until the caller frees its arena. Use one caller-owned arena for each resolution and discard it after the final consumer finishes. A failed resolution can leave allocations in that arena.
 
 `resolve` clears the diagnostic before work. Schema, file, and limit failures include a setting `path`, `source`, `location`, and a typed `reason`. Diagnostics never include setting values. Syntax and duplicate-key errors use `$` because the JSON parser does not expose a reliable field path. Unsupported versions use `version`. Cancellation, deadline, and allocation errors return directly.
 
+## Configuration files
+
+The executable looks for user configuration in `$XDG_CONFIG_HOME/foo/config.json` on Linux and macOS. If `XDG_CONFIG_HOME` is unset or relative, it uses `~/.config/foo/config.json`. On Windows it uses `%APPDATA%\foo\config.json`. Set `FOO_CONFIG_DIR` to an absolute directory to use its `config.json` on any platform.
+
+Run `foo --approve` to include `.foo/config.json` from the invocation directory for that run. For an explicit command, pass the option after the command, as in `foo config show --approve`. Use `--config PATH` to load another file. Missing discovered files are skipped. Invalid files and missing explicit files produce errors.
+
 ## Precedence and merging
+
+The executable applies file layers in this order. Each layer takes precedence over the previous one.
+
+1. User `config.json`.
+2. Approved project `.foo/config.json`.
+3. `--config` files in command order.
+
+`FOO_CONFIG_JSON` and CLI field overrides apply after the files.
 
 The resolver applies these layers in order, regardless of the order in `Input.layers`:
 
@@ -93,7 +107,7 @@ Environment entries have the same `name` and `value` shape. Names and referenced
 
 The final prompt starts with `text`. Each file contributes its exact UTF-8 bytes. A newline separates two nonempty contributions. File contents become literal prompt text. Empty files add no separator. NUL and invalid UTF-8 are rejected.
 
-`cwd`, prompt filenames, and `session.directory` resolve lexically against the directory containing their explicit configuration file. For inline `.data.json` with source `file`, `location`, when supplied, is that configuration filename. Other layers resolve paths against `Input.cwd`. The invocation or declaring file directory anchors each path. The resolver takes `~`, environment variables, and glob syntax literally. The frontend opens working and session directories during setup.
+`cwd`, prompt filenames, and `session.directory` resolve lexically against the directory containing their configuration file. For inline `.data.json` with source `file`, `location`, when supplied, is that configuration filename. Other layers resolve paths against `Input.cwd`. The invocation or declaring file directory anchors each path. The resolver takes `~`, environment variables, and glob syntax literally. The frontend opens working and session directories during setup.
 
 On Linux, an invocation directory of `/work` and an explicit file `/settings/profile.json` resolve `"cwd":"../project"` to `/project` and `"append_files":["rules.txt"]` to `/settings/rules.txt`. On Windows, `Input.cwd` can be `C:\\work`; a profile at `C:\\settings\\profile.json` resolves `"cwd":"..\\project"` to `C:\\project`. JSON requires escaped backslashes. Path syntax follows the compilation target. Use Windows path syntax on Windows and POSIX path syntax on Linux and macOS.
 

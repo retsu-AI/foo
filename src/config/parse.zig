@@ -403,13 +403,19 @@ fn session(self: *Self, value: Value) Error!void {
     if (obj.get("limits")) |v| try self.mergeSimple(root.SessionLimits, &self.settings.launch.session.limits, v, "session.limits");
 }
 
-pub fn readFile(self: *Self, filename: []const u8, path_name: []const u8, bound: usize) Error![]const u8 {
+pub fn readFile(self: *Self, filename: []const u8, path_name: []const u8, bound: usize) (Error || error{FileNotFound})![]const u8 {
     try self.operation.check();
     const io = self.operation.io;
-    const stat = std.Io.Dir.cwd().statFile(io, filename, .{}) catch |err| return self.fileError(path_name, err);
+    const stat = std.Io.Dir.cwd().statFile(io, filename, .{}) catch |err| {
+        if (err == error.FileNotFound) return error.FileNotFound;
+        return self.fileError(path_name, err);
+    };
     if (stat.kind != .file) return self.fail(path_name, .invalid_value);
     if (stat.size > bound) return self.limit(path_name);
-    const file = std.Io.Dir.cwd().openFile(io, filename, .{ .allow_directory = false }) catch |err| return self.fileError(path_name, err);
+    const file = std.Io.Dir.cwd().openFile(io, filename, .{ .allow_directory = false }) catch |err| {
+        if (err == error.FileNotFound) return error.FileNotFound;
+        return self.fileError(path_name, err);
+    };
     defer file.close(io);
     const actual = file.stat(io) catch |err| return self.fileError(path_name, err);
     if (actual.kind != .file) return self.fail(path_name, .invalid_value);
@@ -426,7 +432,7 @@ pub fn readFile(self: *Self, filename: []const u8, path_name: []const u8, bound:
     try self.operation.check();
     return bytes.toOwnedSlice(self.a);
 }
-fn fileError(self: *Self, path_name: []const u8, err: anyerror) Error {
+pub fn fileError(self: *Self, path_name: []const u8, err: anyerror) Error {
     if (err == error.Canceled) return error.Cancelled;
     if (err == error.OutOfMemory) return error.OutOfMemory;
     self.report(path_name, .file_io);
@@ -461,7 +467,10 @@ pub fn finish(self: *Self) Error!void {
     try prompt_text.appendSlice(self.a, runtime.system_prompt);
     for (self.settings.prompt_files, 0..) |file, i| {
         const p = try self.index("system_prompt.append_files", i);
-        const bytes = try self.readFile(file, p, root.max_prompt_bytes - prompt_text.items.len);
+        const bytes = self.readFile(file, p, root.max_prompt_bytes - prompt_text.items.len) catch |err| switch (err) {
+            error.FileNotFound => return self.fileError(p, err),
+            else => |shared| return shared,
+        };
         if (!std.unicode.utf8ValidateSlice(bytes) or std.mem.indexOfScalar(u8, bytes, 0) != null) return self.fail(p, .invalid_value);
         const separator: usize = if (prompt_text.items.len != 0 and bytes.len != 0) 1 else 0;
         if (bytes.len + separator > root.max_prompt_bytes - prompt_text.items.len) return self.limit(p);

@@ -15,11 +15,12 @@ EOF = object()
 
 
 class Peer:
-    def __init__(self, binary, test, trace, args, read_limit):
+    def __init__(self, binary, test, trace, args, read_limit, *, cwd=None, env=None):
         self.test = test
         self.trace = trace
         self.process = subprocess.Popen(
             [binary, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=cwd, env=env,
         )
         self.messages = queue.Queue()
         self.responses = set()

@@ -4,3 +4,5 @@ zig-pkg/
 zig-out/
 __pycache__/
 .agents/**/node_modules/
+opencode.json
+foo.json

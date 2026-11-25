@@ -7,6 +7,8 @@ The CLI runs commands through the shared conversation engine. See the [candidate
 ```sh
 foo --help
 foo --version
+foo --approve
+foo tui --config profile.json
 foo run --config profile.json --prompt 'Summarize the input'
 printf 'Summarize the input\n' | foo run --config profile.json --stdin
 foo run --config profile.json --resume --prompt 'Continue'
@@ -14,6 +16,8 @@ foo config check --config profile.json
 foo config show --config profile.json --model example
 foo rpc --config profile.json
 ```
+
+`foo` and `zig build run` open the TUI with the user config when run without arguments. Use `foo --approve` or `zig build run -- --approve` to include the project's `.foo/config.json`. [Configuration paths and precedence](../config/README.md#configuration-files)
 
 `run` requires exactly one prompt source. `--stdin` reads UTF-8 until EOF and retains the bytes, including trailing newlines. Plain stdout contains committed assistant text. A successful nonempty output ends with a newline. Diagnostics go to stderr. The same output rules apply to terminals and pipes.
 

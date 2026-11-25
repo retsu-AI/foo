@@ -21,7 +21,7 @@ TIMEOUT = 10
 
 
 class UnixPty:
-    def __init__(self, arguments, columns, rows, environment=None, stderr_pipe=False):
+    def __init__(self, arguments, columns, rows, environment=None, stderr_pipe=False, *, cwd=None):
         self.master, self.slave = pty.openpty()
         try:
             self.original = termios.tcgetattr(self.slave)
@@ -33,7 +33,7 @@ class UnixPty:
             self.process = subprocess.Popen(
                 arguments, stdin=self.slave, stdout=self.slave,
                 stderr=subprocess.PIPE if stderr_pipe else self.slave,
-                env=env, start_new_session=True,
+                env=env, cwd=cwd, start_new_session=True,
             )
         except BaseException:
             os.close(self.slave)
@@ -108,11 +108,11 @@ class UnixPty:
 
 
 class TerminalPeer:
-    def __init__(self, arguments, columns=80, rows=18, environment=None, stderr_pipe=False):
+    def __init__(self, arguments, columns=80, rows=18, environment=None, stderr_pipe=False, *, cwd=None):
         if os.name == "nt":
-            self.device = ConPty(arguments, columns, rows)
+            self.device = ConPty(arguments, columns, rows, environment, cwd=cwd)
         else:
-            self.device = UnixPty(arguments, columns, rows, environment, stderr_pipe)
+            self.device = UnixPty(arguments, columns, rows, environment, stderr_pipe, cwd=cwd)
         self.condition = threading.Condition()
         self.data = bytearray()
         self.failure = None

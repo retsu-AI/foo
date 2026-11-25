@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const foo = @import("foo");
 const config = @import("configuration");
 
@@ -35,6 +36,7 @@ const Mode = enum { run, rpc, tui, acp, mcp, config };
 const ConfigMode = enum { check, show };
 const McpMode = enum { list, get };
 const Flag = enum {
+    @"--approve",
     @"--config",
     @"--preset",
     @"--model",
@@ -58,6 +60,16 @@ const ModelPatch = struct {
 const Error = error{ InvalidArguments, LimitExceeded, OutOfMemory };
 
 pub fn parse(a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8, environment: ?[]const u8) Error!Command {
+    return parseWithDiscovery(a, argv, cwd, environment, null);
+}
+
+pub fn parseWithDiscovery(
+    a: std.mem.Allocator,
+    argv: []const []const u8,
+    cwd: []const u8,
+    environment: ?[]const u8,
+    environ: ?*const std.process.Environ.Map,
+) Error!Command {
     var input: config.Input = .{ .cwd = cwd };
     if (argv.len == 0) return .{ .action = .help, .config = input };
     if (argv.len == 1) {
@@ -87,6 +99,7 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8, en
         if (flag != .@"--config" and used.contains(flag)) return error.InvalidArguments;
         used.insert(flag);
         switch (flag) {
+            .@"--approve" => if (environ == null) return error.InvalidArguments,
             .@"--stdin", .@"--prompt" => {
                 if (mode != .run or prompt != null) return error.InvalidArguments;
                 prompt = if (flag == .@"--stdin")
@@ -138,6 +151,12 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8, en
             .data = .{ .json = patch_json },
         });
     }
+    if (environ) |variables| {
+        if (used.contains(.@"--approve")) {
+            try prependFile(a, &layers, try std.fs.path.join(a, &.{ cwd, ".foo", "config.json" }));
+        }
+        if (try userConfig(a, variables)) |path| try prependFile(a, &layers, path);
+    }
     input.layers = layers.items;
     return .{
         .action = switch (mode) {
@@ -154,6 +173,36 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8, en
         .session = session,
         .config = input,
     };
+}
+
+fn userConfig(a: std.mem.Allocator, environ: *const std.process.Environ.Map) Error!?[]const u8 {
+    const path = std.fs.path;
+    if (absoluteDirectory(environ.get("FOO_CONFIG_DIR"))) |directory| {
+        return try path.join(a, &.{ directory, "config.json" });
+    }
+    if (builtin.os.tag == .windows) {
+        const app_data = absoluteDirectory(environ.get("APPDATA")) orelse return null;
+        return try path.join(a, &.{ app_data, "foo", "config.json" });
+    }
+    if (absoluteDirectory(environ.get("XDG_CONFIG_HOME"))) |directory| {
+        return try path.join(a, &.{ directory, "foo", "config.json" });
+    }
+    const home = absoluteDirectory(environ.get("HOME")) orelse return null;
+    return try path.join(a, &.{ home, ".config", "foo", "config.json" });
+}
+
+fn absoluteDirectory(value_or_null: ?[]const u8) ?[]const u8 {
+    const directory = value_or_null orelse return null;
+    if (builtin.os.tag == .windows) return switch (std.fs.path.getWin32PathType(u8, directory)) {
+        .drive_absolute, .unc_absolute, .local_device => directory,
+        else => null,
+    };
+    return if (std.fs.path.isAbsolute(directory)) directory else null;
+}
+
+fn prependFile(a: std.mem.Allocator, layers: *std.ArrayList(config.Layer), path: []const u8) Error!void {
+    if (layers.items.len == config.max_layers) return error.LimitExceeded;
+    try layers.insert(a, 0, .{ .source = .file, .data = .{ .optional_file = path } });
 }
 
 fn parseMcp(argv: []const []const u8, offset: *usize) Error!McpCommand {

@@ -2,6 +2,7 @@
 
 import ctypes
 from ctypes import wintypes as win
+import os
 from pathlib import Path
 import subprocess
 
@@ -12,6 +13,7 @@ P_HANDLE = ctypes.POINTER(win.HANDLE)
 P_DWORD = ctypes.POINTER(win.DWORD)
 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016
 EXTENDED_STARTUPINFO_PRESENT = 0x00080000
+CREATE_UNICODE_ENVIRONMENT = 0x00000400
 STARTF_USESTDHANDLES = 0x00000100
 WAIT_TIMEOUT = 258
 WAIT_OBJECT_0 = 0
@@ -81,7 +83,7 @@ def check_hresult(result):
 
 
 class ConPty:
-    def __init__(self, arguments, columns, rows):
+    def __init__(self, arguments, columns, rows, environment=None, *, cwd=None):
         self.console = win.HANDLE()
         self.input = win.HANDLE()
         self.output = win.HANDLE()
@@ -92,7 +94,7 @@ class ConPty:
             check(create_pipe(ctypes.byref(read_end), ctypes.byref(self.input), None, 0))
             check(create_pipe(ctypes.byref(self.output), ctypes.byref(write_end), None, 0))
             check_hresult(create_console(Coord(columns, rows), read_end, write_end, 0, ctypes.byref(self.console)))
-            self.process = self.launch(arguments)
+            self.process = self.launch(arguments, environment, cwd)
         except BaseException:
             if self.output:
                 close_handle(self.output)
@@ -107,7 +109,7 @@ class ConPty:
             if write_end:
                 close_handle(write_end)
 
-    def launch(self, arguments):
+    def launch(self, arguments, environment, cwd):
         storage_size = SIZE_T()
         init_attributes(None, 1, 0, ctypes.byref(storage_size))
         attributes = ctypes.create_string_buffer(storage_size.value)
@@ -124,9 +126,16 @@ class ConPty:
             info.attributes = ctypes.cast(attributes, PVOID)
             process = ProcessInfo()
             command = ctypes.create_unicode_buffer(subprocess.list2cmdline(list(map(str, arguments))))
+            block = None
+            flags = EXTENDED_STARTUPINFO_PRESENT
+            if environment is not None:
+                env = os.environ.copy()
+                env.update({name.upper(): value for name, value in environment.items()})
+                block = ctypes.create_unicode_buffer("".join(f"{name}={env[name]}\0" for name in sorted(env)))
+                flags |= CREATE_UNICODE_ENVIRONMENT
             check(create_process(
                 str(Path(arguments[0]).resolve()), command, None, None, False,
-                EXTENDED_STARTUPINFO_PRESENT, None, None, ctypes.byref(info.startup), ctypes.byref(process),
+                flags, block, None if cwd is None else str(cwd), ctypes.byref(info.startup), ctypes.byref(process),
             ))
             close_handle(process.thread)
             return process.process

@@ -41,6 +41,7 @@ pub const Options = struct {
     streams: ?Streams = null,
     environ: ?*const std.process.Environ.Map = null,
     environment_json: ?[]const u8 = null,
+    discover_config: bool = false,
     runtime: ?Runtime = null,
 };
 
@@ -78,6 +79,7 @@ pub const Exit = enum(u8) {
 
 pub const help =
     \\Usage:
+    \\  foo [--approve]          Open the TUI.
     \\  foo run (--prompt TEXT | --stdin) [--resume] [OPTIONS]
     \\  foo rpc [--resume] [OPTIONS]
     \\  foo tui [--resume] [OPTIONS]
@@ -89,6 +91,7 @@ pub const help =
     \\  foo --help | --version
     \\
     \\Options:
+    \\  --approve              Load .foo/config.json from the directory where foo starts.
     \\  --config PATH          Load an explicit JSON config. Repeat in precedence order.
     \\  --preset coding        Select the built-in coding preset.
     \\  --provider FAMILY      openai_responses, openai_chat, or anthropic_messages
@@ -115,7 +118,8 @@ pub fn execute(
     defer arena.deinit();
     const a = arena.allocator();
     operation.check() catch |err| return failed(streams, operation, err);
-    const command = arguments.parse(a, argv, options.cwd, options.environment_json) catch |err| switch (err) {
+    const discovery = if (options.discover_config) options.environ else null;
+    const command = arguments.parseWithDiscovery(a, argv, options.cwd, options.environment_json, discovery) catch |err| switch (err) {
         error.InvalidArguments => {
             report(streams, operation.io, "invalid arguments. Use foo --help", .{});
             return .usage;

@@ -167,8 +167,16 @@ class Production(unittest.TestCase):
 
         self.addCleanup(close)
         self.origin = f"http://127.0.0.1:{self.server.server_port}"
-        self.env = {**os.environ, "NO_COLOR": "1", "TERM": "xterm-256color"}
-        for name in ("FOO_CA_FILE", "FOO_CONFIG_JSON", "FOO_SMOKE_MISSING"):
+        self.home = self.directory / "home"
+        appdata = self.directory / "app data"
+        xdg = self.directory / "xdg config"
+        self.user_config = (appdata if os.name == "nt" else xdg) / "foo" / "config.json"
+        self.project_config = self.directory / ".foo" / "config.json"
+        self.env = {
+            **os.environ, "NO_COLOR": "1", "TERM": "xterm-256color",
+            "HOME": str(self.home), "XDG_CONFIG_HOME": str(xdg), "APPDATA": str(appdata),
+        }
+        for name in ("FOO_CA_FILE", "FOO_CONFIG_DIR", "FOO_CONFIG_JSON", "FOO_SMOKE_MISSING"):
             self.env.pop(name, None)
         self.config()
 
@@ -183,10 +191,23 @@ class Production(unittest.TestCase):
         return [self.binary, *command, "--config", self.profile]
 
     def execute(self, *command, data=None):
+        return self.invoke(*self.argv(*command)[1:], data=data)
+
+    def invoke(self, *command, data=None, cwd=None, env=None):
         return subprocess.run(
-            self.argv(*command), input=data, env=self.env, cwd=self.directory,
+            [self.binary, *command], input=data, env=self.env if env is None else env, cwd=cwd or self.directory,
             capture_output=True, timeout=TIMEOUT,
         )
+
+    def write_config(self, path, value):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value), encoding="utf-8")
+
+    def effective(self, *options, **launch):
+        result = self.invoke("config", "show", *options, **launch)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, b"")
+        return json.loads(result.stdout)["runtime"]
 
     def success(self, command, text, data=None):
         result = self.execute(*command, data=data)
@@ -198,12 +219,102 @@ class Production(unittest.TestCase):
         return [request for path, request in self.server.requests if path == "/chat"]
 
     def test_help_and_version(self):
-        for flag, expected in (("--help", b"foo tui"), ("--version", b"foo 0.0.0-rc")):
-            result = subprocess.run([self.binary, flag], env=self.env, cwd=self.directory,
-                                    capture_output=True, timeout=TIMEOUT)
+        self.user_config.parent.mkdir(parents=True)
+        self.user_config.write_text("{", encoding="utf-8")
+        for command, expected in (
+            (("--help",), b"foo tui"), (("--version",), b"foo 0.0.0-rc"),
+            (("config", "show", "--help"), b"--approve"), (("tui", "--help"), b"--config"),
+        ):
+            result = self.invoke(*command)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(expected, result.stdout)
             self.assertEqual(result.stderr, b"")
+
+    def test_discovers_user_config_from_platform_default_and_override(self):
+        settings = json.loads(self.profile.read_text(encoding="utf-8"))
+        settings["cwd"] = "work"
+        self.write_config(self.user_config, settings)
+        result = self.effective()
+        self.assertEqual(Path(result["cwd"]), self.user_config.parent / "work")
+        self.assertEqual(result["model"]["id"], "fixture")
+
+        if os.name != "nt":
+            self.write_config(self.home / ".config" / "foo" / "config.json", {
+                **settings, "model": {**settings["model"], "id": "home"},
+            })
+            result = self.effective(env={**self.env, "XDG_CONFIG_HOME": "relative"})
+            self.assertEqual(result["model"]["id"], "home")
+        # A drive-rooted Windows path still depends on the current drive.
+        relative = "\\relative" if os.name == "nt" else "relative"
+        result = self.effective(env={**self.env, "FOO_CONFIG_DIR": relative})
+        self.assertEqual(result["model"]["id"], "fixture")
+
+        override = self.directory / "explicit config directory"
+        self.write_config(override / "config.json", {**settings, "model": {**settings["model"], "id": "override"}})
+        result = self.effective(env={**self.env, "FOO_CONFIG_DIR": str(override)})
+        self.assertEqual((result["model"]["id"], Path(result["cwd"])), ("override", override / "work"))
+
+    def test_project_config_requires_approval_and_layers_in_order(self):
+        settings = json.loads(self.profile.read_text(encoding="utf-8"))
+        settings["model"]["credential"] = {"environment": "FOO_TEST_USER_KEY"}
+        settings["model"]["headers"] = [{"name": "X-Fixture", "value": "fixture-user-header"}]
+        self.write_config(self.user_config, settings)
+        self.write_config(self.project_config, {
+            "model": {"id": "project", "endpoint": "https://project.invalid/chat"},
+            "cwd": "project-work", "permissions": "allow",
+        })
+        (self.directory / "foo.json").write_text("{", encoding="utf-8")
+        unapproved = self.effective()
+        self.assertEqual(unapproved["model"]["id"], "fixture")
+        self.assertEqual(unapproved["permissions"], "deny")
+        self.assertEqual(unapproved["model"]["credential"], {"environment": "FOO_TEST_USER_KEY"})
+
+        approved = self.effective("--approve")
+        self.assertEqual(approved["permissions"], "allow")
+        self.assertEqual(approved["model"]["id"], "project")
+        self.assertEqual(approved["model"]["family"], "openai_chat")
+        self.assertEqual(approved["model"]["credential"], {"none": {}})
+        self.assertEqual(approved["model"]["headers"], [])
+        self.assertEqual(Path(approved["cwd"]), self.project_config.parent / "project-work")
+        locations = {item["key"]: item.get("location") for item in approved["provenance"]}
+        self.assertEqual(Path(locations["model.id"]), self.project_config)
+        self.assertEqual(Path(locations["model.family"]), self.user_config)
+
+        first = self.directory / "first.json"
+        second = self.directory / "second.json"
+        self.write_config(first, {"model": {"id": "first"}})
+        self.write_config(second, {"model": {"id": "second"}})
+        files = ("--approve", "--config", first, "--config", second)
+        self.assertEqual(self.effective(*files)["model"]["id"], "second")
+        env = {**self.env, "FOO_CONFIG_JSON": '{"model":{"id":"environment"}}'}
+        self.assertEqual(self.effective(*files, env=env)["model"]["id"], "environment")
+        self.assertEqual(self.effective(*files, "--model", "flag", env=env)["model"]["id"], "flag")
+
+        child = self.directory / "child"
+        child.mkdir()
+        self.assertEqual(self.effective("--approve", "--cwd", self.directory, cwd=child)["model"]["id"], "fixture")
+        self.assertEqual(self.effective()["model"]["id"], "fixture")
+
+    def test_discovery_only_skips_missing_files(self):
+        self.assertEqual(self.effective("--approve", "--config", self.profile)["model"]["id"], "fixture")
+        missing = self.invoke("config", "show", "--config", self.directory / "missing.json")
+        self.assertEqual(missing.returncode, 2, missing.stderr)
+        self.assertIn(b"file_io", missing.stderr)
+
+        self.user_config.parent.mkdir(parents=True)
+        self.user_config.write_text("{", encoding="utf-8")
+        malformed = self.execute("config", "show")
+        self.assertEqual(malformed.returncode, 2, malformed.stderr)
+        self.assertIn(b"invalid_json", malformed.stderr)
+        self.user_config.write_bytes(b" " * (1024 * 1024 + 1))
+        oversized = self.execute("config", "show")
+        self.assertEqual(oversized.returncode, 3, oversized.stderr)
+        self.assertIn(b"limit_exceeded", oversized.stderr)
+        self.user_config.unlink()
+        self.user_config.mkdir()
+        directory = self.execute("config", "show")
+        self.assertEqual(directory.returncode, 2, directory.stderr)
+        self.assertIn(b"invalid_value", directory.stderr)
 
     def test_one_shot_config_and_disabled_tools(self):
         marker = self.directory / "stdio-started"
@@ -333,8 +444,9 @@ class Production(unittest.TestCase):
                 if child.poll() is None:
                     child.kill()
 
-    def acp(self, capabilities=None):
-        peer = Peer(self.binary, self, None, self.argv("acp")[1:], None)
+    def acp(self, capabilities=None, arguments=None):
+        peer = Peer(self.binary, self, None, arguments or self.argv("acp")[1:], None,
+                    cwd=self.directory, env=self.env)
         self.addCleanup(peer.cleanup)
         result = peer.result(peer.request("initialize", {
             "protocolVersion": 1, "clientCapabilities": capabilities or {},
@@ -343,6 +455,18 @@ class Production(unittest.TestCase):
         self.assertTrue(result["agentCapabilities"]["mcpCapabilities"]["http"])
         self.assertFalse(result["agentCapabilities"]["mcpCapabilities"].get("sse", False))
         return peer
+
+    def test_acp_discovers_config_from_its_launch_directory(self):
+        self.write_config(self.user_config, json.loads(self.profile.read_text(encoding="utf-8")))
+        self.write_config(self.project_config, {"model": {"id": "launch"}})
+        editor = self.directory / "editor"
+        self.write_config(editor / ".foo" / "config.json", {"model": {"id": "editor"}})
+        peer = self.acp(arguments=("acp", "--approve"))
+        session = peer.session(editor)
+        self.assertEqual(agent_text(peer.wait_for_turn(peer.prompt(session, "approved"), session)), "Reply to approved")
+        self.assertEqual(self.provider_requests()[-1]["model"], "launch")
+        peer.close_input()
+        self.assertEqual(peer.join(), b"")
 
     def test_acp_http_mcp_and_editor_server_policy(self):
         url = self.origin + "/mcp"
@@ -403,19 +527,27 @@ class Production(unittest.TestCase):
         peer.close_input()
         self.assertEqual(peer.join(), b"")
 
-    def test_tui_terminal_and_plain_fallback(self):
+    def test_explicit_tui_plain_fallback(self):
         self.success(("tui",), "Reply to redirected\n", b"redirected\n")
-        peer = TerminalPeer(self.argv("tui"), 64, 12, self.env)
-        self.addCleanup(peer.close)
-        peer.expect("Ready")
-        peer.resize(43, 8)
-        start = peer.mark()
-        peer.send("term 雪\r")
-        peer.expect("Reply to term", start=start)
-        peer.send(b"\x04")
-        self.assertEqual(peer.wait(), 0, peer.capture()[-800:])
-        if os.name != "nt":
-            self.assertTrue(peer.device.mode_restored())
+
+    def test_bare_invocation_opens_tui(self):
+        self.write_config(self.user_config, json.loads(self.profile.read_text(encoding="utf-8")))
+        self.write_config(self.project_config, {"model": {"id": "project"}})
+        env = {**self.env, "FOO_CONFIG_DIR": "", "FOO_CONFIG_JSON": "{}"}
+        for flags, model in (((), "fixture"), (("--approve",), "project")):
+            with self.subTest(flags=flags):
+                peer = TerminalPeer([self.binary, *flags], 64, 12, env, cwd=self.directory)
+                self.addCleanup(peer.close)
+                peer.expect("Ready")
+                peer.resize(43, 8)
+                start = peer.mark()
+                peer.send("term 雪\r")
+                peer.expect("Reply to term", start=start)
+                self.assertEqual(self.provider_requests()[-1]["model"], model)
+                peer.send(b"\x04")
+                self.assertEqual(peer.wait(), 0, peer.capture()[-800:])
+                if os.name != "nt":
+                    self.assertTrue(peer.device.mode_restored())
 
 
 if __name__ == "__main__":
