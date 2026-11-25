@@ -427,7 +427,9 @@ class Production(unittest.TestCase):
             "type": "oauth", "access": "fixture-access", "refresh": "fixture-refresh",
             "expires_ms": 4102444800000, "account": "fixture-account",
         }}), encoding="utf-8")
-        if os.name != "nt":
+        if os.name == "nt":
+            subprocess.run(["icacls", str(stored), "/inheritance:r", "/grant:r", f"{os.environ['USERNAME']}:F"], check=True, capture_output=True)
+        else:
             stored.chmod(0o600)
         self.config(provider={"credential": {"auth": "openai-codex"}})
         self.success(("run", "--prompt", "say ok"), "Reply to say ok\n")

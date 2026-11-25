@@ -353,27 +353,37 @@ pub const Callback = struct {
     }
 
     fn readTarget(io: std.Io, stream: std.Io.net.Stream, buffer: []u8) error{ Cancelled, Malformed }![]const u8 {
-        var used: usize = 0;
-        while (std.mem.indexOf(u8, buffer[0..used], "\r\n\r\n") == null) {
-            if (used == buffer.len) return error.Malformed;
-            var slices = [_][]u8{buffer[used..]};
-            // Browsers open speculative connections that never send; drop them so the real request is accepted.
-            const result = io.operateTimeout(.{ .net_read = .{ .socket_handle = stream.socket.handle, .data = &slices } }, .{
-                .duration = .{ .raw = .fromMilliseconds(read_timeout_ms), .clock = .awake },
-            }) catch |err| return switch (err) {
-                error.Canceled => error.Cancelled,
-                else => error.Malformed,
-            };
-            const n = (result.net_read catch return error.Malformed).data_len;
-            if (n == 0) return error.Malformed;
-            used += n;
-        }
+        // Browsers open speculative connections that never send; drop them so the real request is accepted.
+        // operateTimeout cannot time out a socket read on Windows, so the read runs as a task under a timed wait.
+        var ready: std.Io.Event = .unset;
+        var task = io.concurrent(readHead, .{ io, stream, buffer, &ready }) catch return error.Malformed;
+        ready.waitTimeout(io, .{ .duration = .{ .raw = .fromMilliseconds(read_timeout_ms), .clock = .awake } }) catch |err| {
+            if (task.cancel(io)) |_| {} else |_| {}
+            return if (err == error.Canceled) error.Cancelled else error.Malformed;
+        };
+        const used = try task.await(io);
         const line = buffer[0 .. std.mem.indexOf(u8, buffer[0..used], "\r\n") orelse unreachable];
         var fields = std.mem.splitScalar(u8, line, ' ');
         if (!std.mem.eql(u8, fields.next() orelse "", "GET")) return error.Malformed;
         const target = fields.next() orelse return error.Malformed;
         if (!std.mem.startsWith(u8, fields.next() orelse "", "HTTP/1.") or fields.next() != null) return error.Malformed;
         return target;
+    }
+
+    fn readHead(io: std.Io, stream: std.Io.net.Stream, buffer: []u8, ready: *std.Io.Event) error{ Cancelled, Malformed }!usize {
+        defer ready.set(io);
+        var used: usize = 0;
+        while (std.mem.indexOf(u8, buffer[0..used], "\r\n\r\n") == null) {
+            if (used == buffer.len) return error.Malformed;
+            var slices = [_][]u8{buffer[used..]};
+            const n = stream.read(io, &slices) catch |err| return switch (err) {
+                error.Canceled => error.Cancelled,
+                else => error.Malformed,
+            };
+            if (n == 0) return error.Malformed;
+            used += n;
+        }
+        return used;
     }
 
     fn respond(io: std.Io, stream: std.Io.net.Stream, status: []const u8, message: []const u8) void {
