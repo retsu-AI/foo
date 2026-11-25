@@ -206,6 +206,11 @@ const FakeSession = struct {
             try turn.text(output.bytes);
         } else if (same(prompt, "refusal")) {
             return turn.finish(.{ .reason = .provider_error, .provider_stop = .refusal });
+        } else if (same(prompt, "unauthorized")) {
+            return turn.finish(.{ .reason = .provider_error, .detail = .{ .authentication = .{
+                .endpoint = input.settings.model.endpoint,
+                .status = 401,
+            } } });
         } else if (same(prompt, "limit")) {
             return turn.finish(.{ .reason = .limit_reached, .provider_stop = .output_limit });
         } else if (same(prompt, "other-limit")) {

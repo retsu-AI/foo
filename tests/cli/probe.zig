@@ -141,6 +141,14 @@ const Fixture = struct {
             try sink.emit(operation, .{ .text = "provisional only" });
             return error.Rejected;
         }
+        if (std.mem.eql(u8, prompt, "unauthorized")) {
+            if (sink.failure) |failure| failure.status = 401;
+            return error.Authentication;
+        }
+        if (std.mem.eql(u8, prompt, "rate-limited")) {
+            if (sink.failure) |failure| failure.* = .{ .status = 429, .retry_after_ms = 1500 };
+            return error.RateLimited;
+        }
         if (std.mem.eql(u8, prompt, "output-limit")) {
             return .{ .message = .{ .role = .assistant, .blocks = &.{} }, .stop = .output_limit };
         }

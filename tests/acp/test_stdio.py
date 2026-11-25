@@ -157,6 +157,8 @@ class Peer:
                 self.test.assertEqual(message.get("id"), request_id, message)
                 if error:
                     self.test.assertIn("error", message, message)
+                    if isinstance(error, str):
+                        self.test.assertEqual(message["error"]["message"], error, message)
                 else:
                     self.test.assertEqual(message.get("result", {}).get("stopReason"), stop, message)
                 return updates
@@ -287,7 +289,9 @@ class AcpStdio(unittest.TestCase):
         updates = peer.wait_for_turn(peer.prompt(other, "history"), other)
         self.assertEqual(agent_text(updates), "history 0")
         peer.wait_for_turn(peer.prompt(session, "limit"), session, stop="max_tokens")
-        peer.wait_for_turn(peer.prompt(session, "other-limit"), session, error=True)
+        peer.wait_for_turn(peer.prompt(session, "other-limit"), session, error="ACP operation failed")
+        peer.wait_for_turn(peer.prompt(session, "unauthorized"), session,
+                           error="authentication failed for fixture (HTTP 401)")
 
     def test_editor_mcp_declaration_and_session_admission(self):
         peer = self.peer()
