@@ -923,3 +923,58 @@ test "openai-codex sends the stored bearer, account header and Responses body to
     request.model.headers = &.{.{ .name = "ChatGPT-Account-Id", .value = .{ .literal = "other" } }};
     try std.testing.expectError(error.InvalidInput, run.stream(&adapter, request));
 }
+
+test "xAI and OpenCode send the stored key to their Responses routes and OpenCode names the session" {
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var run: Run = .{ .allocator = a };
+    const operation: io.Context = .{ .io = std.testing.io, .cancellation = &run.cancellation, .clock = run.clock.interface() };
+    const store = auth.Store{ .directory = try tmp.dir.realPathFileAlloc(operation.io, ".", a) };
+    try store.put(a, operation, "xai", .{ .oauth = .{ .access = "xai-access", .refresh = "xai-refresh", .expires_ms = std.math.maxInt(i64) } });
+    try store.put(a, operation, "opencode", .{ .api_key = "console-key" });
+    try store.put(a, operation, "opencode-go", .{ .api_key = "go-key" });
+    const resolver = auth.Resolver{ .store = store };
+    const routes = [_]struct { provider: []const u8, url: []const u8, model: []const u8, authorization: []const u8, session: bool }{
+        .{ .provider = "xai", .url = "https://api.x.ai/v1/responses", .model = "grok-4.7", .authorization = "Bearer xai-access", .session = false },
+        .{ .provider = "opencode", .url = "https://opencode.ai/inference/openai/v1/responses", .model = "gpt-6.1", .authorization = "Bearer console-key", .session = true },
+        .{ .provider = "opencode-go", .url = "https://OpenCode.ai/inference/go/openai/v1/responses", .model = "kimi-k3", .authorization = "Bearer go-key", .session = true },
+    };
+    for (routes) |route| {
+        var wire: Wire = .{ .allocator = a, .body = profiles[0].body };
+        var adapter: providers.Adapter = .{ .transport = wire.transport(), .credentials = resolver.interface() };
+        var request = requestFor(.openai_responses, route.url);
+        request.model.id = route.model;
+        request.model.credential = .{ .auth = route.provider };
+        _ = try run.stream(&adapter, request);
+        try same(route.url, wire.url);
+        try same(route.authorization, wire.header("authorization").?);
+        try expect(is(try parse(a, wire.request_body), "model", route.model));
+        if (!route.session) {
+            try equal(null, wire.header("x-opencode-session"));
+            continue;
+        }
+        const first = wire.header("x-opencode-session").?;
+        try equal(32, first.len);
+        for (first) |byte| try expect(std.ascii.isDigit(byte) or (byte >= 'a' and byte <= 'f'));
+        _ = try run.stream(&adapter, request);
+        try same(first, wire.header("x-opencode-session").?);
+
+        var other: providers.Adapter = .{ .transport = wire.transport(), .credentials = resolver.interface() };
+        _ = try run.stream(&other, request);
+        try expect(!std.mem.eql(u8, first, wire.header("x-opencode-session").?));
+
+        request.model.headers = &.{.{ .name = "X-OpenCode-Session", .value = .{ .literal = "chosen" } }};
+        _ = try run.stream(&adapter, request);
+        try same("chosen", wire.header("x-opencode-session").?);
+    }
+
+    var wire: Wire = .{ .allocator = a, .body = profiles[0].body };
+    var adapter: providers.Adapter = .{ .transport = wire.transport(), .credentials = resolver.interface() };
+    var request = requestFor(.openai_responses, "https://opencode.ai.example.invalid/v1/responses");
+    request.model.credential = .{ .auth = "opencode" };
+    _ = try run.stream(&adapter, request);
+    try equal(null, wire.header("x-opencode-session"));
+}

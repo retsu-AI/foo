@@ -13,6 +13,8 @@ pub const Adapter = struct {
     environment: ?*const std.process.Environ.Map = null,
     retry_attempts: u32 = 0,
     scratch_allocator: std.mem.Allocator = std.heap.page_allocator,
+    /// One adapter serves one runtime session, so the key stays stable across turns.
+    session_key: ?[32]u8 = null,
 
     pub fn interface(self: *Adapter) p.Provider {
         return .{ .context = self, .stream_fn = stream };
@@ -39,7 +41,7 @@ pub const Adapter = struct {
             const scratch = attempt_arena.allocator();
             const reference = request.model.credential;
             const credential: ?auth.Credential = if (reference == .none) null else credentials.resolve(scratch, operation, reference) catch |err| return credentialError(err);
-            const request_headers = try self.headers(scratch, request, credential);
+            const request_headers = try self.headers(scratch, operation, request, credential);
             var exchange = try Exchange.init(scratch, self.scratch_allocator, operation, request, sink);
             exchange.reducer = switch (request.model.family) {
                 .openai_responses => .{ .openai_responses = .{} },
@@ -78,7 +80,7 @@ pub const Adapter = struct {
         }
     }
 
-    fn headers(self: *Adapter, a: std.mem.Allocator, request: p.Request, credential: ?auth.Credential) p.Error![]const io.Header {
+    fn headers(self: *Adapter, a: std.mem.Allocator, operation: io.Context, request: p.Request, credential: ?auth.Credential) p.Error![]const io.Header {
         const model = request.model;
         if (!std.mem.startsWith(u8, model.endpoint, "https://") and !std.mem.startsWith(u8, model.endpoint, "http://")) return error.InvalidInput;
         var headers_list: std.ArrayList(io.Header) = .empty;
@@ -108,9 +110,40 @@ pub const Adapter = struct {
             const value = auth.resolveValue(self.environment, header.value) catch return error.InvalidInput;
             try appendHeader(a, &headers_list, &budget, header.name, value);
         }
+        if (sessionHeader(model.endpoint)) |name| {
+            for (headers_list.items) |existing| {
+                if (std.ascii.eqlIgnoreCase(existing.name, name)) return headers_list.items;
+            }
+            try appendHeader(a, &headers_list, &budget, name, try self.sessionKey(operation));
+        }
         return headers_list.items;
     }
+
+    fn sessionKey(self: *Adapter, operation: io.Context) p.Error![]const u8 {
+        if (self.session_key == null) {
+            var bytes: [16]u8 = undefined;
+            operation.io.randomSecure(&bytes) catch return error.IoFailure;
+            self.session_key = std.fmt.bytesToHex(bytes, .lower);
+        }
+        return &self.session_key.?;
+    }
 };
+
+/// Hosts that ask clients to name the conversation so they can route and cache it.
+const session_headers = [_]struct { host: []const u8, header: []const u8 }{
+    .{ .host = "opencode.ai", .header = "x-opencode-session" },
+};
+
+fn sessionHeader(endpoint: []const u8) ?[]const u8 {
+    const uri = std.Uri.parse(endpoint) catch return null;
+    const host = switch (uri.host orelse return null) {
+        .raw, .percent_encoded => |text| text,
+    };
+    for (session_headers) |entry| {
+        if (std.ascii.eqlIgnoreCase(host, entry.host)) return entry.header;
+    }
+    return null;
+}
 
 fn appendHeader(a: std.mem.Allocator, list: *std.ArrayList(io.Header), budget: *io.Budget, name: []const u8, value: []const u8) p.Error!void {
     if (name.len == 0) return error.InvalidInput;
