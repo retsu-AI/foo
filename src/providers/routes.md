@@ -21,7 +21,7 @@ The family determines the route appended to `base_url`. A model's `endpoint` can
 
 ## OpenAI Codex backend
 
-Checked on 2026-11-25 with a ChatGPT account. `POST https://chatgpt.com/backend-api/codex/responses` returned a 200 event stream for the standard Responses body, including `store: false`, `include: ["reasoning.encrypted_content"]`, `max_output_tokens`, and `instructions`. No field needed removal. The request carried `authorization: Bearer`, `chatgpt-account-id`, and `originator: foo`. The backend accepted `gpt-6.1-terra` and rejected `gpt-5.5-codex` and `gpt-5.5` with HTTP 400 `model_not_found`.
+Checked on 2026-11-25 with a ChatGPT account. `POST https://chatgpt.com/backend-api/codex/responses` returned a 200 event stream for the standard Responses body, including `store: false`, `include: ["reasoning.encrypted_content"]`, `max_output_tokens`, and `instructions`. No field needed removal. The request carried `authorization: Bearer`, `chatgpt-account-id`, and `originator: foo`. The backend accepted `gpt-6.1-terra` and rejected `gpt-5.5-codex` and `gpt-5.5` with HTTP 400 `model_not_found`. The 200 response has no `Content-Type` header and includes a `response.metadata` event. The adapter accepts a missing content type and ignores that event. A one-turn reply and a `read` tool continuation with encrypted reasoning both completed through `foo run`.
 
 ## DeepSeek thinking options
 
