@@ -21,7 +21,7 @@ pub fn main(init: std.process.Init) !void {
 
     const runtime = try foo.transport.Runtime.init();
     defer runtime.deinit();
-    var transport = try runtime.client(init.gpa, .{});
+    var transport = try runtime.client(init.gpa, init.io, .{});
     defer transport.deinit();
     var http = try mcp.Http.init(.{ .url = url, .transport = transport.interface() });
     defer http.deinit();

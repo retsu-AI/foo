@@ -490,6 +490,15 @@ fn addTransportSuite(
     if (target.result.os.tag != .windows) curl.addRPath(b.graph.cwdRelativePath(lib));
     foo.addImport("curl", curl);
 
+    const unit = b.createModule(.{
+        .root_source_file = b.path("src/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "curl", .module = curl }},
+    });
+    unit.addAnonymousImport("fixture-ca", .{ .root_source_file = b.path("tests/transport/tls/ca.pem") });
+    const unit_tests = b.addRunArtifact(b.addTest(.{ .root_module = unit }));
+
     const probe = b.addExecutable(.{
         .name = "transport-probe",
         .root_module = b.createModule(.{
@@ -502,7 +511,11 @@ fn addTransportSuite(
     const fixtures = b.addSystemCommand(&.{if (builtin.os.tag == .windows) "python" else "python3"});
     fixtures.addFileArg(b.path("tests/transport/fixtures.py"));
     fixtures.addArtifactArg(probe);
-    if (builtin.os.tag == .windows) addTransportPath(b, fixtures, prefix);
+    fixtures.step.dependOn(&unit_tests.step);
+    if (builtin.os.tag == .windows) {
+        addTransportPath(b, unit_tests, prefix);
+        addTransportPath(b, fixtures, prefix);
+    }
     return &fixtures.step;
 }
 

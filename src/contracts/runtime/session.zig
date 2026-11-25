@@ -118,7 +118,7 @@ pub const App = struct {
             self.transport = try foo.transport.Runtime.init();
             self.roots = roots;
         }
-        return self.transport.?.client(self.allocator, .{ .ca_pem = self.roots });
+        return self.transport.?.client(self.allocator, operation.io, .{ .trust = if (self.roots) |pem| .{ .pem = pem } else .platform });
     }
 
     fn spawner(self: *App, operation: io.Context) io.Error!io.Spawner {
