@@ -2,6 +2,7 @@ const std = @import("std");
 const foo = @import("foo");
 const wire = foo.wire;
 const Parse = @import("parse.zig");
+const builtin_providers = @import("defaults.zig");
 const cfg = foo.config;
 
 pub const max_config_bytes = 1024 * 1024;
@@ -88,6 +89,11 @@ pub fn resolve(a: std.mem.Allocator, operation: foo.io.Context, input: Input, di
     state.base = state.settings.runtime.cwd;
     if (input.layers.len > max_layers) return state.limit("layers");
     try state.defaults();
+    const builtins = std.json.parseFromSliceLeaky(std.json.Value, a, builtin_providers.json, .{ .parse_numbers = false }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => unreachable,
+    };
+    try state.apply(builtins);
     if (input.preset == .coding) {
         state.source = .preset;
         state.settings.runtime.system_prompt = coding_prompt;

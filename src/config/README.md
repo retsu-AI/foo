@@ -43,7 +43,7 @@ The executable applies file layers in this order. Each layer takes precedence ov
 
 The resolver applies these layers in order, regardless of the order in `Input.layers`:
 
-1. Mechanical defaults.
+1. Mechanical defaults and the built-in providers in `defaults.zig`.
 2. The explicitly selected preset.
 3. File layers, preserving their relative input order.
 4. Environment layers, preserving their relative input order.
@@ -56,6 +56,8 @@ Provider entries and their model entries merge field by field. A later layer can
 Omitting a setting retains its earlier value. `[]` clears a list, `false` disables a boolean, and an empty prompt stays empty. Use `null` to clear a credential, a model's optional name or endpoint, or the session directory. An MCP `revision` of `null` lets the client negotiate the revision.
 
 `runtime.provenance` records the winning source and location. Derived model fields also show the input key where applicable. Changing a provider's family or base URL origin clears inherited credentials and headers before the new layer's authentication settings apply. If an origin change clears an existing credential, supply a new credential or set it to `null` for an unauthenticated connection. Origin compares scheme, host, and port, with defaults of 80 for HTTP and 443 for HTTPS. Model endpoint overrides on another origin drop inherited authentication. Use `--credential-env` to supply a credential explicitly for a CLI endpoint override.
+
+The built-in `openai-codex` provider uses `openai_responses` at `https://chatgpt.com/backend-api/codex` with credential `{"auth":"openai-codex"}` and header `originator: foo`. It lists no models. Add models under `providers.openai-codex.models`, for example `{"providers":{"openai-codex":{"models":{"gpt-6.1-terra":{}}}},"model":"openai-codex/gpt-6.1-terra"}`. Provenance reports built-in fields with source `defaults`. A user layer can override any field or remove the provider with `null`.
 
 The neutral defaults contain an empty prompt, no selected tools, no custom tools, no MCP servers, no session directory, no inherited process environment, local backends, and denied tool permissions. The coding preset supplies `coding_prompt` from `root.zig` and selects `read`, `edit`, `write`, and `exec`. The caller supplies the model and any credentials or permission overrides. The preset uses the built-in prompt text.
 
