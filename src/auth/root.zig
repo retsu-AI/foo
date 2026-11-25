@@ -3,6 +3,7 @@ const foo = @import("foo");
 const storage = @import("store.zig");
 pub const oauth = @import("oauth.zig");
 const openai_codex = @import("openai_codex.zig");
+const xai = @import("xai.zig");
 
 pub const Store = storage.Store;
 pub const Entry = storage.Entry;
@@ -85,7 +86,7 @@ pub const Flow = struct {
     account_header: ?[]const u8 = null,
 };
 
-pub const flows: []const Flow = &.{openai_codex.flow};
+pub const flows: []const Flow = &.{ openai_codex.flow, xai.flow };
 
 pub fn findFlow(registry: []const Flow, provider: []const u8) ?Flow {
     for (registry) |flow| if (std.mem.eql(u8, flow.provider, provider)) return flow;

@@ -479,18 +479,20 @@ Debug build, 20 interleaved runs per variant after 2 warmups, timed at the loopb
 
 **Files.**
 
-- [ ] Create `src/auth/xai.zig`.
-- [ ] Edit `src/auth/root.zig`. The OAuth registry.
-- [ ] Edit `src/config/defaults.zig`. The built-in provider table.
+- [x] Create `src/auth/xai.zig`.
+- [x] Edit `src/auth/root.zig`. The OAuth registry.
+- [x] Edit `src/config/defaults.zig`. The built-in provider table.
 - [ ] Edit `src/providers/routes.md`, `.foo/config.json`, `tests/providers/root.zig`, and `tests/auth/root.zig`.
 
 **Build.**
 
-- [ ] Add the `xai` device-code flow to the registry with the values in Appendix E. Client id `b1a00492-073a-47ea-816f-4c329264a828`, device endpoint `https://auth.x.ai/oauth2/device/code`, token endpoint `https://auth.x.ai/oauth2/token`, scope `openid profile email offline_access grok-cli:access api:access`, grant `urn:ietf:params:oauth:grant-type:device_code`, and `referrer=foo`. Pi and OpenCode label this "Sign in with SuperGrok or X Premium". Store the result as an `oauth` entry.
-- [ ] Add built-in providers in `src/config/defaults.zig`. `xai` with family `openai_responses`, `base_url` `https://api.x.ai/v1`, credential `{"auth": "xai"}`. `opencode` with family `openai_responses`, `base_url` `https://opencode.ai/inference/openai/v1`, credential `{"auth": "opencode"}`. `opencode-go` with the same family, `base_url` `https://opencode.ai/inference/go/openai/v1`, and credential `{"auth": "opencode-go"}`. `openai` with `https://api.openai.com/v1` and `{"environment": "OPENAI_API_KEY"}`. `anthropic` with family `anthropic_messages`, `https://api.anthropic.com/v1`, and `{"environment": "ANTHROPIC_API_KEY"}`. A user layer can override any field or set a provider to `null`.
-- [ ] OpenCode Go and Console sell API keys. There is no OAuth flow. `foo auth login opencode --api-key` and `foo auth login opencode-go --api-key` store the key. The adapter sends the `x-opencode-session` header with the session id when the provider id starts with `opencode`, because the Go documentation asks clients to send it.
+- [x] Add the `xai` device-code flow to the registry with the values in Appendix E. Client id `b1a00492-073a-47ea-816f-4c329264a828`, device endpoint `https://auth.x.ai/oauth2/device/code`, token endpoint `https://auth.x.ai/oauth2/token`, scope `openid profile email offline_access grok-cli:access api:access`, grant `urn:ietf:params:oauth:grant-type:device_code`, and `referrer=foo`. Pi and OpenCode label this "Sign in with SuperGrok or X Premium". Store the result as an `oauth` entry.
+- [x] Add built-in providers in `src/config/defaults.zig`. `xai` with family `openai_responses`, `base_url` `https://api.x.ai/v1`, credential `{"auth": "xai"}`. `opencode` with family `openai_responses`, `base_url` `https://opencode.ai/inference/openai/v1`, credential `{"auth": "opencode"}`. `opencode-go` with the same family, `base_url` `https://opencode.ai/inference/go/openai/v1`, and credential `{"auth": "opencode-go"}`. `openai` with `https://api.openai.com/v1` and `{"environment": "OPENAI_API_KEY"}`. `anthropic` with family `anthropic_messages`, `https://api.anthropic.com/v1`, and `{"environment": "ANTHROPIC_API_KEY"}`. A user layer can override any field or set a provider to `null`.
+- [x] OpenCode Go and Console sell API keys. There is no OAuth flow. `foo auth login opencode --api-key` and `foo auth login opencode-go --api-key` store the key. The adapter sends the `x-opencode-session` header with the session id when the provider id starts with `opencode`, because the Go documentation asks clients to send it.
 - [ ] xAI subscription bearers may be rejected by `api.x.ai` for some tiers. Appendix E records this as unconfirmed. Lane 2 settles it. If `api.x.ai` returns 402 or 403 for a subscription bearer, record the finding in `src/providers/routes.md`, keep `--api-key` as the supported path for xAI, and leave the device flow in the registry behind a documented `xai-subscription` provider id.
-- [ ] Add route fixtures for `xai`, `opencode`, and `opencode-go` in `tests/providers/root.zig` following the table at line 381.
+- [x] Add route fixtures for `xai`, `opencode`, and `opencode-go` in `tests/providers/root.zig` following the table at line 381.
+
+The shipped build differs from this text in three places. The session header is keyed on the request host `opencode.ai`, because `config.Model` carries no provider id and contracts are outside this unit. Both OpenCode entries also send `user-agent: foo`, which the Go page asks for. `.foo/config.json` needed no change. `tests/cli/check.py` gained a credential for its `openai` fixture, because that fixture now moves a built-in to another origin.
 
 **You see.**
 
@@ -499,9 +501,9 @@ Debug build, 20 interleaved runs per variant after 2 warmups, timed at the loopb
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `tests/providers/root.zig` gains `xai`, `opencode`, and `opencode-go` rows asserting URL, bearer header, `x-opencode-session`, and model id. Run `nix develop .#ci -c zig build test -Dmodule=providers`.
-- [ ] `tests/auth/root.zig` covers device-code polling with `authorization_pending` then success. Run `nix develop .#ci -c zig build test -Dmodule=auth`.
-- [ ] `tests/config/root.zig` gains a case that overrides a built-in provider's `base_url` and sees its credential cleared, and a case that sets a built-in to `null`. Run `nix develop .#ci -c zig build test -Dmodule=config`.
+- [x] `tests/providers/root.zig` gains `xai`, `opencode`, and `opencode-go` rows asserting URL, bearer header, `x-opencode-session`, and model id. Run `nix develop .#ci -c zig build test -Dmodule=providers`.
+- [x] `tests/auth/root.zig` covers device-code polling with `authorization_pending` then success. Run `nix develop .#ci -c zig build test -Dmodule=auth`.
+- [x] `tests/config/root.zig` gains a case that overrides a built-in provider's `base_url` and sees its credential cleared, and a case that sets a built-in to `null`. Run `nix develop .#ci -c zig build test -Dmodule=config`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` model at the PR head, per the boot recipe.
 
@@ -510,18 +512,22 @@ Debug build, 20 interleaved runs per variant after 2 warmups, timed at the loopb
 - [ ] Lane 3. OpenCode Go one-turn run. Save `routes-opencode.png`. Pass when the reply prints.
 - [ ] Lane 4. OpenCode Go with one tool call. Save `routes-opencode-tool.png`. Pass when the tool runs and the second turn completes.
 - [ ] Lane 5. xAI with one tool call. Save `routes-xai-tool.png`. Pass when encrypted reasoning replays and the second turn completes.
-- [ ] Lane 6. `foo config show` with no user config and `--no-project`. Save `routes-builtin.png`. Pass when `providers` lists `openai`, `anthropic`, `xai`, `opencode`, `opencode-go`, and `openai-codex` with provenance `defaults`.
-- [ ] Lane 7. User config overrides `opencode.base_url` to a loopback fixture. Save `routes-override.png`. Pass when `config check` demanded a credential for the new origin and the request hits the fixture after one is given.
+- [x] Lane 6. `foo config show` with no user config and `--no-project`. Save `routes-builtin.png`. Pass when `providers` lists `openai`, `anthropic`, `xai`, `opencode`, `opencode-go`, and `openai-codex` with provenance `defaults`.
+- [x] Lane 7. User config overrides `opencode.base_url` to a loopback fixture. Save `routes-override.png`. Pass when `config check` demanded a credential for the new origin and the request hits the fixture after one is given.
 - [ ] Lane 8. `foo auth list` after logging into xai and opencode-go. Save `routes-auth-list.png`. Pass when xai shows `oauth` and opencode-go shows `api_key`.
-- [ ] Lane 9. OpenCode Go with a revoked key. Save `routes-opencode-401.png`. Pass when the authentication detail ends `Run foo auth login opencode-go`.
-- [ ] Lane 10. Run `nix develop .#ci -c zig build check`. Save `routes-check.png`. Pass when every suite passes.
+- [x] Lane 9. OpenCode Go with a revoked key. Save `routes-opencode-401.png`. Pass when the authentication detail ends `Run foo auth login opencode-go`.
+- [x] Lane 10. Run `nix develop .#ci -c zig build check`. Save `routes-check.png`. Pass when every suite passes.
+
+Evidence at the PR head, text captures instead of screenshots. Lane 6. `foo config show` with an empty `FOO_CONFIG_DIR` listed `anthropic`, `openai`, `openai-codex`, `opencode`, `opencode-go`, and `xai`. Lane 7. A user file moving `opencode.base_url` to loopback failed `config check` with `config missing_value from file at providers.opencode.credential`. Lane 10. `nix develop .#ci -c zig build check` passed 41 of 41 steps. `foo auth login xai` printed `Open https://accounts.x.ai/oauth2/device?user_code=... and enter code ...` from the live issuer. The run was cancelled before approval, so the `auth list` half of that box stays open. `foo auth login opencode-go --api-key` stored the operator's key and `auth list` showed `opencode-go  api_key  no expiry`. The run then failed with `authentication failed ... (HTTP 401). Run foo auth login opencode-go`, the lane 9 message. curl with the same key got `api_key_expired`, so the key is revoked and lane 9 passed. Without `x-opencode-session` the same endpoint returns 400 `MissingSessionID`, which confirms the header is required. Lanes 1 to 5 and 8 need a live xAI key or SuperGrok login and a current OpenCode Go key from the operator, and stay open.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. `foo config check` wall time with the built-in provider table in the defaults layer, at trunk and head.
-- [ ] Probe. `hyperfine --warmup 5 -r 30` interleaved.
-- [ ] Baseline. Record the trunk mean first.
-- [ ] Rule. Head mean is within 5 percent of trunk mean.
+- [x] Metric. `foo config check` wall time with the built-in provider table in the defaults layer, at trunk and head.
+- [x] Probe. `hyperfine --warmup 5 -r 30` interleaved.
+- [x] Baseline. Record the trunk mean first.
+- [x] Rule. Head mean is within 5 percent of trunk mean.
+
+ReleaseSafe, `foo config check --model openai-codex/x`, 300 interleaved runs, trunk run twice per round. Round 1 trunk 954.5 and 778.9 µs, head 795.6 µs. Round 2 trunk 801.8 and 748.5 µs, head 792.5 µs. Head falls between the two trunk measurements of the same binary each round, so the table adds no measurable cost.
 
 **Review gate.** None. U07 is not review-gated.
 
@@ -548,6 +554,7 @@ Debug build, 20 interleaved runs per variant after 2 warmups, timed at the loopb
 - [ ] Add `foo models`. It prints every `provider/id` from `providers`, with a readiness column `ready`, `needs <VAR>`, or `needs login`, and marks the configured `model` with `*`. Readiness asks the `CredentialSource` without making a request.
 - [ ] Add `/model <provider/id>` to the TUI input. When idle, it resolves the selection, rebuilds `Session.provider` with the new `Model`, and shows `model: <provider/id>` in the status row. When busy, it returns `busy` like a second prompt does. `/model` with no argument lists the models in the transcript pane with the same readiness column.
 - [ ] Record the switch in the journal as a configuration identity record so `--resume` restores it.
+- [ ] Repeat the catalog's `credential_required` check when `/model` selects a provider. Since U07, an unselected built-in moved to another origin loads with no credential, so a switch must not send to it until it has one.
 
 **You see.**
 

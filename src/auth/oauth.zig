@@ -65,12 +65,13 @@ fn percentEncode(a: Allocator, out: *std.ArrayList(u8), text: []const u8) Error!
 pub const Tokens = struct { oauth: OAuth, id_token: ?[]const u8 = null };
 
 const max_lifetime_s = 10 * 365 * 24 * 3600;
+const default_lifetime_s = 3600;
 
 pub fn parseTokens(a: Allocator, now_ms: i64, body: []const u8) Error!Tokens {
     const Wire = struct {
         access_token: []const u8,
         refresh_token: ?[]const u8 = null,
-        expires_in: i64,
+        expires_in: i64 = default_lifetime_s,
         id_token: ?[]const u8 = null,
     };
     const wire = std.json.parseFromSliceLeaky(Wire, a, body, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |err| return switch (err) {

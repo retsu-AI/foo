@@ -208,6 +208,7 @@ class Cli(unittest.TestCase):
                 "openai": {
                     "family": "openai_responses",
                     "base_url": "https://openai.invalid/v1",
+                    "credential": {"environment": CREDENTIAL},
                     "models": {"large": {}, "mini": {"max_output_tokens": 2048}},
                 },
                 "gateway": {
