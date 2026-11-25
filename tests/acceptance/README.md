@@ -14,6 +14,12 @@ nix develop .#ci -c zig build acceptance -- /tmp/foo-candidate --output /tmp/foo
 nix develop .#ci -c zig build bench -- /tmp/foo-candidate --output /tmp/foo-results --samples 20
 ```
 
+On NixOS, the Ubuntu archive needs a glibc FHS loader. With `steam-run` installed, run the Zig targets inside it.
+
+```sh
+nix develop .#ci -c steam-run zig build acceptance -- /tmp/foo-candidate --output /tmp/foo-results
+```
+
 On GitHub, dispatch the [Nightly workflow](../../.github/workflows/nightly.yml) with `qualification=true` to run the native matrix against the pinned archives. The workflow retains the raw results and build identities.
 
 The offline corpus uses a scripted loopback provider, real repository and journal artifacts, native subprocesses, and the production CLI, RPC, TUI, MCP, and ACP entrypoints. The provider script supplies actions so the tests can judge the exact repository effects independently. The [benchmark methods](../../benchmarks/README.md) identify what each case times and which counters the host supplies.

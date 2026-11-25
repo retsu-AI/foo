@@ -55,6 +55,6 @@ nix develop .#ci -c python docs/plan/test_build.py
 
 The builder uses Python and a pinned Markdown package solely for documentation generation. Those are not foo build or runtime dependencies. The generated HTML contains its own styles, script, documents, and work-package data. `--check` verifies that the committed page matches its sources without writing files.
 
-`zig build check` runs the full deterministic suite. Add `-Dcodemode=true` to include the optional Code Mode checks. The [testing plan](../testing.md#build-and-test-commands) lists the module, integration, and archive commands. F13 owns the pending `acceptance`, `acceptance-live`, and `bench` targets. Publishing a release requires separate authorization and qualification.
+`zig build check` runs the full deterministic suite. Add `-Dcodemode=true` to include the optional Code Mode checks. The [testing plan](../testing.md#build-and-test-commands) lists the module, integration, archive, and F13 qualification commands. Publishing a release requires separate authorization and qualification.
 
 After required v1 qualification, freeze the whole v1 plan, every included source snapshot, and the self-contained HTML under `docs/archive/v1-plan/`. Until then this plan stays active. See [the documentation lifecycle](../README.md#active-v1-implementation-plan) for source paths and revision records.
