@@ -12,4 +12,5 @@ zig build-exe -lc -L "$FOO_TRANSPORT_PREFIX/lib" -lcurl \
     -rpath "$FOO_TRANSPORT_PREFIX/lib" "-femit-bin=$probe_output" \
     --dep foo --dep providers -Mroot=tests/providers/probe.zig \
     --dep curl -Mfoo=src/lib.zig \
-    --dep foo -Mproviders=src/providers/root.zig -Mcurl="$scratch/curl.zig"
+    --dep foo --dep auth -Mproviders=src/providers/root.zig \
+    --dep foo -Mauth=src/auth/root.zig -Mcurl="$scratch/curl.zig"

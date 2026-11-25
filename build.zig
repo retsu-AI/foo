@@ -57,15 +57,20 @@ pub fn build(b: *std.Build) void {
     const selected = b.option([]const u8, "module", "Test module") orelse "contracts";
     const include_codemode = b.option(bool, "codemode", "Build the optional Code Mode module and include it in check") orelse false;
     const native = addProcessSuites(b, foo, support, target, optimize, include_codemode or std.mem.eql(u8, selected, "codemode"));
-    const mcp_test = addMcpSuite(b, foo, native.spawner, native.guardian, target, optimize, transport_prefix);
+    const auth = leaf(b, target, optimize, "src/auth/root.zig", &.{.{ .name = "foo", .module = foo }});
+    const mcp_test = addMcpSuite(b, foo, auth, native.spawner, native.guardian, target, optimize, transport_prefix);
     const core = leaf(b, target, optimize, "src/core/root.zig", &.{.{ .name = "foo", .module = foo }});
-    const providers = leaf(b, target, optimize, "src/providers/root.zig", &.{.{ .name = "foo", .module = foo }});
+    const providers = leaf(b, target, optimize, "src/providers/root.zig", &.{
+        .{ .name = "foo", .module = foo },
+        .{ .name = "auth", .module = auth },
+    });
     const journal = leaf(b, target, optimize, "src/session/root.zig", &.{.{ .name = "foo", .module = foo }});
     const configuration = leaf(b, target, optimize, "src/config/root.zig", &.{.{ .name = "foo", .module = foo }});
     const terminal = leaf(b, target, optimize, "src/platform/terminal/root.zig", &.{});
     terminal.link_libc = target.result.os.tag != .windows;
     const cli = leaf(b, target, optimize, "src/cli/root.zig", &.{
         .{ .name = "foo", .module = foo },
+        .{ .name = "auth", .module = auth },
         .{ .name = "configuration", .module = configuration },
     });
     const tui = leaf(b, target, optimize, "src/tui/root.zig", &.{
@@ -85,6 +90,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "foo", .module = foo },
                 .{ .name = "core", .module = core },
                 .{ .name = "providers", .module = providers },
+                .{ .name = "auth", .module = auth },
                 .{ .name = "journal", .module = journal },
                 .{ .name = "configuration", .module = configuration },
                 .{ .name = "cli", .module = cli },
@@ -151,6 +157,12 @@ pub fn build(b: *std.Build) void {
         .{ .name = "providers", .step = addZigSuite(b, target, optimize, "tests/providers/root.zig", &.{
             .{ .name = "foo", .module = foo },
             .{ .name = "providers", .module = providers },
+            .{ .name = "auth", .module = auth },
+            .{ .name = "support", .module = support },
+        }) },
+        .{ .name = "auth", .step = addZigSuite(b, target, optimize, "tests/auth/root.zig", &.{
+            .{ .name = "foo", .module = foo },
+            .{ .name = "auth", .module = auth },
             .{ .name = "support", .module = support },
         }) },
         .{ .name = "tools", .step = native.tools },
@@ -399,6 +411,7 @@ fn addCodeModeSuite(
 fn addMcpSuite(
     b: *std.Build,
     foo: *std.Build.Module,
+    auth: *std.Build.Module,
     process: *std.Build.Module,
     guardian: ?*std.Build.Step.Compile,
     target: std.Build.ResolvedTarget,
@@ -409,7 +422,7 @@ fn addMcpSuite(
         .root_source_file = b.path("src/mcp/root.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "foo", .module = foo }},
+        .imports = &.{ .{ .name = "foo", .module = foo }, .{ .name = "auth", .module = auth } },
     });
     const suite = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("tests/mcp/root.zig"),

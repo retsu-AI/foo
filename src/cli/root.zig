@@ -1,5 +1,8 @@
 const std = @import("std");
 const foo = @import("foo");
+const builtin = @import("builtin");
+const auth = @import("auth");
+const secret_input = @import("secret_input.zig");
 const config = @import("configuration");
 pub const arguments = @import("arguments.zig");
 const rpc = @import("rpc.zig");
@@ -43,6 +46,7 @@ pub const Options = struct {
     environment_json: ?[]const u8 = null,
     discover_config: bool = false,
     runtime: ?Runtime = null,
+    authentication: auth.Resolver = .{},
 };
 
 pub const Exit = enum(u8) {
@@ -88,6 +92,9 @@ pub const help =
     \\  foo mcp get KIND SERVER ID [--arguments JSON] [OPTIONS]
     \\  KIND is resource, resource_template, or prompt.
     \\  foo config (check | show) [OPTIONS]
+    \\  foo auth login PROVIDER [--api-key]
+    \\  foo auth list
+    \\  foo auth logout PROVIDER
     \\  foo --help | --version
     \\
     \\Options:
@@ -130,6 +137,7 @@ pub fn execute(
     switch (command.action) {
         .help => return print(streams, operation, help),
         .version => return print(streams, operation, "foo " ++ foo.version ++ "\n"),
+        .auth => |action| return runAuth(a, operation, streams, options.authentication, action),
         else => {},
     }
 
@@ -162,16 +170,19 @@ pub fn execute(
             report(streams, operation.io, "frontend is unavailable", .{});
             return .host;
         },
-        .help, .version => unreachable,
+        .help, .version, .auth => unreachable,
     }
 
     if (command.session == .@"resume" and effective.launch.session.directory == null) {
         report(streams, operation.io, "--resume requires a configured session directory", .{});
         return .usage;
     }
-    if (missingCredential(effective.runtime.model, options.environ)) |name| {
-        report(streams, operation.io, "missing or invalid credential in environment variable {s}", .{name});
-        return .usage;
+    {
+        var scratch = std.heap.ArenaAllocator.init(allocator);
+        defer scratch.deinit();
+        var resolver = options.authentication;
+        resolver.environment = options.environ;
+        if (checkCredentials(scratch.allocator(), operation, streams, effective.runtime.model, &resolver)) |exit| return exit;
     }
     const runtime = options.runtime orelse {
         report(streams, operation.io, "runtime is unavailable", .{});
@@ -315,26 +326,137 @@ fn runPlain(
     return .success;
 }
 
-pub fn missingCredential(model: foo.config.Model, environ: ?*const std.process.Environ.Map) ?[]const u8 {
-    if (model.credential == .environment) {
-        const name = model.credential.environment;
-        const key = if (environ) |env| env.get(name) orelse return name else return name;
-        if (key.len == 0 or !validHeaderValue(key)) return name;
+pub fn missingCredential(a: std.mem.Allocator, operation: foo.io.Context, model: foo.config.Model, resolver: *const auth.Resolver) auth.Error!?foo.config.SecretRef {
+    if (model.credential != .none) {
+        _ = resolver.interface().resolve(a, operation, model.credential) catch |err| switch (err) {
+            error.Authentication => return model.credential,
+            else => |e| return e,
+        };
     }
     for (model.headers) |header| {
         if (header.value != .environment) continue;
-        const name = header.value.environment;
-        const val = if (environ) |env| env.get(name) orelse return name else return name;
-        if (!validHeaderValue(val)) return name;
+        const missing: foo.config.SecretRef = .{ .environment = header.value.environment };
+        const value = auth.resolveValue(resolver.environment, header.value) catch return missing;
+        if (!auth.validHeaderValue(value)) return missing;
     }
     return null;
 }
 
-fn validHeaderValue(bytes: []const u8) bool {
-    for (bytes) |byte| {
-        if ((byte < 0x20 and byte != '\t') or byte == 0x7f) return false;
+pub fn checkCredentials(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, model: foo.config.Model, resolver: *const auth.Resolver) ?Exit {
+    const missing = missingCredential(a, operation, model, resolver) catch |err|
+        return authFailure(a, operation, streams, resolver.store, err);
+    return switch (missing orelse return null) {
+        .environment => |name| missingEnvironment(streams, operation, name),
+        .auth => |id| missingLogin(a, streams, operation, id),
+        .literal => failed(streams, operation, error.InvalidInput),
+        .none => unreachable,
+    };
+}
+
+fn missingEnvironment(streams: Streams, operation: foo.io.Context, name: []const u8) Exit {
+    report(streams, operation.io, "missing or invalid credential in environment variable {s}. Set {s}", .{ name, name });
+    return .usage;
+}
+
+fn missingLogin(a: std.mem.Allocator, streams: Streams, operation: foo.io.Context, id: []const u8) Exit {
+    const argument = shellArgument(a, id) catch return failed(streams, operation, error.OutOfMemory);
+    report(streams, operation.io, "missing or invalid stored credential. Run foo auth login {s}", .{argument});
+    return .provider;
+}
+
+fn shellArgument(a: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error![]const u8 {
+    for (text) |byte| {
+        if (!std.ascii.isAlphanumeric(byte) and std.mem.indexOfScalar(u8, "-_./", byte) == null) {
+            if (builtin.os.tag == .windows) {
+                // Quote using PowerShell syntax on Windows.
+                const escaped = try std.mem.replaceOwned(u8, a, text, "'", "''");
+                return std.fmt.allocPrint(a, "'{s}'", .{escaped});
+            }
+            const escaped = try std.mem.replaceOwned(u8, a, text, "'", "'\\''");
+            return std.fmt.allocPrint(a, "'{s}'", .{escaped});
+        }
     }
-    return true;
+    return text;
+}
+
+fn authFailure(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, store: ?auth.Store, err: auth.Error) Exit {
+    switch (err) {
+        error.InsecurePermissions => {
+            const directory = store.?.directory;
+            if (builtin.os.tag == .windows) {
+                report(streams, operation.io, "unsafe authentication permissions in {s}. Restrict access to your Windows account", .{directory});
+            } else {
+                const path = std.fs.path.join(a, &.{ directory, "auth.json" }) catch return failed(streams, operation, error.OutOfMemory);
+                const argument = shellArgument(a, path) catch return failed(streams, operation, error.OutOfMemory);
+                report(streams, operation.io, "unsafe authentication permissions. Run chmod 600 {s}", .{argument});
+            }
+            return .storage;
+        },
+        error.InvalidStore, error.UnsafeStore => {
+            report(streams, operation.io, "cannot use authentication store in {s}: {s}", .{ store.?.directory, @errorName(err) });
+            return .storage;
+        },
+        error.Authentication => {
+            report(streams, operation.io, "authentication failed", .{});
+            return .provider;
+        },
+        else => |e| return failed(streams, operation, e),
+    }
+}
+
+fn runAuth(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, resolver: auth.Resolver, command: arguments.AuthCommand) Exit {
+    const flow = if (command == .login and !command.login.api_key)
+        auth.findFlow(resolver.registry, command.login.provider) orelse {
+            report(streams, operation.io, "no browser login for {s}; use --api-key", .{command.login.provider});
+            return .usage;
+        }
+    else
+        null;
+    const store = resolver.store orelse {
+        report(streams, operation.io, "no user configuration directory. Set FOO_CONFIG_DIR to an absolute path", .{});
+        return .usage;
+    };
+    return switch (command) {
+        .login => |login| login_entry: {
+            var buffer: [auth.max_secret_bytes]u8 = undefined;
+            defer std.crypto.secureZero(u8, &buffer);
+            const entry: auth.Entry = if (flow) |browser| .{
+                .oauth = browser.login_fn(a, operation) catch |err| return authFailure(a, operation, streams, store, err),
+            } else key: {
+                const prompt = std.fmt.allocPrint(a, "{s} API key: ", .{login.provider}) catch return failed(streams, operation, error.OutOfMemory);
+                const key = process.fileOperation(operation, secret_input.read, .{ operation, streams.input, streams.diagnostic, prompt, &buffer }) catch |err| switch (err) {
+                    error.TerminalRequired => {
+                        report(streams, operation.io, "--api-key requires an interactive terminal", .{});
+                        return .usage;
+                    },
+                    else => |e| return failed(streams, operation, e),
+                };
+                break :key .{ .api_key = key };
+            };
+            store.put(a, operation, login.provider, entry) catch |err| return authFailure(a, operation, streams, store, err);
+            break :login_entry .success;
+        },
+        .list => list: {
+            var snapshot = store.read(a, operation) catch |err| return authFailure(a, operation, streams, store, err);
+            defer snapshot.deinit();
+            const now_ms = std.Io.Timestamp.now(operation.io, .real).toMilliseconds();
+            for (snapshot.entries.keys(), snapshot.entries.values()) |provider, entry| {
+                const expiry = switch (entry) {
+                    .api_key => "no expiry",
+                    .oauth => |oauth| std.fmt.allocPrint(a, "expires in {d}h", .{
+                        std.math.divCeil(i64, @max(0, oauth.expires_ms -| @as(i64, @intCast(now_ms))), 3_600_000) catch unreachable,
+                    }) catch return failed(streams, operation, error.OutOfMemory),
+                };
+                const line = std.fmt.allocPrint(a, "{s}  {s}  {s}\n", .{ provider, @tagName(entry), expiry }) catch return failed(streams, operation, error.OutOfMemory);
+                writeAll(streams.output, operation, line) catch |err| return failed(streams, operation, err);
+            }
+            break :list .success;
+        },
+        .logout => |provider| logout: {
+            store.remove(a, operation, provider) catch |err| return authFailure(a, operation, streams, store, err);
+            break :logout .success;
+        },
+    };
 }
 
 fn promptLimit(limits: foo.config.Limits) usize {

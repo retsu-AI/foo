@@ -1,5 +1,6 @@
 const std = @import("std");
 const foo = @import("foo");
+const auth = @import("auth");
 
 pub const ResolvedTransport = union(enum) {
     stdio: foo.io.Spawn,
@@ -13,25 +14,18 @@ pub fn resolve(allocator: std.mem.Allocator, server: foo.config.McpServer, cwd: 
         .stdio => |configured| {
             const entries = try allocator.alloc(foo.io.Environment, configured.environment.len);
             errdefer allocator.free(entries);
-            for (configured.environment, entries) |auth, *entry| {
-                entry.* = .{ .name = auth.name, .value = try value(auth.value, environment) };
+            for (configured.environment, entries) |configured_entry, *entry| {
+                entry.* = .{ .name = configured_entry.name, .value = try auth.resolveValue(environment, configured_entry.value) };
             }
             return .{ .stdio = .{ .argv = configured.argv, .cwd = cwd, .environment = entries } };
         },
         .http => |configured| {
             const headers = try allocator.alloc(foo.io.Header, configured.headers.len);
             errdefer allocator.free(headers);
-            for (configured.headers, headers) |auth, *header| {
-                header.* = .{ .name = auth.name, .value = try value(auth.value, environment) };
+            for (configured.headers, headers) |configured_header, *header| {
+                header.* = .{ .name = configured_header.name, .value = try auth.resolveValue(environment, configured_header.value) };
             }
             return .{ .http = .{ .url = configured.url, .headers = headers } };
         },
     }
-}
-
-fn value(reference: foo.config.Value, environment: *const std.process.Environ.Map) foo.io.Error![]const u8 {
-    return switch (reference) {
-        .literal => |text| text,
-        .environment => |key| environment.get(key) orelse error.Unavailable,
-    };
 }

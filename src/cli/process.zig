@@ -14,7 +14,7 @@ pub fn execute(
     args: []const []const u8,
     options: cli.Options,
 ) cli.Exit {
-    if (args.len == 0 or !(std.mem.eql(u8, args[0], "run") or std.mem.eql(u8, args[0], "rpc")))
+    if (args.len == 0 or !(std.mem.eql(u8, args[0], "run") or std.mem.eql(u8, args[0], "rpc") or std.mem.eql(u8, args[0], "auth")))
         return cli.execute(allocator, operation, args, options);
 
     return withSignals(operation, executeActive, .{ allocator, args, options });

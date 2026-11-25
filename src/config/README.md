@@ -108,7 +108,7 @@ Each value under `providers.<id>.models` accepts these fields.
 
 The resolver appends `/responses`, `/chat/completions`, or `/messages` to the base URL path for the matching family. When a model supplies an endpoint, the resolver uses that URL as written. URLs reject missing hosts, user information, fragments, whitespace, control bytes, backslashes, and port zero. The resolver lowercases the URL scheme. A model's option keys override the provider's keys in `runtime.model.options_json`. The provider adapter validates the combined options. [Provider routes](../providers/routes.md)
 
-Environment credentials resolve when the provider needs to authenticate. A literal credential supplies a fixed key. An `auth` credential records a token store reference for U05 and cannot authenticate a request in this version.
+Environment credentials resolve when the provider needs to authenticate. A literal credential supplies a fixed key. An `auth` credential looks up that provider ID in the private user credential store. [Credential commands](../auth/README.md)
 
 Header entries have exactly `name` and `value`. Header names use HTTP token characters and must be unique without regard to case. Values are literal strings or `{"environment":"VARIABLE_NAME"}` references. Literal header values reject line breaks and control characters other than tab.
 

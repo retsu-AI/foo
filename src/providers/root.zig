@@ -1,5 +1,6 @@
 const std = @import("std");
 const foo = @import("foo");
+const auth = @import("auth");
 const c = @import("common.zig");
 const request_codec = @import("request.zig");
 const framing = foo.wire.framing;
@@ -8,6 +9,7 @@ const p = foo.provider;
 
 pub const Adapter = struct {
     transport: io.HttpTransport,
+    credentials: ?auth.CredentialSource = null,
     environment: ?*const std.process.Environ.Map = null,
     retry_attempts: u32 = 0,
     scratch_allocator: std.mem.Allocator = std.heap.page_allocator,
@@ -24,64 +26,75 @@ pub const Adapter = struct {
         defer arena.deinit();
         const a = arena.allocator();
         const body = try request_codec.encode(a, request);
-        const request_headers = try self.headers(a, request);
         const flags = try request_codec.chatOptions(a, request);
+        const environment = auth.Resolver{ .environment = self.environment };
+        const credentials = self.credentials orelse environment.interface();
         var attempt: u32 = 0;
+        var refreshed = false;
         while (true) {
             try operation.check();
+            delivery.* = .unsent;
             var attempt_arena = std.heap.ArenaAllocator.init(self.scratch_allocator);
             defer attempt_arena.deinit();
-            var exchange = try Exchange.init(attempt_arena.allocator(), self.scratch_allocator, operation, request, sink);
+            const scratch = attempt_arena.allocator();
+            const reference = request.model.credential;
+            const credential: ?auth.Credential = if (reference == .none) null else credentials.resolve(scratch, operation, reference) catch |err| return credentialError(err);
+            const request_headers = try self.headers(scratch, request, credential);
+            var exchange = try Exchange.init(scratch, self.scratch_allocator, operation, request, sink);
             exchange.reducer = switch (request.model.family) {
                 .openai_responses => .{ .openai_responses = .{} },
                 .openai_chat => .{ .openai_chat = .{ .reasoning_content = flags.reasoning_content, .litellm = flags.litellm } },
                 .anthropic_messages => .{ .anthropic_messages = .{} },
             };
-            self.transport.exchange_fn(self.transport.context, operation, .{
+            const exchanged = self.transport.exchange_fn(self.transport.context, operation, .{
                 .method = .post,
                 .url = request.model.endpoint,
                 .headers = request_headers,
                 .body = .{ .bytes = body },
                 .max_response_bytes = request.limits.transcript_bytes,
-            }, .{ .context = &exchange, .head_fn = Exchange.head, .body = .{ .context = &exchange, .write_fn = Exchange.body } }, delivery) catch |err| {
-                if (exchange.failure) |failure| return failure;
+            }, .{ .context = &exchange, .head_fn = Exchange.head, .body = .{ .context = &exchange, .write_fn = Exchange.body } }, delivery);
+            if (exchange.failure) |failure| {
+                if (failure == error.Authentication and exchange.status == 401 and !refreshed and credential != null and credential.? == .bearer) {
+                    const did_refresh = credentials.refresh(scratch, operation, reference, credential.?.bearer) catch |err| return credentialError(err);
+                    if (did_refresh) {
+                        refreshed = true;
+                        continue;
+                    }
+                }
+                return failure;
+            }
+            exchanged catch |err| {
                 const transient = err == error.Unavailable or err == error.Disconnected;
-                if (transient and delivery.* == .unsent and !exchange.head_seen and exchange.received.used == 0 and attempt < self.retry_attempts) {
+                if (transient and delivery.* == .unsent and exchange.status == null and exchange.received.used == 0 and attempt < self.retry_attempts) {
                     attempt += 1;
                     continue;
                 }
                 return err;
             };
-            if (exchange.failure) |failure| return failure;
             try operation.check();
-            if (!exchange.head_seen) return error.Disconnected;
+            if (exchange.status == null) return error.Disconnected;
             exchange.sse.finish(operation) catch |err| return mapFraming(err);
             return exchange.state.finish(result);
         }
     }
 
-    fn headers(self: *Adapter, a: std.mem.Allocator, request: p.Request) p.Error![]const io.Header {
+    fn headers(self: *Adapter, a: std.mem.Allocator, request: p.Request, credential: ?auth.Credential) p.Error![]const io.Header {
         const model = request.model;
         if (!std.mem.startsWith(u8, model.endpoint, "https://") and !std.mem.startsWith(u8, model.endpoint, "http://")) return error.InvalidInput;
         var headers_list: std.ArrayList(io.Header) = .empty;
         var budget: io.Budget = .{ .limit = request.limits.wire_message_bytes };
         try headers_list.appendSlice(a, &.{ .{ .name = "content-type", .value = "application/json" }, .{ .name = "accept", .value = "text/event-stream" } });
         if (model.family == .anthropic_messages) try headers_list.append(a, .{ .name = "anthropic-version", .value = "2023-06-01" });
-        const credential: ?[]const u8 = switch (model.credential) {
-            .none => null,
-            .environment => |name| if (self.environment) |environment|
-                environment.get(name) orelse return error.Authentication
-            else
-                return error.Authentication,
-            .literal => |key| key,
-            .auth => return error.Authentication,
-        };
-        if (credential) |key| {
-            if (key.len == 0 or !validValue(key)) return error.Authentication;
+        if (credential) |resolved| {
+            const key = switch (resolved) {
+                .api_key => |value| value,
+                .bearer => |bearer| bearer.token,
+            };
+            const api_key = model.family == .anthropic_messages and resolved == .api_key;
             try budget.take(key.len);
             try headers_list.append(a, .{
-                .name = if (model.family == .anthropic_messages) "x-api-key" else "authorization",
-                .value = if (model.family == .anthropic_messages) key else try std.fmt.allocPrint(a, "Bearer {s}", .{key}),
+                .name = if (api_key) "x-api-key" else "authorization",
+                .value = if (api_key) key else try std.fmt.allocPrint(a, "Bearer {s}", .{key}),
             });
         }
         if (model.headers.len > 128) return error.LimitExceeded;
@@ -89,11 +102,8 @@ pub const Adapter = struct {
             if (header.name.len == 0 or managedHeader(header.name)) return error.InvalidInput;
             for (header.name) |byte| if (!std.ascii.isAlphanumeric(byte) and std.mem.indexOfScalar(u8, "!#$%&'*+-.^_`|~", byte) == null) return error.InvalidInput;
             for (headers_list.items) |previous| if (std.ascii.eqlIgnoreCase(previous.name, header.name)) return error.InvalidInput;
-            const value = switch (header.value) {
-                .literal => |v| v,
-                .environment => |name| if (self.environment) |environment| environment.get(name) orelse return error.InvalidInput else return error.InvalidInput,
-            };
-            if (!validValue(value)) return error.InvalidInput;
+            const value = auth.resolveValue(self.environment, header.value) catch return error.InvalidInput;
+            if (!auth.validHeaderValue(value)) return error.InvalidInput;
             try budget.take(header.name.len);
             try budget.take(value.len);
             try headers_list.append(a, .{ .name = header.name, .value = value });
@@ -102,9 +112,11 @@ pub const Adapter = struct {
     }
 };
 
-fn validValue(bytes: []const u8) bool {
-    for (bytes) |byte| if ((byte < 0x20 and byte != '\t') or byte == 0x7f) return false;
-    return true;
+fn credentialError(err: auth.Error) p.Error {
+    return switch (err) {
+        error.InsecurePermissions, error.InvalidStore, error.UnsafeStore => error.Authentication,
+        else => |shared| shared,
+    };
 }
 
 fn managedHeader(name: []const u8) bool {
@@ -128,7 +140,7 @@ const Exchange = struct {
     reducer: Reducer = undefined,
     sse: framing.Sse,
     received: io.Budget,
-    head_seen: bool = false,
+    status: ?u16 = null,
     failure: ?p.Error = null,
 
     fn init(a: std.mem.Allocator, backing: std.mem.Allocator, operation: io.Context, request: p.Request, sink: p.Sink) p.Error!Exchange {
@@ -157,8 +169,8 @@ const Exchange = struct {
     fn head(context: *anyopaque, operation: io.Context, value: io.HttpHead) io.Error!void {
         const self: *Exchange = @ptrCast(@alignCast(context));
         try operation.check();
-        if (self.head_seen) return self.fail(error.Protocol);
-        self.head_seen = true;
+        if (self.status != null) return self.fail(error.Protocol);
+        self.status = value.status;
         switch (value.status) {
             200...299 => {},
             401, 403 => return self.fail(error.Authentication),
@@ -179,7 +191,7 @@ const Exchange = struct {
 
     fn body(context: *anyopaque, operation: io.Context, bytes: []const u8) io.Error!void {
         const self: *Exchange = @ptrCast(@alignCast(context));
-        if (!self.head_seen or self.failure != null) return self.fail(error.Protocol);
+        if (self.status == null or self.failure != null) return self.fail(error.Protocol);
         try self.received.take(bytes.len);
         self.sse.feed(operation, bytes, .{ .context = self, .emit_fn = event }) catch |err| {
             if (self.failure == null) self.failure = mapFraming(err);
