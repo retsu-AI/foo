@@ -421,16 +421,20 @@ class Production(unittest.TestCase):
         self.assertEqual(len(self.provider_requests()), 1)
 
     def test_oauth_login_sends_the_registered_account_header(self):
+        self.user_config.parent.mkdir(parents=True)
+        peer = TerminalPeer([self.binary, "auth", "login", "openai-codex", "--api-key"], environment=self.env, cwd=self.directory)
+        try:
+            peer.expect("openai-codex API key:")
+            peer.send("placeholder\r")
+            self.assertEqual(peer.wait(), 0)
+        finally:
+            peer.close()
         stored = self.user_config.with_name("auth.json")
-        stored.parent.mkdir(parents=True)
+        # Rewriting foo's own store keeps the owner and permissions it created.
         stored.write_text(json.dumps({"openai-codex": {
             "type": "oauth", "access": "fixture-access", "refresh": "fixture-refresh",
             "expires_ms": 4102444800000, "account": "fixture-account",
         }}), encoding="utf-8")
-        if os.name == "nt":
-            subprocess.run(["icacls", str(stored), "/inheritance:r", "/grant:r", f"{os.environ['USERNAME']}:F"], check=True, capture_output=True)
-        else:
-            stored.chmod(0o600)
         self.config(provider={"credential": {"auth": "openai-codex"}})
         self.success(("run", "--prompt", "say ok"), "Reply to say ok\n")
         self.assertEqual(self.server.provider_authorizations, ["Bearer fixture-access"])
