@@ -53,6 +53,24 @@ pub const Outcome = struct {
     uncertain_effects: bool = false,
     /// Set on every provider_error except a refusal. Borrows the run's endpoint.
     detail: ?Detail = null,
+
+    /// Omits a null detail so journals without one stay readable by earlier builds.
+    pub fn jsonStringify(self: Outcome, json: anytype) !void {
+        try json.beginObject();
+        try json.objectField("reason");
+        try json.write(self.reason);
+        if (self.provider_stop != null or json.options.emit_null_optional_fields) {
+            try json.objectField("provider_stop");
+            try json.write(self.provider_stop);
+        }
+        try json.objectField("uncertain_effects");
+        try json.write(self.uncertain_effects);
+        if (self.detail) |detail| {
+            try json.objectField("detail");
+            try json.write(detail);
+        }
+        try json.endObject();
+    }
 };
 /// Only committed records carry a journal sequence. Deltas are always provisional.
 pub const Event = struct {

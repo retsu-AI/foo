@@ -442,6 +442,7 @@ const Run = struct {
 
     fn stop(self: *Run, reason: events.Stop) error{Stopped} {
         self.report.outcome.reason = reason;
+        if (reason != .provider_error) self.report.outcome.detail = null;
         return error.Stopped;
     }
 
