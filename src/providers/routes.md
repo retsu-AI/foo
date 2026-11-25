@@ -1,6 +1,6 @@
 # Provider routes
 
-Place each entry under the root `providers` object. Replace placeholders such as `<model>` and `<region>`. Set the root `model` to `provider-id/model-id`. Built-in providers need only their models. A user entry can override any built-in field or set the provider to `null`. A `base_url` on another origin drops the built-in credential and headers, so give it a `credential`.
+Place each entry under the root `providers` object. Replace placeholders such as `<model>` and `<region>`. Set the root `model` to `provider-id/model-id`. Built-in providers need only their models. A user entry can override any built-in field or set the provider to `null`. A `base_url` on another origin or a different `family` drops the built-in credential and headers. Give a moved provider its own `credential` before selecting it.
 
 The family determines the route appended to `base_url`. A model's `endpoint` can supply a complete POST URL for a custom path. Use HTTPS for remote endpoints.
 

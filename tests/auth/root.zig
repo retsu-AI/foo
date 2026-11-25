@@ -618,7 +618,7 @@ test "xAI device login slows down when asked and fails without a refresh token" 
     try testing.expectError(error.Authentication, flow.device.?(.{ .a = a, .operation = FakeSleep.context(), .http = fixture.transport(), .prompt = shown.prompt() }));
 }
 
-test "xAI device login rejects a verification page that is not HTTPS" {
+test "xAI device login rejects a verification page that is not HTTPS or not printable" {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -627,6 +627,8 @@ test "xAI device login rejects a verification page that is not HTTPS" {
         "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"http://accounts.x.ai/device\",\"expires_in\":600}",
         "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"https://accounts.x.ai/device\",\"verification_uri_complete\":\"javascript:alert(1)\",\"expires_in\":600}",
         "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"file:///etc/passwd\",\"expires_in\":600}",
+        "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"https://evil\\u001b]8;;x\\u0007.x.ai/\",\"expires_in\":600}",
+        "{\"device_code\":\"dev-1\",\"user_code\":\"C\\u001b[2J\",\"verification_uri\":\"https://accounts.x.ai/device\",\"expires_in\":600}",
     }) |body| {
         var fixture: Fixture = .{ .a = a, .replies = &.{.{ .url = xai_device, .body = body }} };
         var shown: Shown = .{};
@@ -635,6 +637,21 @@ test "xAI device login rejects a verification page that is not HTTPS" {
         try equal(0, shown.notices.items.len);
         try equal(1, fixture.calls);
     }
+}
+
+test "xAI device login shows the plain page when the complete page is empty" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fixture: Fixture = .{ .a = a, .replies = &.{
+        .{ .url = xai_device, .body = "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"https://accounts.x.ai/device\",\"verification_uri_complete\":\"\",\"expires_in\":600}" },
+        .{ .url = xai_token, .body = "{\"access_token\":\"a1\",\"refresh_token\":\"r1\",\"expires_in\":3600}" },
+    } };
+    var shown: Shown = .{};
+    defer shown.notices.deinit(allocator);
+    const flow = auth.findFlow(auth.flows, "xai").?;
+    _ = try flow.device.?(.{ .a = a, .operation = FakeSleep.context(), .http = fixture.transport(), .prompt = shown.prompt() });
+    try same("https://accounts.x.ai/device", shown.notices.items[0].device_code.uri);
 }
 
 test "xAI refresh keeps the current refresh token when the issuer omits it" {

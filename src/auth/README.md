@@ -38,8 +38,8 @@ token to `https://chatgpt.com/backend-api/codex` with the `chatgpt-account-id`
 header.
 
 `foo auth login xai` signs in with a SuperGrok or X Premium subscription
-through the xAI device flow. Foo prints an `https://` verification page from
-`auth.x.ai` and a user code, then polls until the login is approved or the code
+through the xAI device flow. Foo prints the `https://` verification page that
+xAI returns and a user code, then polls until the login is approved or the code
 expires, at most 15 minutes. The built-in `xai` provider sends the token to
 `https://api.x.ai/v1`. OpenCode Console and OpenCode Go sell API keys and have
 no login flow. Store them with `foo auth login opencode --api-key` or

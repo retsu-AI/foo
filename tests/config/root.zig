@@ -819,6 +819,15 @@ test "API and subscription providers are built in and follow the same override r
     try std.testing.expectError(error.InvalidConfiguration, call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &moved }));
     try same("providers.opencode.credential", call.diagnostic.?.path);
 
+    const unused = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
+        \\{"providers":{"openai":{"family":"openai_chat","base_url":"http://127.0.0.1:8080/v1","models":{"local":{}}},"gw":{"family":"openai_chat","base_url":"http://127.0.0.1:9/v1","models":{"m":{}}}},"model":"gw/m"}
+    } }} });
+    try expect(unused.providers.get("openai").?.credential == .none);
+    try std.testing.expectError(error.InvalidConfiguration, call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
+        \\{"providers":{"openai":{"family":"openai_chat","base_url":"http://127.0.0.1:8080/v1","models":{"local":{}}}},"model":"openai/local"}
+    } }} }));
+    try same("providers.openai.credential", call.diagnostic.?.path);
+
     const removed = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
         \\{"providers":{"xai":null,"opencode-go":{"models":{"kimi-k3":{}}}},"model":"opencode-go/kimi-k3"}
     } }} });

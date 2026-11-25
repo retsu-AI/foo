@@ -33,11 +33,16 @@ const Provider = struct {
     models: std.StringArrayHashMapUnmanaged(ModelEntry) = .empty,
     auth_reset: ?cfg.Provenance = null,
     credential_required: ?cfg.Provenance = null,
+    /// A moved built-in that is never selected sends nothing, so it needs no credential.
+    builtin_credential_cleared: bool = false,
 
     fn clearAuth(self: *Provider, origin: cfg.Provenance, origin_changed: bool) void {
         if (origin_changed) {
             if (self.credential) |credential| {
-                if (credential.value != .none) self.credential_required = origin;
+                if (credential.value != .none) {
+                    self.credential_required = origin;
+                    self.builtin_credential_cleared = credential.origin.source == .defaults;
+                }
             }
         }
         self.credential = null;
@@ -59,14 +64,14 @@ const Provider = struct {
         self.base_url = base_url;
     }
 
-    fn complete(self: *const Provider, state: *Parse) Error!cfg.Provider {
+    fn complete(self: *const Provider, state: *Parse, selected: bool) Error!cfg.Provider {
         state.useOrigin(self.declaration);
         const family = self.family orelse return state.fail(try state.join(self.declaration.key, "family"), .missing_value);
         const base_url = self.base_url orelse return state.fail(try state.join(self.declaration.key, "base_url"), .missing_value);
-        if (self.credential_required) |origin| {
+        if (self.credential_required) |origin| if (selected or !self.builtin_credential_cleared) {
             state.useOrigin(origin);
             return state.fail(try state.join(self.declaration.key, "credential"), .missing_value);
-        }
+        };
         inline for (.{ "family", "base_url", "credential", "headers", "options" }) |key| {
             if (@field(self, key)) |entry| try state.provenance.append(state.a, entry.origin);
         }
@@ -274,7 +279,7 @@ pub fn finish(self: *Catalog, state: *Parse, patch: root.ModelPatch) Error!void 
     try complete.ensureTotalCapacity(state.a, self.providers.count());
     for (self.providers.keys(), self.providers.values()) |id, entry| {
         try state.operation.check();
-        complete.putAssumeCapacity(id, try entry.complete(state));
+        complete.putAssumeCapacity(id, try entry.complete(state, std.mem.eql(u8, id, chosen.value.provider)));
     }
     state.settings.providers = complete;
 
