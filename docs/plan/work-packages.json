@@ -794,7 +794,7 @@
         "Checked plan section in docs/plan/usability.md with evidence per box.",
         "Swarm verdict at the exact head SHA, base and head SHAs recorded."
       ],
-      "status": "planned",
+      "status": "complete",
       "linear": {
         "id": "ENG-1546",
         "uuid": "32117f20-de95-4839-9ef6-df0d294d0e4b",

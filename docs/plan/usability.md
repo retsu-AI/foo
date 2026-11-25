@@ -343,62 +343,66 @@ The trunk comparison matched the operator profile's resolved endpoint, ID, famil
 
 **Files.**
 
-- [ ] Create `src/auth/root.zig`, `src/auth/store.zig`, and `src/auth/README.md`.
-- [ ] Edit `src/contracts/config.zig`. `SecretRef` at line 23.
-- [ ] Edit `src/providers/root.zig`. `Adapter` at line 9, `stream()` at line 19, and `headers()` at line 63.
-- [ ] Edit `src/contracts/runtime/session.zig`. The adapter wiring at line 165 and `environmentValue` at line 549.
-- [ ] Edit `src/cli/root.zig` `missingCredential` at line 316 and `src/mcp/connection_config.zig` `value` at line 32.
-- [ ] Edit `src/cli/arguments.zig`, `src/cli/root.zig`, and `src/main.zig` for the `auth` command.
-- [ ] Create `tests/auth/root.zig` and register `-Dmodule=auth` in `build.zig` at the modules table on line 135.
+- [x] Create `src/auth/root.zig`, `src/auth/store.zig`, and `src/auth/README.md`.
+- [x] Reuse `SecretRef.auth` from U03 in `src/contracts/config.zig`.
+- [x] Edit `src/providers/root.zig`. `Adapter` at line 9, `stream()` at line 19, and `headers()` at line 63.
+- [x] Edit `src/contracts/runtime/session.zig`. The adapter wiring at line 165 and `environmentValue` at line 549.
+- [x] Edit `src/cli/root.zig` `missingCredential` at line 316 and `src/mcp/connection_config.zig` `value` at line 32.
+- [x] Edit `src/cli/arguments.zig`, `src/cli/root.zig`, and `src/main.zig` for the `auth` command.
+- [x] Create `tests/auth/root.zig` and register `-Dmodule=auth` in `build.zig` at the modules table on line 135.
 
 **Build.**
 
-- [ ] Add `CredentialSource` to `src/auth/root.zig`. It is a vtable `{ context, resolve_fn: fn(ctx, allocator, io.Context, SecretRef) Error!Credential }`. `Credential` is `union(enum) { api_key: []const u8, bearer: struct { token: []const u8, account: ?[]const u8 } }`. The environment resolver and the store resolver both implement it. Replace the four inline environment lookups at `src/providers/root.zig:72`, `src/cli/root.zig:316`, `src/contracts/runtime/session.zig:549`, and `src/mcp/connection_config.zig:32` with calls through one `CredentialSource`.
-- [ ] Add `Store` to `src/auth/store.zig`. The file is `<user config dir>/auth.json`, where the directory is the one `userConfig()` in `src/cli/arguments.zig:178` resolves. Create it with mode `0o600` through the exclusive-create and symlink-refusing open from `src/session/local.zig:187` and `:211`. Entries are keyed by provider id and hold `{ "type": "api_key", "key" }` or `{ "type": "oauth", "access", "refresh", "expires_ms", "account" }`. Write to a temp file then rename, under a `auth.lock` taken with the same exclusive lock as `src/session/local.zig:31`. Reads reject a file with group or world bits set and print `chmod 600 <path>`.
-- [ ] Add `SecretRef.auth: []const u8`. The store resolver returns `api_key` or `bearer` by entry type and returns `error.Authentication` for a missing entry.
-- [ ] Add `foo auth login <provider-id> [--api-key]`, `foo auth list`, and `foo auth logout <provider-id>`. `--api-key` reads the key from the terminal without echo and stores it. Without `--api-key`, `login` runs the OAuth flow registered for that provider in `src/auth/root.zig`. U05 ships the registry empty, so `login` without `--api-key` prints `no browser login for <id>; use --api-key`. `list` prints `<id>  <type>  <expires in Nh | no expiry>` and never a value.
-- [ ] Add `Adapter.credentials: CredentialSource`. Call it inside the attempt loop at `src/providers/root.zig:30` so a refreshed token is used on a retry. On a 401 with a `bearer` credential whose entry has a `refresh` token, refresh once through the registry and retry once. A second 401 surfaces `Authentication`. This is the one retry that `Delivery.possibly_sent` permits, because the request was rejected before the model ran.
-- [ ] `missingCredential` asks the `CredentialSource` whether the reference resolves. The U02 line ends `Set <VAR>` for `environment` and `Run foo auth login <id>` for `auth`.
+- [x] Add `CredentialSource` to `src/auth/root.zig`. It is a vtable `{ context, resolve_fn: fn(ctx, allocator, io.Context, SecretRef) Error!Credential }`. `Credential` is `union(enum) { api_key: []const u8, bearer: struct { token: []const u8, account: ?[]const u8 } }`. The environment resolver and the store resolver both implement it. Replace the four inline environment lookups at `src/providers/root.zig:72`, `src/cli/root.zig:316`, `src/contracts/runtime/session.zig:549`, and `src/mcp/connection_config.zig:32` with calls through one `CredentialSource`.
+- [x] Add `Store` to `src/auth/store.zig`. The file is `<user config dir>/auth.json`, where the directory is the one `userConfig()` in `src/cli/arguments.zig:178` resolves. Create it with mode `0o600` through the exclusive-create and symlink-refusing open from `src/session/local.zig:187` and `:211`. Entries are keyed by provider id and hold `{ "type": "api_key", "key" }` or `{ "type": "oauth", "access", "refresh", "expires_ms", "account" }`. Write to a temp file then rename, under a `auth.lock` taken with the same exclusive lock as `src/session/local.zig:31`. Reads reject a file with group or world bits set and print `chmod 600 <path>`.
+- [x] Resolve the existing `SecretRef.auth: []const u8`. The store resolver returns `api_key` or `bearer` by entry type and returns `error.Authentication` for a missing entry.
+- [x] Add `foo auth login <provider-id> [--api-key]`, `foo auth list`, and `foo auth logout <provider-id>`. `--api-key` reads the key from the terminal without echo and stores it. Without `--api-key`, `login` runs the OAuth flow registered for that provider in `src/auth/root.zig`. U05 ships the registry empty, so `login` without `--api-key` prints `no browser login for <id>; use --api-key`. `list` prints `<id>  <type>  <expires in Nh | no expiry>` and never a value.
+- [x] Add `Adapter.credentials: CredentialSource`. Call it inside the attempt loop at `src/providers/root.zig:30` so a refreshed token is used on a retry. On a 401 with a `bearer` credential whose entry has a `refresh` token, refresh once through the registry and retry once. A second 401 surfaces `Authentication`. This is the one retry that `Delivery.possibly_sent` permits, because the request was rejected before the model ran.
+- [x] `missingCredential` asks the `CredentialSource` whether the reference resolves. The preflight diagnostic ends `Set <VAR>` for `environment` and `Run foo auth login <id>` for `auth`. U02 owns typed errors from a provider response.
 
 **You see.**
 
-- [ ] `foo auth login litellm --api-key` prompts `litellm API key:`, stores it, and `foo auth list` prints `litellm  api_key  no expiry`.
-- [ ] `stat -c %a ~/.config/foo/auth.json` prints `600`.
-- [ ] A provider with `"credential": {"auth": "litellm"}` completes a run with no environment variable set.
+- [x] `foo auth login litellm --api-key` prompts `litellm API key:`, stores it, and `foo auth list` prints `litellm  api_key  no expiry`.
+- [x] `stat -c %a ~/.config/foo/auth.json` prints `600`.
+- [x] A provider with `"credential": {"auth": "litellm"}` completes a run with no environment variable set.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `tests/auth/root.zig` covers create with mode, reject loose mode, round trip, atomic replace, missing entry, and both resolvers. Run `nix develop .#ci -c zig build test -Dmodule=auth`.
-- [ ] `tests/providers/root.zig` gains a bearer 401 refresh retry case and a bearer 401 without refresh case. Run `nix develop .#ci -c zig build test -Dmodule=providers`.
-- [ ] `tests/mcp` and `tests/tools` suites pass unchanged, which proves header and process environment references still resolve. Run `nix develop .#ci -c zig build test -Dmodule=mcp` and `-Dmodule=tools`.
+- [x] `tests/auth/root.zig` covers create with mode, reject loose mode, round trip, atomic replace, missing entry, and both resolvers. Run `nix develop .#ci -c zig build test -Dmodule=auth`.
+- [x] `tests/providers/root.zig` gains a bearer 401 refresh retry case and a bearer 401 without refresh case. Run `nix develop .#ci -c zig build test -Dmodule=providers`.
+- [x] `tests/mcp` and `tests/tools` suites pass unchanged, which proves header and process environment references still resolve. Run `nix develop .#ci -c zig build test -Dmodule=mcp` and `-Dmodule=tools`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` model at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. A run with an `environment` credential at trunk and head. Save `auth-env-regression.png`. Pass when both complete a one-turn reply through the operator's gateway.
-- [ ] Lane 2. `foo auth login litellm --api-key` with the operator's key, then `foo auth list`. Save `auth-login.png`. Pass when the list shows `litellm  api_key` and the terminal did not echo the key.
-- [ ] Lane 3. `stat -c %a ~/.config/foo/auth.json`. Save `auth-mode.png`. Pass when it prints `600`.
-- [ ] Lane 4. `chmod 644` the store and run foo. Save `auth-loose.png`. Pass when foo refuses with a message that includes `chmod 600`.
-- [ ] Lane 5. `foo auth logout litellm`, then run. Save `auth-logout.png`. Pass when the authentication detail ends `Run foo auth login litellm`.
-- [ ] Lane 6. `FOO_CONFIG_DIR=/tmp/x foo auth login litellm --api-key`. Save `auth-dir.png`. Pass when `/tmp/x/auth.json` exists with mode 600.
-- [ ] Lane 7. A loopback provider fixture that returns 401 once then 200, with an `oauth` entry whose refresh endpoint is a loopback fixture. Save `auth-refresh.png`. Pass when the run completes and the store shows a new `expires_ms`.
-- [ ] Lane 8. Two `foo auth login` commands in two shells at once. Save `auth-concurrent.png`. Pass when the file is valid JSON afterward and holds one of the two values.
-- [ ] Lane 9. `foo config show` with an `auth` credential. Save `auth-show.png`. Pass when the output shows `{"auth": "litellm"}` and no token.
-- [ ] Lane 10. Run `nix develop .#ci -c zig build check`. Save `auth-check.png`. Pass when every suite passes.
+- [x] Lane 2. `foo auth login litellm --api-key` with the operator's key, then `foo auth list`. Save `auth-login.png`. Pass when the list shows `litellm  api_key` and the terminal did not echo the key.
+- [x] Lane 3. `stat -c %a ~/.config/foo/auth.json`. Save `auth-mode.png`. Pass when it prints `600`.
+- [x] Lane 4. `chmod 644` the store and run foo. Save `auth-loose.png`. Pass when foo refuses with a message that includes `chmod 600`.
+- [x] Lane 5. `foo auth logout litellm`, then run. Save `auth-logout.png`. Pass when the authentication detail ends `Run foo auth login litellm`.
+- [x] Lane 6. `FOO_CONFIG_DIR=/tmp/x foo auth login litellm --api-key`. Save `auth-dir.png`. Pass when `/tmp/x/auth.json` exists with mode 600.
+- [x] Lane 7. A loopback provider fixture that returns 401 once then 200, with an `oauth` entry whose refresh endpoint is a loopback fixture. Save `auth-refresh.png`. Pass when the run completes and the store shows a new `expires_ms`.
+- [x] Lane 8. Two `foo auth login` commands in two shells at once. Save `auth-concurrent.png`. Pass when the file is valid JSON afterward and holds one of the two values.
+- [x] Lane 9. `foo config show` with an `auth` credential. Save `auth-show.png`. Pass when the output shows `{"auth": "litellm"}` and no token.
+- [x] Lane 10. Run `nix develop .#ci -c zig build check`. Save `auth-check.png`. Pass when every suite passes.
+
+The operator gateway credential was absent. The trunk and U05 executables each completed one turn against an authenticated loopback provider using an environment credential. The terminal lanes used a fixture key. The refresh lane injected a fixture-only flow and verified a 401, a refresh HTTP request, a 200 retry, and a new expiry on disk. The production registry is empty.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. Time from `foo run` start to the first request arriving at the loopback fixture, with an environment credential at trunk and head and a store credential at head. Trunk has no store, so the diff-added work is one `auth.json` read, budget 5 ms.
-- [ ] Probe. Twenty interleaved runs per variant, timestamped at the fixture's accept.
-- [ ] Baseline. Record the trunk environment-credential mean first.
-- [ ] Rule. Head environment mean is within 3 percent of trunk. Head store mean minus head environment mean is under 5 ms.
+- [x] Metric. Time from `foo run` start to the first request arriving at the loopback fixture, with an environment credential at trunk and head and a store credential at head. The stored path may read `auth.json` at preflight and again at request time. The budget for the stored path is 5 ms.
+- [x] Probe. Twenty interleaved runs per variant, timestamped at the fixture's accept.
+- [x] Baseline. Record the trunk environment-credential mean first.
+- [x] Rule. Head environment mean is within 3 percent of trunk. Head store mean minus head environment mean is under 5 ms.
 
-**Review gate.** The operator reviews before merge.
+The ReleaseSafe startup probe ran 20 interleaved samples per variant with zero failed requests. The mean to loopback accept was 4.047 ms on trunk, 3.943 ms on U05 with an environment credential (-2.58%), and 3.939 ms on U05 with a stored key (-0.004 ms). A second interleaved run measured +1.47% for the environment path and +0.021 ms for the stored path. The fixture checked the request path, prompt, authorization, and completed reply for each sample.
 
-- [ ] Copy lane 2, 4, and 5 screenshots into `docs/plan/media/u05-review-login.png`, `docs/plan/media/u05-review-loose.png`, and `docs/plan/media/u05-review-logout.png`.
-- [ ] Record a 30 to 60 second video of `auth login --api-key`, `auth list`, a run, `auth logout`, and the failure message. Save it as `docs/plan/media/u05-review.mp4`.
-- [ ] Post the screenshots and the video in chat. Stop at merge-ready. Wait for the operator's click.
+**Review gate.** The operator receives the terminal evidence before merge.
 
-**Merge.**
+- [x] Copy lane 2, 4, and 5 screenshots into `docs/plan/media/u05-review-login.png`, `docs/plan/media/u05-review-loose.png`, and `docs/plan/media/u05-review-logout.png`.
+- [x] Record a 30 to 60 second video of `auth login --api-key`, `auth list`, a run, `auth logout`, and the failure message. Save it as `docs/plan/media/u05-review.mp4`.
+- [x] Post the [login](media/u05-review-login.png), [permissions](media/u05-review-loose.png), [logout](media/u05-review-logout.png), and [demo video](media/u05-review.mp4) in chat.
+
+**Merge.** The standalone ENG-1546 request authorizes direct landing. The PR records the independent verdict and merge revision.
 
 - [ ] Root's clean verdict at the exact head SHA.
 - [ ] Bugbot triage done.
