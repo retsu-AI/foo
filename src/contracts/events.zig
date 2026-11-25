@@ -1,3 +1,5 @@
+const std = @import("std");
+const config = @import("config.zig");
 const io = @import("io.zig");
 const provider = @import("provider.zig");
 const tool = @import("tool.zig");
@@ -5,10 +7,52 @@ const tool = @import("tool.zig");
 pub const RunId = enum(u64) { _ };
 pub const SessionId = enum(u64) { _ };
 pub const Stop = enum { completed, cancelled, interrupted, limit_reached, provider_error, storage_error, host_error };
+/// Why a provider_error run failed. A refusal has provider_stop instead.
+pub const Detail = union(enum) {
+    authentication: struct { endpoint: []const u8, status: ?u16 = null },
+    rate_limited: struct { endpoint: []const u8, retry_after_ms: ?u64 = null },
+    rejected: struct { endpoint: []const u8, status: u16 },
+    transport: struct { endpoint: []const u8, kind: enum { trust, connect, disconnected, deadline } },
+    protocol: struct { endpoint: []const u8 },
+
+    /// Formats one user-facing sentence. The credential names the variable to set.
+    pub fn reason(self: Detail, credential: config.SecretRef) Reason {
+        return .{ .detail = self, .credential = credential };
+    }
+
+    pub const Reason = struct {
+        detail: Detail,
+        credential: config.SecretRef,
+
+        pub fn format(self: Reason, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            switch (self.detail) {
+                .authentication => |v| {
+                    try writer.print("authentication failed for {s}", .{v.endpoint});
+                    if (v.status) |status| try writer.print(" (HTTP {d})", .{status});
+                    if (self.credential == .environment) try writer.print(". Set {s}", .{self.credential.environment});
+                },
+                .rate_limited => |v| {
+                    try writer.print("rate limited by {s}", .{v.endpoint});
+                    if (v.retry_after_ms) |ms| try writer.print(", retry after {d} s", .{ms / 1000 + @intFromBool(ms % 1000 != 0)});
+                },
+                .rejected => |v| try writer.print("{s} rejected the request (HTTP {d})", .{ v.endpoint, v.status }),
+                .transport => |v| try writer.print("could not reach {s}: {s}", .{ v.endpoint, switch (v.kind) {
+                    .trust => "certificate not trusted",
+                    .connect => "connection failed",
+                    .disconnected => "connection lost",
+                    .deadline => "deadline exceeded",
+                } }),
+                .protocol => |v| try writer.print("{s} sent an invalid response", .{v.endpoint}),
+            }
+        }
+    };
+};
 pub const Outcome = struct {
     reason: Stop,
     provider_stop: ?provider.Stop = null,
     uncertain_effects: bool = false,
+    /// Set on every provider_error except a refusal. Borrows the run's endpoint.
+    detail: ?Detail = null,
 };
 /// Only committed records carry a journal sequence. Deltas are always provisional.
 pub const Event = struct {

@@ -43,9 +43,12 @@ pub const Delta = union(enum) {
     reasoning: []const u8,
     tool_arguments: struct { call_id: []const u8, bytes: []const u8 },
 };
+/// HTTP facts behind a failed stream, reported through Sink.failure.
+pub const Failure = struct { status: ?u16 = null, retry_after_ms: ?u64 = null };
 pub const Sink = struct {
     context: *anyopaque,
     emit_fn: *const fn (*anyopaque, io.Context, Delta) io.Error!void,
+    failure: ?*Failure = null,
 
     pub fn emit(self: Sink, operation: io.Context, delta: Delta) io.Error!void {
         try operation.check();

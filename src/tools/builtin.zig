@@ -177,7 +177,7 @@ pub fn fileFailure(allocator: Allocator, id: []const u8, limit: usize, err: file
         error.CommitUncertain, error.CommitCancelled => "Replacement outcome is unknown. Read the file before retrying.",
         error.LimitExceeded => "File operation exceeded a configured size limit.",
         error.InvalidInput => "File path or arguments are invalid.",
-        error.Disconnected, error.IoFailure, error.Unavailable => "Filesystem operation failed before replacement.",
+        error.Disconnected, error.Untrusted, error.IoFailure, error.Unavailable => "Filesystem operation failed before replacement.",
     };
     return .{
         .call_id = id,

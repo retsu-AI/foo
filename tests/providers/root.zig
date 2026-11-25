@@ -64,6 +64,7 @@ const Wire = struct {
     next_status: ?u16 = null,
     first_authorization: ?[]const u8 = null,
     content_type: []const u8 = "text/event-stream; charset=utf-8",
+    retry_after: ?[]const u8 = null,
     chunk_bytes: usize = 7,
     fail_unsent: usize = 0,
     fail_delivered: bool = false,
@@ -95,9 +96,13 @@ const Wire = struct {
         }
         self.headers = headers;
         if (self.calls == 1) self.first_authorization = self.header("authorization");
+        const response_headers = [_]io.Header{
+            .{ .name = "Content-Type", .value = self.content_type },
+            .{ .name = "Retry-After", .value = self.retry_after orelse "" },
+        };
         try sink.head_fn(sink.context, operation, .{
             .status = if (self.calls == 1) self.status else self.next_status orelse self.status,
-            .headers = &.{.{ .name = "Content-Type", .value = self.content_type }},
+            .headers = response_headers[0..if (self.retry_after == null) 1 else 2],
         });
         if (self.body.len > request.max_response_bytes) return error.LimitExceeded;
         var offset: usize = 0;
@@ -127,6 +132,7 @@ const Run = struct {
     args_two: std.ArrayList(u8) = .empty,
     cancel_on_text: bool = false,
     delivery: io.Delivery = .unsent,
+    failure: provider.Failure = .{},
 
     fn stream(self: *Run, adapter: *providers.Adapter, request: provider.Request) provider.Error!provider.Response {
         const client = adapter.interface();
@@ -134,7 +140,7 @@ const Run = struct {
             .io = std.testing.io,
             .cancellation = &self.cancellation,
             .clock = self.clock.interface(),
-        }, request, .{ .context = self, .emit_fn = emit }, &self.delivery);
+        }, request, .{ .context = self, .emit_fn = emit, .failure = &self.failure }, &self.delivery);
     }
 
     fn emit(context: *anyopaque, _: io.Context, delta: provider.Delta) io.Error!void {
@@ -483,7 +489,26 @@ test "HTTP errors and status-specific results never retry a sent request" {
             try equal(1, wire.calls);
             try equal(io.Delivery.possibly_sent, run.delivery);
             try equal(0, run.recorded_text.items.len);
+            try equal(provider.Failure{ .status = failure.status }, run.failure);
         }
+    }
+}
+
+test "a 429 reports its status and delta-seconds retry-after" {
+    const cases = [_]struct { header: []const u8, retry_after_ms: ?u64 }{
+        .{ .header = "2", .retry_after_ms = 2000 },
+        .{ .header = "Wed, 21 Oct 2026 07:28:00 GMT", .retry_after_ms = null },
+        .{ .header = "99999999999999999999999", .retry_after_ms = std.math.maxInt(u64) },
+    };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    for (cases) |case| {
+        var wire: Wire = .{ .allocator = allocator, .body = "{}", .status = 429, .content_type = "application/json", .retry_after = case.header };
+        var adapter: providers.Adapter = .{ .transport = wire.transport() };
+        var run: Run = .{ .allocator = allocator };
+        try std.testing.expectError(error.RateLimited, run.stream(&adapter, requestFor(.openai_chat, profiles[1].url)));
+        try equal(provider.Failure{ .status = 429, .retry_after_ms = case.retry_after_ms }, run.failure);
     }
 }
 

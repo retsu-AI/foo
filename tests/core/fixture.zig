@@ -36,6 +36,8 @@ pub const Step = struct {
     response: foo.provider.Response = answer,
     deltas: []const foo.provider.Delta = &.{},
     failure: ?foo.provider.Error = null,
+    status: ?foo.provider.Failure = null,
+    delivery: foo.io.Delivery = .possibly_sent,
 };
 
 pub const ToolStep = struct {
@@ -225,7 +227,11 @@ pub const Fixture = struct {
         if (step_index >= self.steps.len) return error.Protocol;
         const step = self.steps[step_index];
         for (step.deltas) |delta| try output.emit(op, delta);
-        if (step.failure) |err| return err;
+        if (step.failure) |err| {
+            if (step.status) |status| output.failure.?.* = status;
+            delivery.* = step.delivery;
+            return err;
+        }
 
         var response = step.response;
         response.message = try foo.provider.copyMessage(allocator, response.message);
