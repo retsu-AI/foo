@@ -97,20 +97,30 @@ pub const Adapter = struct {
                 .value = if (api_key) key else try std.fmt.allocPrint(a, "Bearer {s}", .{key}),
             });
         }
+        if (credential) |resolved| {
+            if (resolved == .bearer) {
+                if (resolved.bearer.account) |account| try appendHeader(a, &headers_list, &budget, account.header, account.value);
+            }
+        }
         if (model.headers.len > 128) return error.LimitExceeded;
         for (model.headers) |header| {
-            if (header.name.len == 0 or managedHeader(header.name)) return error.InvalidInput;
-            for (header.name) |byte| if (!std.ascii.isAlphanumeric(byte) and std.mem.indexOfScalar(u8, "!#$%&'*+-.^_`|~", byte) == null) return error.InvalidInput;
-            for (headers_list.items) |previous| if (std.ascii.eqlIgnoreCase(previous.name, header.name)) return error.InvalidInput;
+            if (managedHeader(header.name)) return error.InvalidInput;
             const value = auth.resolveValue(self.environment, header.value) catch return error.InvalidInput;
-            if (!auth.validHeaderValue(value)) return error.InvalidInput;
-            try budget.take(header.name.len);
-            try budget.take(value.len);
-            try headers_list.append(a, .{ .name = header.name, .value = value });
+            try appendHeader(a, &headers_list, &budget, header.name, value);
         }
         return headers_list.items;
     }
 };
+
+fn appendHeader(a: std.mem.Allocator, list: *std.ArrayList(io.Header), budget: *io.Budget, name: []const u8, value: []const u8) p.Error!void {
+    if (name.len == 0) return error.InvalidInput;
+    for (name) |byte| if (!std.ascii.isAlphanumeric(byte) and std.mem.indexOfScalar(u8, "!#$%&'*+-.^_`|~", byte) == null) return error.InvalidInput;
+    for (list.items) |previous| if (std.ascii.eqlIgnoreCase(previous.name, name)) return error.InvalidInput;
+    if (!auth.validHeaderValue(value)) return error.InvalidInput;
+    try budget.take(name.len);
+    try budget.take(value.len);
+    try list.append(a, .{ .name = name, .value = value });
+}
 
 fn credentialError(err: auth.Error) p.Error {
     return switch (err) {

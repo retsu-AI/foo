@@ -813,17 +813,13 @@ test "a single invocation budget allows a larger tool catalog" {
 const Refresh = struct {
     var calls: usize = 0;
 
-    fn login(_: std.mem.Allocator, _: io.Context) auth.Error!auth.OAuth {
-        return error.Authentication;
-    }
-
-    fn refresh(_: std.mem.Allocator, _: io.Context, current: auth.OAuth, token: []const u8) auth.Error!auth.OAuth {
-        if (!std.mem.eql(u8, current.access, "first-access") or !std.mem.eql(u8, token, "first-refresh")) return error.InvalidInput;
+    fn refresh(request: auth.Refresh) auth.Error!auth.OAuth {
+        if (!std.mem.eql(u8, request.current.access, "first-access") or !std.mem.eql(u8, request.current.refresh.?, "first-refresh")) return error.InvalidInput;
         calls += 1;
-        return .{ .access = "second-access", .refresh = "second-refresh", .expires_ms = 200, .account = current.account };
+        return .{ .access = "second-access", .refresh = "second-refresh", .expires_ms = std.math.maxInt(i64) };
     }
 
-    const flow = auth.Flow{ .provider = "gateway", .login_fn = login, .refresh_fn = refresh };
+    const flow = auth.Flow{ .provider = "gateway", .refresh = refresh };
 };
 
 test "only a bearer with a registered refresh token can retry an HTTP 401" {
@@ -854,7 +850,7 @@ test "only a bearer with a registered refresh token can retry an HTTP 401" {
         try store.put(a, operation, "gateway", if (case.api_key) .{ .api_key = "first-access" } else .{ .oauth = .{
             .access = "first-access",
             .refresh = case.refresh_token,
-            .expires_ms = 100,
+            .expires_ms = std.math.maxInt(i64) - 1,
             .account = "fixture-account",
         } });
         var wire: Wire = .{
@@ -863,7 +859,7 @@ test "only a bearer with a registered refresh token can retry an HTTP 401" {
             .status = case.initial_status,
             .next_status = case.next_status,
         };
-        const resolver = auth.Resolver{ .store = store, .registry = if (case.registered) &.{Refresh.flow} else &.{} };
+        const resolver = auth.Resolver{ .store = store, .registry = if (case.registered) &.{Refresh.flow} else &.{}, .http = wire.transport() };
         var adapter: providers.Adapter = .{ .transport = wire.transport(), .credentials = resolver.interface(), .retry_attempts = 2 };
         var request = requestFor(.openai_chat, "https://fixture.invalid/v1/chat/completions");
         request.model.credential = .{ .auth = "gateway" };
@@ -881,6 +877,10 @@ test "only a bearer with a registered refresh token can retry an HTTP 401" {
         try same(if (case.refreshed) "Bearer second-access" else "Bearer first-access", wire.header("authorization").?);
         var snapshot = try store.read(a, operation);
         defer snapshot.deinit();
-        if (!case.api_key) try equal(if (case.refreshed) @as(i64, 200) else 100, snapshot.entries.get("gateway").?.oauth.expires_ms);
+        if (!case.api_key) {
+            const stored = snapshot.entries.get("gateway").?.oauth;
+            try same(if (case.refreshed) "second-access" else "first-access", stored.access);
+            try same("fixture-account", stored.account.?);
+        }
     }
 }

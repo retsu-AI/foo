@@ -64,6 +64,8 @@ fn run(init: std.process.Init) !cli.Exit {
     if (eql(command, "tui") or eql(command, "acp") or eql(command, "mcp")) {
         return cli.withProcessSignals(operation, otherFrontend, .{ &app, cwd, argv, environment_json });
     }
+    var network: Network = .{ .app = &app };
+    defer network.deinit();
     return cli.executeProcess(init.gpa, operation, argv, .{
         .cwd = cwd,
         .environ = init.environ_map,
@@ -71,8 +73,24 @@ fn run(init: std.process.Init) !cli.Exit {
         .discover_config = true,
         .runtime = app.cliRuntime(),
         .authentication = app.authentication,
+        .network = .{ .context = &network, .open_fn = Network.open },
     });
 }
+
+const Network = struct {
+    app: *runtime.App,
+    client: ?foo.transport.Client = null,
+
+    fn open(raw: *anyopaque, operation: foo.io.Context) foo.io.Error!foo.io.HttpTransport {
+        const self: *Network = @ptrCast(@alignCast(raw));
+        if (self.client == null) self.client = try self.app.httpClient(operation);
+        return self.client.?.interface();
+    }
+
+    fn deinit(self: *Network) void {
+        if (self.client) |*client| client.deinit();
+    }
+};
 
 fn otherFrontend(operation: foo.io.Context, app: *runtime.App, cwd: []const u8, argv: []const []const u8, environment_json: ?[]const u8) cli.Exit {
     var arena = std.heap.ArenaAllocator.init(app.allocator);
