@@ -22,6 +22,7 @@ jobs:
           zig build check-bootstrap
           python .github/scripts/test-install-zig.py
           python tests/acceptance/test_qualify.py
+          python tests/acceptance/live_test.py
       - name: Check portable suites
         run: |
           for module in wire core providers config; do

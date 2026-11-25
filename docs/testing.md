@@ -30,9 +30,11 @@ F09 passed all 16 configuration fixtures on Linux in Debug and ReleaseSafe. The 
 | `zig build check` | Check formatting and run the deterministic suites. Add `-Dcodemode=true` for the optional Code Mode suite |
 | `zig build check-bootstrap` | Check formatting and contracts without the transport profile |
 | `zig build release -Doptimize=ReleaseSafe` | Build and smoke-test an unpublished archive using the pinned native transport prefix |
-| `zig build acceptance` | F13 native offline acceptance |
-| `zig build acceptance-live` | F13 provider, server, and editor interoperability |
-| `zig build bench` | F13 reproducible measurements |
+| `zig build acceptance -- <archives> --output <directory>` | Run native offline acceptance against the pinned archive |
+| `zig build acceptance-live -- <archives> --profiles <file> --output <directory>` | Run approved provider, server, and editor interoperability checks |
+| `zig build bench -- <archives> --output <directory>` | Measure the pinned native candidate with a loopback provider |
+
+The [qualification guide](../tests/acceptance/README.md) shows how to rerun the three candidate lanes.
 
 The native package and integration checks run in Debug and ReleaseSafe. See the [candidate guide](../tests/integration/README.md) for build inputs, archive contents, and verification commands.
 

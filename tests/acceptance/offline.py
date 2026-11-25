@@ -464,7 +464,8 @@ CASES = {
     "mcp-context-selection": "test_mcp_context_is_retrieved_only_on_explicit_selection",
     "acp-editor-file-delegation": "test_acp_permission_and_editor_read",
     "acp-cancel-and-reuse": "test_acp_cancel_and_reuse",
-    "tui-native-and-redirected": "test_tui_terminal_and_plain_fallback",
+    "tui-native": "test_bare_invocation_opens_tui",
+    "tui-redirected": "test_explicit_tui_plain_fallback",
 }
 
 
