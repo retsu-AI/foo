@@ -80,6 +80,7 @@ const Ui = struct {
     quit: bool = false,
     dirty: bool = true,
     notice: ?[]const u8 = null,
+    reason: [1024]u8 = undefined,
 
     fn closeRun(self: *Ui) void {
         const active = self.active orelse return;
@@ -229,6 +230,11 @@ const Ui = struct {
         if (self.active) |active| return .{ .label = if (active.cancellation.requested.load(.acquire)) "Cancelling" else "Running" };
         const outcome = self.last orelse return .{ .label = "Ready" };
         if (outcome.uncertain_effects) return .{ .label = "Interrupted (uncertain tool effects)", .failed = true };
+        if (outcome.detail) |detail| {
+            if (std.fmt.bufPrint(&self.reason, "{f}", .{detail.reason(self.options.input.settings.model.credential)})) |label|
+                return .{ .label = label, .failed = true }
+            else |_| {}
+        }
         return switch (outcome.reason) {
             .completed => .{ .label = "Completed" },
             .cancelled => .{ .label = "Cancelled" },

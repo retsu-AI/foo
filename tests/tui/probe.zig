@@ -123,6 +123,7 @@ const Fixture = struct {
         if (std.mem.eql(u8, prompt, "failure")) {
             try sink.emit(operation, .{ .text = "provisional only" });
             try sleep(operation, 200);
+            if (sink.failure) |failure| failure.status = 400;
             return error.Rejected;
         }
         if (std.mem.eql(u8, prompt, "controls"))

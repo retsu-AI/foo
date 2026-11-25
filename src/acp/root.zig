@@ -568,8 +568,13 @@ const Connection = struct {
             for (turn.committed.items) |entry| try session.retain(entry, self.options.limits.history_bytes);
         }
         if (turn.failure) |err| return err;
-        _ = try result;
-        return if (stop) |reason| .{ .prompt = reason } else .{ .failure = internal };
+        const outcome = try result;
+        if (stop) |reason| return .{ .prompt = reason };
+        const detail = outcome.detail orelse return .{ .failure = internal };
+        return .{ .failure = .{
+            .code = internal.code,
+            .message = try std.fmt.allocPrint(arena, "{f}", .{detail.reason(runtime.settings.model.credential)}),
+        } };
     }
 
     fn finishWork(self: *Connection, work: *Work) void {
@@ -880,6 +885,6 @@ fn openFailure(err: OpenError) Failure {
         error.InvalidInput => invalid_params,
         error.Unavailable => .{ .code = rpc.Code.internal_error, .message = "Session runtime is unavailable" },
         error.LimitExceeded => capacity,
-        error.DeadlineExceeded, error.Disconnected, error.IoFailure, error.OutOfMemory => internal,
+        error.DeadlineExceeded, error.Disconnected, error.Untrusted, error.IoFailure, error.OutOfMemory => internal,
     };
 }

@@ -192,7 +192,7 @@ class NativeScenarios(unittest.TestCase):
         peer.expect("tool complete", start=start)
         peer.expect("Completed", start=start)
         start = self.submit(peer, "failure")
-        peer.expect("Provider error", start=start)
+        peer.expect("https://fixture.invalid rejected the request (HTTP 400)", start=start)
         self.quit(peer)
 
     def test_tui_controls_stay_in_transcript(self):
