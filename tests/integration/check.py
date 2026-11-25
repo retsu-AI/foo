@@ -182,7 +182,7 @@ class Production(unittest.TestCase):
             **os.environ, "NO_COLOR": "1", "TERM": "xterm-256color",
             "HOME": str(self.home), "XDG_CONFIG_HOME": str(xdg), "APPDATA": str(appdata),
         }
-        for name in ("FOO_CA_FILE", "FOO_CONFIG_DIR", "FOO_CONFIG_JSON", "FOO_SMOKE_MISSING"):
+        for name in ("FOO_CONFIG_DIR", "FOO_CONFIG_JSON", "FOO_SMOKE_MISSING"):
             self.env.pop(name, None)
         self.config()
 

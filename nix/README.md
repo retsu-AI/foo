@@ -8,7 +8,7 @@ The flake supplies development shells and environment checks for foo. It uses on
 | `toolchain.nix` | Exact Zig and compatible ZLS versions, with assertions on upgrades |
 | `tools.nix` | Workflow, Nix, documentation, and interactive tool groups |
 | `shells.nix` | Development/CI shells and worktree-friendly cache defaults |
-| `transport.nix` | Curl with OpenSSL, c-ares, and explicit CA trust |
+| `transport.nix` | Curl with OpenSSL and c-ares. foo supplies the trust roots |
 | `transport-sources.json` | Source versions and checksums shared by Nix and native CI |
 | `formatter.nix` | Formatting only root and `nix/**` Nix sources |
 | `checks.nix` | Formatting, lint, compiler smoke, and Markdown tooling checks |
