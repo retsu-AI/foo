@@ -470,3 +470,34 @@ test "resolver refreshes an expiring token before use and fills the flow's accou
     const unregistered = (try source.resolve(a, operation(), .{ .auth = "gateway" })).bearer;
     try equal(null, unregistered.account);
 }
+
+test "OAuth requests carry a bounded deadline that keeps an earlier caller deadline" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const Recorder = struct {
+        deadline: ?u64 = null,
+
+        fn transport(self: *@This()) foo.io.HttpTransport {
+            return .{ .context = self, .exchange_fn = exchange };
+        }
+
+        fn exchange(context: *anyopaque, operation_: foo.io.Context, _: foo.io.HttpRequest, sink: foo.io.HttpSink, delivery: *foo.io.Delivery) foo.io.Error!void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.deadline = operation_.deadline_ms;
+            delivery.* = .possibly_sent;
+            try sink.head_fn(sink.context, operation_, .{ .status = 200, .headers = &.{} });
+        }
+    };
+    var clock: support.Clock = .{ .time_ms = 1_000 };
+    const cancellation: foo.io.Cancellation = .{};
+    var recorder: Recorder = .{};
+    var context: foo.io.Context = .{ .io = io, .clock = clock.interface(), .cancellation = &cancellation };
+    const client: oauth_wire.Client = .{ .a = arena.allocator(), .operation = context, .http = recorder.transport() };
+    _ = try client.post("https://issuer.invalid/token", .{ .json = "{}" });
+    try equal(1_000 + oauth_wire.Client.request_timeout_ms, recorder.deadline.?);
+
+    context.deadline_ms = 1_500;
+    const bounded: oauth_wire.Client = .{ .a = arena.allocator(), .operation = context, .http = recorder.transport() };
+    _ = try bounded.post("https://issuer.invalid/token", .{ .json = "{}" });
+    try equal(1_500, recorder.deadline.?);
+}

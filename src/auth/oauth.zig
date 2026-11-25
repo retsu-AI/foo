@@ -136,6 +136,9 @@ pub const Client = struct {
 
     const max_response_bytes = 64 * 1024;
 
+    /// A stalled issuer must not outlive a device-login deadline or hold up a model request's refresh.
+    pub const request_timeout_ms = 30_000;
+
     pub fn post(self: Client, url: []const u8, body: Body) Error!Response {
         try self.operation.check();
         const bytes, const content_type = switch (body) {
@@ -144,7 +147,10 @@ pub const Client = struct {
         };
         var collector: Collector = .{ .a = self.a };
         var delivery: foo.io.Delivery = .unsent;
-        try self.http.exchange_fn(self.http.context, self.operation, .{
+        var bounded = self.operation;
+        const limit = self.operation.clock.now() +| request_timeout_ms;
+        bounded.deadline_ms = if (self.operation.deadline_ms) |caller| @min(caller, limit) else limit;
+        try self.http.exchange_fn(self.http.context, bounded, .{
             .method = .post,
             .url = url,
             .headers = &.{ .{ .name = "content-type", .value = content_type }, .{ .name = "accept", .value = "application/json" } },
