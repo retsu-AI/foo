@@ -116,7 +116,7 @@ def verify_archive(archive, destination, binary_name, prefix):
     )
 
 
-def package(binary, install_prefix, prefix, triple):
+def package(binary, install_prefix, prefix, triple, cpu):
     system = platform.system()
     target, names = TARGETS[(system, platform.machine())]
     architecture, operating_system, *_ = triple.split("-")
@@ -162,6 +162,7 @@ def package(binary, install_prefix, prefix, triple):
             "commit": commit,
             "target": target,
             "zig_target": triple,
+            "cpu": cpu,
             "zig_version": compiler,
             "optimize": "ReleaseSafe",
             "build_host": platform.platform(),
@@ -198,8 +199,9 @@ def main():
     parser.add_argument("install_prefix", type=Path)
     parser.add_argument("transport_prefix", type=Path)
     parser.add_argument("zig_target")
+    parser.add_argument("cpu")
     args = parser.parse_args()
-    package(args.binary.resolve(), args.install_prefix.resolve(), args.transport_prefix.resolve(), args.zig_target)
+    package(args.binary.resolve(), args.install_prefix.resolve(), args.transport_prefix.resolve(), args.zig_target, args.cpu)
 
 
 if __name__ == "__main__":

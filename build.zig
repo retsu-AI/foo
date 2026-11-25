@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 pub fn build(b: *std.Build) void {
     if (!std.mem.eql(u8, builtin.zig_version_string, "0.17.1"))
         @panic("foo requires Zig 0.17.1 (see .zig-version and nix/toolchain.nix)");
-    const target = b.standardTargetOptions(.{});
+    const target = b.standardTargetOptions(.{ .default_target = .{ .cpu_model = .baseline } });
     const optimize = b.standardOptimizeOption(.{});
     const foo = b.addModule("foo", .{
         .root_source_file = b.path("src/lib.zig"),
@@ -114,13 +114,16 @@ pub fn build(b: *std.Build) void {
         if (builtin.os.tag == .windows) addTransportPath(b, smoke, prefix);
         integration.dependOn(&smoke.step);
 
+        const release_cpu = std.Target.Cpu.baseline(target.result.cpu.arch, target.result.os);
         if (optimize != .safe) {
             release_step.dependOn(&b.addFail("Use -Doptimize=ReleaseSafe to build a candidate").step);
+        } else if (target.result.cpu.model != release_cpu.model or !target.result.cpu.features.eql(release_cpu.features)) {
+            release_step.dependOn(&b.addFail("Use -Dcpu=baseline to build a portable candidate").step);
         } else {
             const pack = pythonCommand(b, ".github/scripts/package-candidate.py");
             pack.addFileArg(installed_bin);
             pack.addDirectoryArg(.{ .relative = .{ .base = .install_prefix, .sub_path = "" } });
-            pack.addArgs(&.{ prefix, target.result.zigTriple(b.allocator) catch @panic("out of memory") });
+            pack.addArgs(&.{ prefix, target.result.zigTriple(b.allocator) catch @panic("out of memory"), release_cpu.model.name });
             pack.step.dependOn(&install_exe.step);
             release_step.dependOn(&pack.step);
         }

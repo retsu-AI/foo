@@ -43,18 +43,18 @@ server-authored messages for inspection.
 Use a clean checkout and the pinned Zig toolchain on Linux x86_64, macOS
 arm64, or Windows x86_64. Build the shared libraries and notices with
 `.github/scripts/build-transport.py`, then set `FOO_TRANSPORT_PREFIX` to
-that prefix. Linux packaging requires `patchelf`. macOS packaging uses
+that prefix. Candidate builds use the architecture's baseline CPU features. Linux packaging requires `patchelf`. macOS packaging uses
 `otool`, `install_name_tool`, and ad hoc `codesign` from Xcode.
 
 ```sh
-zig build release -Doptimize=ReleaseSafe
+zig build release -Doptimize=ReleaseSafe -Dcpu=baseline
 ```
 
 Find the native archive, SHA-256 file, and manifest in `zig-out/candidate/`.
 The archive includes foo, its POSIX guardian where needed, curl, c-ares,
 OpenSSL, and dependency notices including the Unicode data notice. The
 optional QuickJS-NG Code Mode module is outside the baseline candidate.
-The manifest records the commit, compiler, target, build host, dependency
+The manifest records the commit, compiler, target, CPU, build host, dependency
 pins, and SHA-256 of each payload file. The packaging step extracts the
 archive into a fresh directory and reruns the integrated checks there with
 the build prefix removed from the loader environment.
