@@ -40,6 +40,20 @@ fn sourceOf(result: config.Effective, key: []const u8) !foo.config.Provenance {
     return error.MissingProvenance;
 }
 
+test "editor schema references leave the resolved configuration unchanged" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var call: Request = .{};
+    const layers = [_]config.Layer{
+        .{ .source = .file, .data = .{ .json = minimal_model } },
+        .{ .source = .file, .data = .{ .json = "{\"$schema\":\"../missing-editor-schema.json\"}" } },
+    };
+    const plain = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = layers[0..1] });
+    const annotated = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &layers });
+    try same(try config.effectiveJson(allocator, plain), try config.effectiveJson(allocator, annotated));
+}
+
 test "layers apply by source and keep file order and empty overrides" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -196,6 +210,7 @@ test "redacted settings preserve credential references and provider options for 
 
 test "strict settings reject malformed, unsupported, and misspelled values" {
     const cases = [_]struct { json: []const u8, path_hint: []const u8 }{
+        .{ .json = "{\"$schema\":false}", .path_hint = "$schema" },
         .{ .json = "{\"providers\":{\"demo\":{\"endpont\":\"https://fixture.invalid\"}}}", .path_hint = "endpont" },
         .{ .json = "{\"version\":2}", .path_hint = "version" },
         .{ .json = "{\"providers\":{\"demo\":{\"family\":\"guessed\"}}}", .path_hint = "family" },

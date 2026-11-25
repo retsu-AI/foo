@@ -264,7 +264,8 @@ fn mergeSimple(self: *Self, comptime T: type, target: *T, value: Value, prefix: 
 }
 
 pub fn apply(self: *Self, value: Value) Error!void {
-    const obj = try self.object(value, "", &.{ "version", "providers", "model", "cwd", "system_prompt", "enabled_tools", "mcp_servers", "limits", "retry_attempts", "files_backend", "process_backend", "permissions", "process", "session", "tui", "custom_tools" });
+    const obj = try self.object(value, "", &.{ "$schema", "version", "providers", "model", "cwd", "system_prompt", "enabled_tools", "mcp_servers", "limits", "retry_attempts", "files_backend", "process_backend", "permissions", "process", "session", "tui", "custom_tools" });
+    if (obj.get("$schema")) |v| _ = try self.string(v, "$schema", false);
     if (obj.get("version")) |v| {
         if (try self.integer(u32, v, "version", true) != 1) {
             self.report("version", .unsupported_version);

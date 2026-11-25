@@ -1,0 +1,598 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "foo configuration",
+  "description": "One configuration layer for foo. Omitted settings inherit earlier values. Later layers replace arrays, options objects, and the system prompt as a unit. The merged configuration must select an existing provider and model.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "description": "Editor schema reference. A relative reference is resolved from this configuration file.",
+      "allOf": [{"$ref": "#/definitions/nonemptyString"}]
+    },
+    "version": {
+      "description": "Configuration format version. Omit to use version 1.",
+      "type": "integer",
+      "const": 1
+    },
+    "providers": {
+      "description": "Provider settings keyed by provider ID. Entries merge field by field across layers. Use null to remove an inherited provider.",
+      "type": "object",
+      "propertyNames": {"$ref": "#/definitions/providerId"},
+      "additionalProperties": {"$ref": "#/definitions/provider"}
+    },
+    "model": {
+      "description": "Selected model as provider/id. The model ID may contain additional slashes.",
+      "type": "string",
+      "pattern": "^[^/]+/[^\\u0000-\\u001f\\u007f]",
+      "not": {"pattern": "[\\u0000-\\u001f\\u007f]"}
+    },
+    "cwd": {
+      "description": "Working directory. Relative paths resolve from the directory containing this file. The invocation directory supplies the default.",
+      "allOf": [{"$ref": "#/definitions/nonemptyString"}]
+    },
+    "system_prompt": {
+      "description": "System prompt for the model. This object replaces both the earlier text and file list.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "description": "Initial system prompt text. Defaults to an empty string when omitted from this object.",
+          "allOf": [{"$ref": "#/definitions/string"}]
+        },
+        "append_files": {
+          "description": "UTF-8 files to append in order. Relative paths resolve from the directory containing this file.",
+          "type": "array",
+          "items": {"$ref": "#/definitions/nonemptyString"}
+        }
+      }
+    },
+    "enabled_tools": {
+      "description": "Unique names of tools the model may use. Built-in names are read, edit, write, and exec. Custom and MCP tool names are also accepted.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "allOf": [{"$ref": "#/definitions/nonemptyString"}],
+        "examples": ["read", "edit", "write", "exec"]
+      }
+    },
+    "mcp_servers": {
+      "description": "MCP server declarations with unique IDs.",
+      "type": "array",
+      "items": {"$ref": "#/definitions/mcpServer"}
+    },
+    "limits": {
+      "description": "Runtime resource limits. Fields merge individually across layers.",
+      "$comment": "The runtime checks target-specific integer bounds.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wire_message_bytes": {
+          "description": "Maximum bytes in one wire protocol message.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 8388608
+        },
+        "json_depth": {
+          "description": "Maximum nesting depth of runtime JSON messages.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 64
+        },
+        "pending_requests": {
+          "description": "Maximum number of pending protocol requests.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 64
+        },
+        "pending_events": {
+          "description": "Maximum number of queued protocol events.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 64
+        },
+        "active_commands": {
+          "description": "Maximum number of active commands.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 16
+        },
+        "server_stderr_bytes": {
+          "description": "Maximum bytes retained from an MCP server's standard error.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 262144
+        },
+        "catalog_pages": {
+          "description": "Maximum number of pages read for an MCP catalog.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 128
+        },
+        "catalog_bytes": {
+          "description": "Maximum bytes retained for an MCP catalog.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 16777216
+        },
+        "tool_argument_bytes": {
+          "description": "Maximum bytes in tool arguments.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 1048576
+        },
+        "tool_output_bytes": {
+          "description": "Maximum bytes in tool output.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 65536
+        },
+        "transcript_bytes": {
+          "description": "Maximum bytes in the conversation transcript.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 33554432
+        },
+        "model_turns": {
+          "description": "Maximum model turns in a run.",
+          "allOf": [{"$ref": "#/definitions/positiveUint32"}],
+          "default": 100
+        },
+        "tool_calls": {
+          "description": "Maximum tool calls in a run.",
+          "allOf": [{"$ref": "#/definitions/positiveUint32"}],
+          "default": 1000
+        }
+      }
+    },
+    "retry_attempts": {
+      "description": "Additional attempts after a retryable provider failure.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295,
+      "default": 0
+    },
+    "files_backend": {
+      "description": "Run file operations locally or delegate them to the client.",
+      "allOf": [{"$ref": "#/definitions/backend"}]
+    },
+    "process_backend": {
+      "description": "Run process operations locally or delegate them to the client.",
+      "allOf": [{"$ref": "#/definitions/backend"}]
+    },
+    "permissions": {
+      "description": "Tool permission policy. Use ask to request approval for each call.",
+      "enum": ["allow", "ask", "deny"],
+      "default": "deny"
+    },
+    "process": {
+      "description": "Built-in tool and process controls. Fields merge individually across layers.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "file_bytes": {
+          "description": "Maximum bytes for a built-in file operation.",
+          "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+          "default": 8388608
+        },
+        "environment": {"$ref": "#/definitions/environment"},
+        "inherit_environment": {"$ref": "#/definitions/inheritEnvironment"},
+        "timeout_ms": {
+          "description": "Default process timeout in milliseconds.",
+          "allOf": [{"$ref": "#/definitions/positiveUint64"}],
+          "default": 30000
+        },
+        "cleanup_ms": {
+          "description": "Maximum process cleanup time in milliseconds.",
+          "allOf": [{"$ref": "#/definitions/positiveUint64"}],
+          "default": 2000
+        }
+      }
+    },
+    "session": {
+      "description": "Session persistence and journal limits.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "directory": {
+          "description": "Session storage directory. Relative paths resolve from the directory containing this file. Use null to disable persistence.",
+          "anyOf": [{"$ref": "#/definitions/nonemptyString"}, {"type": "null"}]
+        },
+        "limits": {
+          "description": "Session storage limits. Fields merge individually across layers.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_record_bytes": {
+              "description": "Maximum bytes in one journal record.",
+              "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+              "default": 8388608
+            },
+            "max_journal_bytes": {
+              "description": "Maximum bytes in the session journal.",
+              "allOf": [{"$ref": "#/definitions/positiveUint64"}],
+              "default": 268435456
+            },
+            "max_context_bytes": {
+              "description": "Maximum bytes in session context.",
+              "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+              "default": 33554432
+            },
+            "max_artifact_bytes": {
+              "description": "Maximum bytes per session artifact.",
+              "allOf": [{"$ref": "#/definitions/positiveUint64"}],
+              "default": 67108864
+            },
+            "max_artifacts": {
+              "description": "Maximum number of session artifacts.",
+              "allOf": [{"$ref": "#/definitions/positiveInteger"}],
+              "default": 1024
+            }
+          }
+        }
+      }
+    },
+    "tui": {
+      "description": "Terminal UI key bindings and colors.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "keys": {
+          "description": "Key bindings merge individually. Resolved bindings must be distinct.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "submit": {"allOf": [{"$ref": "#/definitions/keyBinding"}], "default": "enter"},
+            "newline": {"allOf": [{"$ref": "#/definitions/keyBinding"}], "default": "alt+enter"},
+            "cancel": {"allOf": [{"$ref": "#/definitions/keyBinding"}], "default": "ctrl+c"},
+            "quit": {"allOf": [{"$ref": "#/definitions/keyBinding"}], "default": "ctrl+d"}
+          }
+        },
+        "colors": {
+          "description": "Terminal colors by transcript role and UI state. Fields merge individually.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "assistant": {"allOf": [{"$ref": "#/definitions/color"}], "default": "default"},
+            "tool": {"allOf": [{"$ref": "#/definitions/color"}], "default": "cyan"},
+            "error": {"allOf": [{"$ref": "#/definitions/color"}], "default": "red"},
+            "status": {"allOf": [{"$ref": "#/definitions/color"}], "default": "bright_black"}
+          }
+        }
+      }
+    },
+    "custom_tools": {
+      "description": "Executable tool declarations. Add each tool you want to expose to enabled_tools.",
+      "type": "array",
+      "items": {"$ref": "#/definitions/customTool"}
+    }
+  },
+  "definitions": {
+    "string": {
+      "type": "string",
+      "not": {"pattern": "\\u0000"}
+    },
+    "nonemptyString": {
+      "type": "string",
+      "minLength": 1,
+      "not": {"pattern": "\\u0000"}
+    },
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "positiveUint32": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "positiveUint64": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "backend": {
+      "enum": ["local", "client"],
+      "default": "local"
+    },
+    "keyBinding": {
+      "enum": ["enter", "alt+enter", "ctrl+enter", "ctrl+c", "ctrl+d", "ctrl+j", "ctrl+q", "escape"]
+    },
+    "color": {
+      "enum": [
+        "default", "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+        "bright_black", "bright_red", "bright_green", "bright_yellow", "bright_blue",
+        "bright_magenta", "bright_cyan", "bright_white"
+      ]
+    },
+    "providerId": {
+      "description": "Nonempty provider ID. Use a slash to separate this ID from a model ID in a model selection.",
+      "type": "string",
+      "minLength": 1,
+      "not": {"pattern": "[/\\u0000-\\u001f\\u007f]"}
+    },
+    "provider": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "description": "Provider API family. Required after all configuration layers merge.",
+          "enum": ["openai_responses", "openai_chat", "anthropic_messages"]
+        },
+        "base_url": {
+          "description": "Provider base URL. foo appends the route for the API family. Required after all configuration layers merge.",
+          "allOf": [{"$ref": "#/definitions/httpUrl"}]
+        },
+        "credential": {"$ref": "#/definitions/credential"},
+        "headers": {"$ref": "#/definitions/headers"},
+        "options": {
+          "description": "Provider request defaults. Model options override these defaults by key.",
+          "allOf": [{"$ref": "#/definitions/requestOptions"}]
+        },
+        "models": {
+          "description": "Model declarations keyed by the model ID sent to the provider. Entries merge field by field across layers. Use null to remove an inherited model or {} to declare a model with inherited settings and defaults.",
+          "type": "object",
+          "propertyNames": {
+            "minLength": 1,
+            "not": {"pattern": "[\\u0000-\\u001f\\u007f]"}
+          },
+          "additionalProperties": {"$ref": "#/definitions/model"}
+        }
+      }
+    },
+    "model": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Optional display name. Use null to clear an inherited name.",
+          "anyOf": [{"$ref": "#/definitions/nonemptyString"}, {"type": "null"}]
+        },
+        "endpoint": {
+          "description": "Complete POST URL for this model. Use null to restore the provider route. A different origin clears inherited credentials and headers for this model.",
+          "anyOf": [{"$ref": "#/definitions/httpUrl"}, {"type": "null"}]
+        },
+        "options": {
+          "description": "Model request options. Keys here override the provider's option values.",
+          "allOf": [{"$ref": "#/definitions/requestOptions"}]
+        },
+        "max_output_tokens": {
+          "description": "Maximum output tokens requested from the model.",
+          "allOf": [{"$ref": "#/definitions/positiveUint32"}],
+          "default": 4096
+        }
+      }
+    },
+    "httpUrl": {
+      "type": "string",
+      "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://[^/?#@]+(?:[/?]|$)",
+      "not": {"pattern": "[\\u0000-\\u0020\\u007f\\\\#]"}
+    },
+    "credential": {
+      "description": "Choose one credential source. Use null for an unauthenticated connection.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "environment": {
+          "description": "Read the key from this environment variable.",
+          "allOf": [{"$ref": "#/definitions/envName"}]
+        },
+        "literal": {
+          "description": "Supply a fixed key.",
+          "type": "string",
+          "minLength": 1,
+          "not": {"pattern": "[\\u0000-\\u0008\\u000a-\\u001f\\u007f]"}
+        },
+        "auth": {
+          "description": "Provider ID reserved for token store authentication.",
+          "allOf": [{"$ref": "#/definitions/providerId"}]
+        }
+      }
+    },
+    "envName": {
+      "type": "string",
+      "pattern": "^[A-Za-z_]",
+      "not": {"pattern": "[^A-Za-z0-9_]"}
+    },
+    "envReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment"],
+      "properties": {
+        "environment": {"$ref": "#/definitions/envName"}
+      }
+    },
+    "headers": {
+      "description": "HTTP headers. Names must be unique regardless of case.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "value"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "not": {"pattern": "[^A-Za-z0-9!#$%&'*+.\\-^_`|~]"}
+          },
+          "value": {
+            "description": "Header value or reference to an environment variable.",
+            "anyOf": [
+              {"type": "string", "not": {"pattern": "[\\u0000-\\u0008\\u000a-\\u001f\\u007f]"}},
+              {"$ref": "#/definitions/envReference"}
+            ]
+          }
+        }
+      }
+    },
+    "environment": {
+      "description": "Child process environment entries. Names must be unique regardless of case.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "value"],
+        "properties": {
+          "name": {"$ref": "#/definitions/envName"},
+          "value": {
+            "description": "Literal value or reference to an environment variable.",
+            "anyOf": [{"$ref": "#/definitions/string"}, {"$ref": "#/definitions/envReference"}]
+          }
+        }
+      }
+    },
+    "inheritEnvironment": {
+      "description": "Include the parent process environment.",
+      "type": "boolean",
+      "default": false
+    },
+    "argv": {
+      "description": "Executable followed by its arguments. The executable must be nonempty. Arguments are passed directly to the process.",
+      "type": "array",
+      "minItems": 1,
+      "items": [{"$ref": "#/definitions/nonemptyString"}],
+      "additionalItems": {"$ref": "#/definitions/string"}
+    },
+    "mcpServer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "transport"],
+      "properties": {
+        "id": {"$ref": "#/definitions/nonemptyString"},
+        "revision": {
+          "description": "MCP protocol revision. Omit or use null to negotiate with the server.",
+          "enum": ["2026-07-28", "2025-11-25", null]
+        },
+        "transport": {
+          "description": "Choose exactly one MCP transport.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "stdio": {
+              "description": "Start a local MCP server and communicate over standard input and output.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["argv"],
+              "properties": {
+                "argv": {"$ref": "#/definitions/argv"},
+                "environment": {"$ref": "#/definitions/environment"}
+              }
+            },
+            "http": {
+              "description": "Connect to an MCP server using Streamable HTTP.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["url"],
+              "properties": {
+                "url": {"$ref": "#/definitions/httpUrl"},
+                "headers": {"$ref": "#/definitions/headers"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "customTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "description", "schema", "argv"],
+      "properties": {
+        "name": {
+          "description": "Unique tool name. The names read, edit, write, and exec are reserved.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "not": {
+            "anyOf": [
+              {"pattern": "[^A-Za-z0-9_-]"},
+              {"enum": ["read", "edit", "write", "exec"]}
+            ]
+          }
+        },
+        "description": {
+          "description": "Description of the tool shown to the model.",
+          "allOf": [{"$ref": "#/definitions/string"}]
+        },
+        "schema": {
+          "description": "JSON Schema for the tool's input arguments.",
+          "type": "object"
+        },
+        "argv": {"$ref": "#/definitions/argv"},
+        "environment": {"$ref": "#/definitions/environment"},
+        "inherit_environment": {"$ref": "#/definitions/inheritEnvironment"},
+        "timeout_ms": {
+          "description": "Tool execution timeout in milliseconds.",
+          "allOf": [{"$ref": "#/definitions/positiveUint64"}],
+          "default": 30000
+        }
+      }
+    },
+    "requestOptions": {
+      "description": "The provider adapter validates the combined options for the selected API family.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "temperature": {
+          "description": "Sampling temperature. Anthropic Messages accepts values from 0 to 1. The OpenAI families accept 0 to 2.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "top_p": {
+          "description": "Nucleus sampling probability from 0 to 1.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "parallel_tool_calls": {
+          "description": "Allow parallel tool calls for an OpenAI API family.",
+          "type": "boolean"
+        },
+        "reasoning_effort": {
+          "description": "Reasoning effort for Chat Completions.",
+          "allOf": [{"$ref": "#/definitions/reasoningEffort"}]
+        },
+        "reasoning": {
+          "description": "Reasoning controls for the Responses API.",
+          "type": "object",
+          "properties": {
+            "effort": {"$ref": "#/definitions/reasoningEffort"},
+            "summary": {"enum": ["auto", "concise", "detailed"]}
+          }
+        },
+        "chat_token_limit": {
+          "description": "Request field used to send max_output_tokens to a Chat Completions endpoint.",
+          "enum": ["max_completion_tokens", "max_tokens"],
+          "default": "max_completion_tokens"
+        },
+        "chat_include_usage": {
+          "description": "Request token usage in the Chat Completions stream.",
+          "type": "boolean",
+          "default": true
+        },
+        "chat_reasoning_content": {
+          "description": "Preserve reasoning_content in Chat Completions history.",
+          "type": "boolean",
+          "default": false
+        },
+        "chat_litellm": {
+          "description": "Enable LiteLLM-specific Chat Completions history handling.",
+          "type": "boolean",
+          "default": false
+        },
+        "thinking": {
+          "description": "Thinking control for Chat Completions or Anthropic Messages. Adaptive mode and budget_tokens apply to Anthropic Messages. Enabled thinking on Anthropic requires a budget below max_output_tokens.",
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": {"enum": ["enabled", "disabled", "adaptive"]},
+            "budget_tokens": {"type": "integer", "minimum": 1024}
+          }
+        },
+        "output_config": {
+          "description": "Output controls for Anthropic Messages.",
+          "type": "object",
+          "required": ["effort"],
+          "properties": {
+            "effort": {"enum": ["low", "medium", "high", "max"]}
+          }
+        }
+      }
+    },
+    "reasoningEffort": {
+      "enum": ["none", "minimal", "low", "medium", "high", "max", "xhigh"]
+    }
+  }
+}

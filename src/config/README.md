@@ -63,6 +63,8 @@ The neutral defaults contain an empty prompt, no selected tools, no custom tools
 
 The root is a JSON object. All settings are optional in an individual patch. After merging, the configuration requires a selected provider and model.
 
+For editor completion and validation, set `"$schema": "../src/config/schema.json"` in a project `.foo/config.json`. Foo treats the reference as editor metadata. [JSON Schema](schema.json)
+
 | Root key | Value | Default or behavior |
 | --- | --- | --- |
 | `version` | Integer `1` | Omitted means version 1 |
