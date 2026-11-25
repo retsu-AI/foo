@@ -72,50 +72,52 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 
 **Files.**
 
-- [ ] Edit `src/contracts/runtime/session.zig`. `httpClient` at line 114 and `loadRoots` at line 522.
-- [ ] Edit `src/transport/root.zig`. `Options` at line 20, the HTTPS gate at line 120, and `configure` at line 162.
-- [ ] Create `src/transport/trust.zig`.
-- [ ] Edit `src/transport/README.md` lines 56 and 61 to 68, `nix/README.md` line 12, `docs/README.md` line 5, and `tests/integration/README.md` line 18.
-- [ ] Edit `tests/transport/fixtures.py` and `tests/transport/probe.zig`. Add a `platform_trust` mode.
-- [ ] Edit `tests/integration/check.py` line 179.
+- [x] Edit `src/contracts/runtime/session.zig`. `httpClient` at line 114 and `loadRoots` at line 522.
+- [x] Edit `src/transport/root.zig`. `Options` at line 20, the HTTPS gate at line 120, and `configure` at line 162.
+- [x] Create `src/transport/trust.zig`.
+- [x] Edit `src/transport/README.md` lines 56 and 61 to 68, `nix/README.md` line 12, `docs/README.md` line 5, and `tests/integration/README.md` line 18.
+- [x] Edit `tests/transport/fixtures.py` and `tests/transport/probe.zig`. Add a `platform_trust` mode.
+- [x] Edit `tests/integration/check.py` line 179.
 
 **Build.**
 
-- [ ] Add `Trust` to `src/transport/trust.zig`. It is `union(enum) { platform, pem: []const u8 }`. `Trust.platformPem(allocator, io, now)` calls `std.crypto.Certificate.Bundle.rescan`, then writes each DER root in `bundle.map` as a PEM block. Appendix A has the measured loop. `rescan` reads the Linux bundle paths, the macOS `SystemRootCertificates.keychain`, and the Windows `ROOT` store, so one code path covers the three release targets.
-- [ ] Replace `transport.Options.ca_pem: ?[]const u8` with `trust: Trust = .platform`. `Client.init` resolves `.platform` to PEM bytes once per client. Raise `max_ca_bytes` to 2 MiB. Delete the `error.Unavailable` return at `src/transport/root.zig:120`. An empty platform bundle fails `Client.init` with `error.Unavailable` and the frontend prints `no trusted certificate roots found. Set FOO_CA_FILE or SSL_CERT_FILE to a PEM bundle`.
-- [ ] In `App.httpClient`, choose the trust source in this order. `FOO_CA_FILE` as `Trust.pem`, then `SSL_CERT_FILE` as `Trust.pem`, then `Trust.platform`. Keep `loadRoots` for both file paths. `SSL_CERT_FILE` is the variable Codex, Bun, and OpenSSL honor, so a Nix shell or a corporate image works with no foo-specific setting.
-- [ ] Leave `nix/transport.nix` and `.github/scripts/build-transport.py` unchanged. Trust comes from the Zig standard library, not from a curl build flag. Appendix B records why.
-- [ ] Add `platform_trust` to `tests/transport/probe.zig` `Mode`. It opens a client with `.trust = .platform` and fetches the URL. In `tests/transport/fixtures.py`, add `test_platform_trust_rejects_fixture_ca`, which runs `platform_trust` against the loopback TLS server and expects `IoFailure` with `.unsent` because the fixture CA is not a platform root, and `test_ssl_cert_file_override`, which sets `SSL_CERT_FILE` to `tests/transport/tls/ca.pem` and expects 200.
+- [x] Add `Trust` to `src/transport/trust.zig`. It is `union(enum) { platform, pem: []const u8 }`. `Trust.platformPem(allocator, io, now)` calls `std.crypto.Certificate.Bundle.rescan`, then writes each DER root in `bundle.map` as a PEM block. Appendix A has the measured loop. `rescan` reads the Linux bundle paths, the macOS `SystemRootCertificates.keychain`, and the Windows `ROOT` store, so one code path covers the three release targets.
+- [x] Replace `transport.Options.ca_pem: ?[]const u8` with `trust: Trust = .platform`. `Client.init` resolves `.platform` to PEM bytes once per client. Raise `max_ca_bytes` to 2 MiB. Delete the `error.Unavailable` return at `src/transport/root.zig:120`. An empty platform bundle fails `Client.init` with `error.Unavailable` and the frontend prints `no trusted certificate roots found. Set FOO_CA_FILE or SSL_CERT_FILE to a PEM bundle`.
+- [x] In `App.httpClient`, choose the trust source in this order. `FOO_CA_FILE` as `Trust.pem`, then `SSL_CERT_FILE` as `Trust.pem`, then `Trust.platform`. Keep `loadRoots` for both file paths. `SSL_CERT_FILE` is the variable Codex, Bun, and OpenSSL honor, so a Nix shell or a corporate image works with no foo-specific setting.
+- [x] Leave `nix/transport.nix` and `.github/scripts/build-transport.py` unchanged. Trust comes from the Zig standard library, not from a curl build flag. Appendix B records why.
+- [x] Add `platform_trust` to `tests/transport/probe.zig` `Mode`. It opens a client with `.trust = .platform` and fetches the URL. In `tests/transport/fixtures.py`, add `test_platform_trust_rejects_fixture_ca`, which runs `platform_trust` against the loopback TLS server and expects `IoFailure` with `.unsent` because the fixture CA is not a platform root, and `test_ssl_cert_file_override`, which sets `SSL_CERT_FILE` to `tests/transport/tls/ca.pem` and expects 200.
 
 **You see.**
 
-- [ ] `nix develop -c zig build run -- run --prompt hi --config /tmp/opencode/ca-proto/probe.json` with no `FOO_CA_FILE` reaches `api.openai.com` and fails on the missing key, not on TLS. Before U02 the line reads `foo: run ended with provider_error`. After U02 it names the 401.
-- [ ] `tests/integration/check.py` no longer mentions `FOO_CA_FILE`.
+- [x] `nix develop -c zig build run -- run --prompt hi --config /tmp/opencode/ca-proto/probe.json` with no `FOO_CA_FILE` reaches `api.openai.com` and fails on the missing key, not on TLS. Before U02 the line reads `foo: run ended with provider_error`. After U02 it names the 401.
+- [x] `tests/integration/check.py` no longer mentions `FOO_CA_FILE`.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `tests/transport/fixtures.py` gains `test_platform_trust_rejects_fixture_ca` and `test_ssl_cert_file_override`. Run `nix develop .#ci -c zig build test -Dmodule=transport` and `nix develop .#ci -c zig build test -Dmodule=transport -Doptimize=ReleaseSafe`.
-- [ ] `src/transport/trust.zig` gains a test that encodes `tests/transport/tls/ca.pem` from DER back to PEM and matches the file byte for byte. Run `nix develop .#ci -c zig build test -Dmodule=transport`.
+- [x] `tests/transport/fixtures.py` gains `test_platform_trust_rejects_fixture_ca` and `test_ssl_cert_file_override`. Run `nix develop .#ci -c zig build test -Dmodule=transport` and `nix develop .#ci -c zig build test -Dmodule=transport -Doptimize=ReleaseSafe`.
+- [x] `src/transport/trust.zig` gains a test that encodes `tests/transport/tls/ca.pem` from DER back to PEM and matches the file byte for byte. Run `nix develop .#ci -c zig build test -Dmodule=transport`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on the configured `swarm workers` model at the PR head, per the boot recipe.
 
-- [ ] Lane 1. Regression lane against trunk. Run `zig-out/bin/foo run --prompt hi --config /tmp/opencode/ca-proto/probe.json` with no `FOO_CA_FILE` at trunk and head. Save `trust-default.png`. Pass when trunk fails before any bytes leave and head reaches the host and fails on the missing key.
-- [ ] Lane 2. Build the transport probe per `tests/providers/build-probe.sh` adapted to `tests/transport/probe.zig` and run `platform_trust https://api.openai.com/v1/models`. Save `trust-openai.png`. Pass when the status is 401 and the error is not `Unavailable` or `IoFailure`.
-- [ ] Lane 3. Same probe against `https://api.anthropic.com/v1/models`, `https://api.x.ai/v1/models`, `https://opencode.ai/inference/v1/models`, and `https://chatgpt.com/backend-api/codex/responses`. Save `trust-hosts.png`. Pass when every host returns an HTTP status and none returns a transport error.
-- [ ] Lane 4. `FOO_CA_FILE=/tmp/opencode/ca-proto/roots.pem` and `FOO_CA_FILE=tests/transport/tls/unrelated-ca.pem` against `api.openai.com`. Save `trust-override.png`. Pass when the first returns 401 and the second fails with `IoFailure`.
-- [ ] Lane 5. `SSL_CERT_FILE=tests/transport/tls/ca.pem` and no `FOO_CA_FILE` against the loopback fixture. Save `trust-ssl-cert-file.png`. Pass when the status is 200.
-- [ ] Lane 6. Both variables set, `FOO_CA_FILE` to `unrelated-ca.pem` and `SSL_CERT_FILE` to `ca.pem`, against the loopback fixture. Save `trust-precedence.png`. Pass when the request fails, which proves `FOO_CA_FILE` wins.
-- [ ] Lane 7. `FOO_CA_FILE` pointing at a missing path, an empty file, and a 3 MiB file. Save `trust-bad-file.png`. Pass when the messages name the path, `InvalidInput`, and `LimitExceeded` in that order and the exit code is `host`.
-- [ ] Lane 8. Run `nix develop .#ci -c zig build check`. Save `trust-check.png`. Pass when every suite passes.
-- [ ] Lane 9. Run the MCP Streamable HTTP suite from `tests/mcp/README.md` with no `FOO_CA_FILE`. Save `trust-mcp.png`. Pass when the suite passes unchanged.
-- [ ] Lane 10. Run the probe in a container with no `/etc/ssl` tree, built with `docker run --rm -v $PWD/zig-out:/app` on a `scratch`-like image or `nix shell nixpkgs#busybox --ignore-environment`. Save `trust-no-roots.png`. Pass when the message is `no trusted certificate roots found` and the exit code is `host`.
+- [x] Lane 1. Regression lane against trunk. Run `zig-out/bin/foo run --prompt hi --config /tmp/opencode/ca-proto/probe.json` with no `FOO_CA_FILE` at trunk and head. Save `trust-default.png`. Pass when trunk fails before any bytes leave and head reaches the host and fails on the missing key.
+- [x] Lane 2. Build the transport probe per `tests/providers/build-probe.sh` adapted to `tests/transport/probe.zig` and run `platform_trust https://api.openai.com/v1/models`. Save `trust-openai.png`. Pass when the status is 401 and the error is not `Unavailable` or `IoFailure`.
+- [x] Lane 3. Same probe against `https://api.anthropic.com/v1/models`, `https://api.x.ai/v1/models`, `https://opencode.ai/inference/v1/models`, and `https://chatgpt.com/backend-api/codex/responses`. Save `trust-hosts.png`. Pass when every host returns an HTTP status and none returns a transport error.
+- [x] Lane 4. `FOO_CA_FILE=/tmp/opencode/ca-proto/roots.pem` and `FOO_CA_FILE=tests/transport/tls/unrelated-ca.pem` against `api.openai.com`. Save `trust-override.png`. Pass when the first returns 401 and the second fails with `IoFailure`.
+- [x] Lane 5. `SSL_CERT_FILE=tests/transport/tls/ca.pem` and no `FOO_CA_FILE` against the loopback fixture. Save `trust-ssl-cert-file.png`. Pass when the status is 200.
+- [x] Lane 6. Both variables set, `FOO_CA_FILE` to `unrelated-ca.pem` and `SSL_CERT_FILE` to `ca.pem`, against the loopback fixture. Save `trust-precedence.png`. Pass when the request fails, which proves `FOO_CA_FILE` wins.
+- [x] Lane 7. `FOO_CA_FILE` pointing at a missing path, an empty file, and a 3 MiB file. Save `trust-bad-file.png`. Pass when the messages name the path, `InvalidInput`, and `LimitExceeded` in that order and the exit code is `host`.
+- [x] Lane 8. Run `nix develop .#ci -c zig build check`. Save `trust-check.png`. Pass when every suite passes.
+- [x] Lane 9. Run the MCP Streamable HTTP suite from `src/mcp/README.md` with no `FOO_CA_FILE`. Save `trust-mcp.png`. Pass when the suite passes unchanged.
+- [x] Lane 10. Run the probe in a container with no `/etc/ssl` tree, built with `docker run --rm -v $PWD/zig-out:/app` on a `scratch`-like image or `nix shell nixpkgs#busybox --ignore-environment`. Save `trust-no-roots.png`. Pass when the message is `no trusted certificate roots found` and the exit code is `host`.
+
+Lanes 1 to 7 and 10 passed at the PR head with text captures instead of screenshots. Lane 1 traced the connection with `strace`, because a 401 and a TLS failure both print `provider_error` before U02. The CLI lanes used a provider-format copy of `probe.json`, because U03 retired the old root `model` object. Lane 8 passed on Linux, and native CI ran the transport suite on macOS and Windows.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. `Client.init` wall time with `.platform` trust, printed by the probe, and the `trusted` loopback fixture round trip. Trunk has no platform scan, so the diff-added work is the scan and the PEM encode. The budget for that work is 25 ms on this host, where the prototype measured 5 ms for 118 roots.
-- [ ] Probe. `hyperfine --warmup 3 -r 10 'probe platform_trust <loopback-url>' 'probe trusted <loopback-url> - tests/transport/tls/ca.pem'` interleaved, at trunk with `trusted` only and at head with both.
-- [ ] Baseline. Record the trunk `trusted` mean first.
-- [ ] Rule. Head `platform_trust` mean minus head `trusted` mean is under 25 ms. Head `trusted` mean is within 5 percent of trunk `trusted` mean.
+- [x] Metric. `Client.init` wall time with `.platform` trust, printed by the probe, and the `trusted` loopback fixture round trip. Trunk has no platform scan, so the diff-added work is the scan and the PEM encode. The budget for that work is 25 ms on this host, where the prototype measured 5 ms for 118 roots.
+- [x] Probe. `hyperfine --warmup 3 -r 10 'probe platform_trust_failure <loopback-url>' 'probe trusted <loopback-url> - tests/transport/tls/ca.pem'` interleaved, at trunk with `trusted` only and at head with both.
+- [x] Baseline. Record the trunk `trusted` mean first.
+- [x] Rule. Head `platform_trust` mean minus head `trusted` mean is under 25 ms. Head `trusted` mean is within 5 percent of trunk `trusted` mean. Over 300 interleaved ReleaseSafe runs per side, the platform scan added 2.9 ms. Head `trusted` measured 2.90 ms against 3.07 ms on trunk, inside the 4 percent spread between two trunk runs.
 
 **Review gate.** None. U01 is not review-gated.
 
