@@ -783,3 +783,45 @@ test "built-in providers resolve from defaults and user layers can replace or re
     } }} });
     try expect(removed.providers.get("openai-codex") == null);
 }
+
+test "API and subscription providers are built in and follow the same override rules" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var call: Request = .{};
+    for ([_]struct { id: []const u8, family: foo.config.Family, endpoint: []const u8, credential: foo.config.SecretRef, user_agent: bool = false }{
+        .{ .id = "anthropic", .family = .anthropic_messages, .endpoint = "https://api.anthropic.com/v1/messages", .credential = .{ .environment = "ANTHROPIC_API_KEY" } },
+        .{ .id = "openai", .family = .openai_responses, .endpoint = "https://api.openai.com/v1/responses", .credential = .{ .environment = "OPENAI_API_KEY" } },
+        .{ .id = "opencode", .family = .openai_responses, .endpoint = "https://opencode.ai/inference/openai/v1/responses", .credential = .{ .auth = "opencode" }, .user_agent = true },
+        .{ .id = "opencode-go", .family = .openai_responses, .endpoint = "https://opencode.ai/inference/go/openai/v1/responses", .credential = .{ .auth = "opencode-go" }, .user_agent = true },
+        .{ .id = "xai", .family = .openai_responses, .endpoint = "https://api.x.ai/v1/responses", .credential = .{ .auth = "xai" } },
+    }) |case| {
+        const select = try std.fmt.allocPrint(allocator, "{{\"providers\":{{\"{s}\":{{\"models\":{{\"m\":{{}}}}}}}},\"model\":\"{s}/m\"}}", .{ case.id, case.id });
+        const builtin = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json = select } }} });
+        const model = builtin.runtime.model;
+        try equal(case.family, model.family);
+        try same(case.endpoint, model.endpoint);
+        try std.testing.expectEqualDeep(case.credential, model.credential);
+        if (case.user_agent) {
+            try equal(1, model.headers.len);
+            try same("user-agent", model.headers[0].name);
+            try same("foo", model.headers[0].value.literal);
+        } else try equal(0, model.headers.len);
+        try equal(1, builtin.providers.get(case.id).?.models.len);
+        const base_key = try std.fmt.allocPrint(allocator, "providers.{s}.base_url", .{case.id});
+        try equal(foo.config.Source.defaults, (try sourceOf(builtin, base_key)).source);
+        try equal(foo.config.Source.defaults, (try sourceOf(builtin, "model.credential")).source);
+    }
+
+    const moved = [_]config.Layer{.{ .source = .file, .location = "user.json", .data = .{ .json =
+        \\{"providers":{"opencode":{"base_url":"http://127.0.0.1:9/v1","models":{"m":{}}}},"model":"opencode/m"}
+    } }};
+    try std.testing.expectError(error.InvalidConfiguration, call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &moved }));
+    try same("providers.opencode.credential", call.diagnostic.?.path);
+
+    const removed = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
+        \\{"providers":{"xai":null,"opencode-go":{"models":{"kimi-k3":{}}}},"model":"opencode-go/kimi-k3"}
+    } }} });
+    try expect(removed.providers.get("xai") == null);
+    try expect(removed.providers.get("opencode") != null);
+}
