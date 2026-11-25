@@ -26,6 +26,8 @@ All families send `Content-Type: application/json` and `Accept: text/event-strea
 
 A stored OAuth credential can carry an account header named by its login flow, such as `chatgpt-account-id` for `openai-codex`. The adapter sends it after `Authorization` and rejects a custom header with the same name. [Credential commands](../auth/README.md)
 
+Requests to `opencode.ai` carry `x-opencode-session`, a random 32-character hex key created on the adapter's first request and reused for the rest of the foo session. A configured header with that name replaces it.
+
 ## Request options
 
 `Model.max_output_tokens` supplies `max_output_tokens` for Responses, `max_completion_tokens` for Chat, or `max_tokens` for Messages. `options_json` must be a bounded JSON object with unique keys. Unknown top-level options and attempts to override model, input, tools, streaming, credentials, or token-limit fields return `InvalidInput`. Unsupported enumerated values return `Rejected`.
