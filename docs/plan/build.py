@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent
 DOCS = [
     ("../README.md", "docs", "Documentation index"),
     ("README.md", "overview", "Plan overview"),
+    ("usability.md", "usability", "Usability program"),
     ("../architecture.md", "design", "Architecture"),
     ("../protocols.md", "protocols", "MCP and ACP"),
     ("execution.md", "execution", "Parallel implementation"),

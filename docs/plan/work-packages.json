@@ -581,6 +581,328 @@
         "uuid": "9663ab9a-c25f-4768-ab72-d4d6c28bce46",
         "url": "https://linear.app/retsu-ai/issue/ENG-1486/f13-acceptance-corpus-and-final-qualification"
       }
+    },
+    {
+      "id": "U01",
+      "title": "Load platform trust roots by default",
+      "owner": "transport-agent",
+      "dependencies": [
+        "F12"
+      ],
+      "paths": [
+        "src/transport/**",
+        "tests/transport/**",
+        "nix/README.md",
+        "docs/README.md"
+      ],
+      "contracts_consumed": [
+        "src/contracts/**"
+      ],
+      "deliverables": [
+        "Add Trust to src/transport/trust.zig. It is union(enum) { platform, pem: []const u8 }. Trust.platformPem(allocator, io, now) calls std.crypto.Certificate.Bundle.rescan, then writes each DER root in bundle.map as a PEM block. Appendix A has the measured loop. rescan reads the Linux bundle paths, the macOS SystemRootCertificates.keychain, and the Windows ROOT store, so one code path covers the three release targets.",
+        "Replace transport.Options.ca_pem: ?[]const u8 with trust: Trust = .platform. Client.init resolves .platform to PEM bytes once per client. Raise max_ca_bytes to 2 MiB. Delete the error.Unavailable return at src/transport/root.zig:120. An empty platform bundle fails Client.init with error.Unavailable and the frontend prints no trusted certificate roots found. Set FOO_CA_FILE or SSL_CERT_FILE to a PEM bundle.",
+        "In App.httpClient, choose the trust source in this order. FOO_CA_FILE as Trust.pem, then SSL_CERT_FILE as Trust.pem, then Trust.platform. Keep loadRoots for both file paths. SSL_CERT_FILE is the variable Codex, Bun, and OpenSSL honor, so a Nix shell or a corporate image works with no foo-specific setting.",
+        "Leave nix/transport.nix and .github/scripts/build-transport.py unchanged. Trust comes from the Zig standard library, not from a curl build flag. Appendix B records why.",
+        "Add platform_trust to tests/transport/probe.zig Mode. It opens a client with .trust = .platform and fetches the URL. In tests/transport/fixtures.py, add test_platform_trust_rejects_fixture_ca, which runs platform_trust against the loopback TLS server and expects IoFailure with .unsent because the fixture CA is not a platform root, and test_ssl_cert_file_override, which sets SSL_CERT_FILE to tests/transport/tls/ca.pem and expects 200."
+      ],
+      "acceptance": [
+        "nix develop -c zig build run -- run --prompt hi --config /tmp/opencode/ca-proto/probe.json with no FOO_CA_FILE reaches api.openai.com and fails on the missing key, not on TLS. Before U02 the line reads foo: run ended with provider_error. After U02 it names the 401.",
+        "tests/integration/check.py no longer mentions FOO_CA_FILE.",
+        "Tests alone are not sufficient verification. The unit, live, and perf boxes in docs/plan/usability.md are all checked."
+      ],
+      "handoff": [
+        "Checked plan section in docs/plan/usability.md with evidence per box.",
+        "Swarm verdict at the exact head SHA, base and head SHAs recorded."
+      ],
+      "status": "planned",
+      "linear": {
+        "id": "ENG-1542",
+        "uuid": "a9570be8-d9a0-49b5-b18f-f09636ee8be2",
+        "url": "https://linear.app/retsu-ai/issue/ENG-1542/u01-load-platform-trust-roots-by-default"
+      }
+    },
+    {
+      "id": "U02",
+      "title": "Name the failure reason in every frontend",
+      "owner": "core-agent",
+      "dependencies": [
+        "U01"
+      ],
+      "paths": [
+        "src/contracts/events.zig",
+        "src/contracts/io.zig",
+        "src/core/**",
+        "tests/core/**",
+        "src/acp/projection.zig",
+        "tests/acp/**"
+      ],
+      "contracts_consumed": [
+        "src/contracts/**"
+      ],
+      "deliverables": [
+        "Add Outcome.detail: ?Detail. Detail is union(enum) { authentication: struct { endpoint: []const u8, status: ?u16 }, rate_limited: struct { endpoint: []const u8, retry_after_ms: ?u64 }, rejected: struct { endpoint: []const u8, status: u16 }, transport: struct { endpoint: []const u8, kind: enum { trust, connect, disconnected, deadline } } }. Stop keeps its seven variants. A provider_error outcome always carries a detail.",
+        "Add Exchange.status: ?u16 and Exchange.retry_after_ms: ?u64 in src/providers/root.zig and fill them in head() so the status and retry-after header travel with error.Authentication, error.RateLimited, and error.Rejected. Map a curl TLS verification failure to kind = .trust by adding error.Untrusted to foo.io.Error at src/contracts/io.zig:3, returning it from curlResult at src/transport/root.zig:293 for CURLE_PEER_FAILED_VERIFICATION, and mapping it to transport.kind = .trust in core.",
+        "In src/core/root.zig, map error.Authentication, error.RateLimited, error.Rejected, error.Untrusted, error.Unavailable, and error.Disconnected to the matching Detail with the endpoint from settings.model.endpoint.",
+        "In src/cli/root.zig, print one line per detail. foo: authentication failed for <endpoint> (HTTP 401). Set <VAR> for an environment credential. foo: rate limited by <endpoint>, retry after 2 s. foo: could not reach <endpoint>: certificate not trusted. foo: <endpoint> rejected the request (HTTP 400). Keep the provider exit code. U05 changes the second sentence for auth credentials.",
+        "In src/tui/root.zig, show the same line in the status row. In src/acp/projection.zig, put the line in the stop update's message.",
+        "Emit detail in the JSONL rpc outcome record. The field is optional and additive. Document it in src/cli/README.md."
+      ],
+      "acceptance": [
+        "zig-out/bin/foo run --prompt hi --config /tmp/opencode/ca-proto/probe.json prints foo: authentication failed for https://api.openai.com/v1/chat/completions (HTTP 401). Set OPENAI_API_KEY and exits with code 4.",
+        "The same run with FOO_CA_FILE=tests/transport/tls/unrelated-ca.pem prints foo: could not reach https://api.openai.com/v1/chat/completions: certificate not trusted.",
+        "Tests alone are not sufficient verification. The unit, live, and perf boxes in docs/plan/usability.md are all checked."
+      ],
+      "handoff": [
+        "Checked plan section in docs/plan/usability.md with evidence per box.",
+        "Swarm verdict at the exact head SHA, base and head SHAs recorded."
+      ],
+      "status": "planned",
+      "linear": {
+        "id": "ENG-1543",
+        "uuid": "70ef089f-1963-4669-98a5-169439ce9199",
+        "url": "https://linear.app/retsu-ai/issue/ENG-1543/u02-name-the-failure-reason-in-every-frontend"
+      }
+    },
+    {
+      "id": "U03",
+      "title": "Define a provider once and list its models under it",
+      "owner": "config-agent",
+      "dependencies": [
+        "F12"
+      ],
+      "paths": [
+        "src/contracts/config.zig",
+        "src/config/parse.zig",
+        "src/config/root.zig",
+        "src/config/examples/**",
+        "tests/config/**",
+        "src/providers/routes.md",
+        "tests/contracts/root.zig",
+        "docs/architecture.md"
+      ],
+      "contracts_consumed": [
+        "src/contracts/**"
+      ],
+      "deliverables": [
+        "Add Provider to src/contracts/config.zig. Fields are family: Family, base_url: []const u8, credential: SecretRef, headers: []const Header, options_json, and models: []const ModelEntry. ModelEntry has id, name: ?[]const u8, options_json, max_output_tokens, and endpoint: ?[]const u8. The adapter appends the family route to base_url, /responses, /chat/completions, or /messages. A ModelEntry.endpoint replaces the join for one model, which covers gateways with per-model paths. This is the Pi shape, with models nested under the provider, and the OpenCode shape for the same reason.",
+        "Keep Resolved.model: Model. finish() computes it by joining the selected entry with its provider. src/providers, src/core, and the journal identity at src/contracts/runtime/session.zig:207 do not change.",
+        "Add root keys providers and model. providers is an object keyed by provider id. Each value has the Provider fields and models as an object keyed by model id. model is a string provider/id. Delete the root model object. Keep --model, --endpoint, and --credential-env as patches on the selected model and provider.",
+        "Merge rules. providers.<id> merges per field across layers, and providers.<id>.models.<id> merges per field. A later layer can add a provider or a model or change a field. null removes a provider or a model. Provenance records providers.<id>.<field> and providers.<id>.models.<id>.<field>. Changing a provider's base_url origin clears its inherited credential and headers, which keeps the rule at src/config/parse.zig:291.",
+        "Credential kinds in secret(). Accept {\"environment\": \"VAR\"}, {\"literal\": \"...\"} for gateways with fixed virtual keys, and {\"auth\": \"<provider-id>\"}, which U05 resolves from the token store and which U03 parses and carries. Redact literal in effectiveJson.",
+        "Rename --provider FAMILY to --family FAMILY. --model takes provider/id. --endpoint sets the selected model's endpoint. --credential-env sets the selected provider's credential. Add --provider ID as a shorthand that selects the first model of that provider when --model names no provider.",
+        "foo config show prints providers with nested models and the resolved model with its provenance.",
+        "Rewrite src/config/examples/minimal.json as one provider and one model. Rewrite customized.json with two providers and three models. Rewrite each row of src/providers/routes.md as a providers.<id> snippet."
+      ],
+      "acceptance": [
+        "A user config of twelve lines selects a model.",
+        "foo config show --model openai/gpt-5.5-mini prints model.id = gpt-5.5-mini with provenance command_line, and max_output_tokens = 2048 with provenance providers.openai.models.gpt-5.5-mini.max_output_tokens.",
+        "A config with the old root model object fails foo config check with path model, reason invalid_value, and the message model is a string \"provider/id\"; define providers under \"providers\".",
+        "Tests alone are not sufficient verification. The unit, live, and perf boxes in docs/plan/usability.md are all checked."
+      ],
+      "handoff": [
+        "Checked plan section in docs/plan/usability.md with evidence per box.",
+        "Swarm verdict at the exact head SHA, base and head SHAs recorded."
+      ],
+      "status": "planned",
+      "linear": {
+        "id": "ENG-1544",
+        "uuid": "c4230b0f-6722-4c16-9804-561c5bd19534",
+        "url": "https://linear.app/retsu-ai/issue/ENG-1544/u03-define-a-provider-once-and-list-its-models-under-it"
+      }
+    },
+    {
+      "id": "U04",
+      "title": "Commit .foo/ and keep foo.json private",
+      "owner": "cli-agent",
+      "dependencies": [
+        "U03"
+      ],
+      "paths": [
+        ".foo/**",
+        ".gitignore",
+        "README.md",
+        "src/config/README.md",
+        "tests/integration/**"
+      ],
+      "contracts_consumed": [
+        "src/contracts/**"
+      ],
+      "deliverables": [
+        "Discovery order in arguments.zig. User config.json, then .foo/config.json in the invocation directory, then foo.json in the invocation directory, then --config files. All discovered files are optional_file layers.",
+        "Delete --approve. .foo/config.json loads without a flag. Add --no-project to skip both project files for one run.",
+        "Refuse credentials in .foo/config.json. When the layer at that path sets any providers.<id>.credential other than {\"environment\": ...}, or any literal header value, config check fails with path providers.<id>.credential and reason invalid_value. This mirrors Codex, which ignores provider and auth keys in a project .codex/config.toml. foo.json and the user file accept every kind.",
+        "Commit .foo/config.json with providers for openai, anthropic, xai, and opencode, each with an environment credential and one or two models, model set to one of them, enabled_tools for the coding set, and permissions: \"ask\". It names no gateway.",
+        "Add foo.json to .gitignore. Keep opencode.json ignored. Do not ignore .foo/.",
+        "foo config show prints each discovered path and whether it loaded, under a layers key."
+      ],
+      "acceptance": [
+        "git ls-files .foo prints .foo/config.json. git check-ignore foo.json prints foo.json.",
+        "nix develop -c zig build run -- run --prompt hi with a foo.json that sets the LiteLLM provider and model reaches the gateway with no flag and no environment variable other than the key.",
+        "Tests alone are not sufficient verification. The unit, live, and perf boxes in docs/plan/usability.md are all checked."
+      ],
+      "handoff": [
+        "Checked plan section in docs/plan/usability.md with evidence per box.",
+        "Swarm verdict at the exact head SHA, base and head SHAs recorded."
+      ],
+      "status": "planned",
+      "linear": {
+        "id": "ENG-1545",
+        "uuid": "eeb7cc93-42d1-4bb6-93ba-9bebcd61f108",
+        "url": "https://linear.app/retsu-ai/issue/ENG-1545/u04-commit-foo-and-keep-foojson-private"
+      }
+    },
+    {
+      "id": "U05",
+      "title": "Add foo auth and a private token store",
+      "owner": "auth-agent",
+      "dependencies": [
+        "U03"
+      ],
+      "paths": [
+        "src/auth/root.zig",
+        "src/auth/store.zig",
+        "src/auth/README.md",
+        "tests/auth/**",
+        "src/mcp/connection_config.zig",
+        "build.zig"
+      ],
+      "contracts_consumed": [
+        "src/contracts/**"
+      ],
+      "deliverables": [
+        "Add CredentialSource to src/auth/root.zig. It is a vtable { context, resolve_fn: fn(ctx, allocator, io.Context, SecretRef) Error!Credential }. Credential is union(enum) { api_key: []const u8, bearer: struct { token: []const u8, account: ?[]const u8 } }. The environment resolver and the store resolver both implement it. Replace the four inline environment lookups at src/providers/root.zig:72, src/cli/root.zig:316, src/contracts/runtime/session.zig:549, and src/mcp/connection_config.zig:32 with calls through one CredentialSource.",
+        "Add Store to src/auth/store.zig. The file is <user config dir>/auth.json, where the directory is the one userConfig() in src/cli/arguments.zig:178 resolves. Create it with mode 0o600 through the exclusive-create and symlink-refusing open from src/session/local.zig:187 and :211. Entries are keyed by provider id and hold { \"type\": \"api_key\", \"key\" } or { \"type\": \"oauth\", \"access\", \"refresh\", \"expires_ms\", \"account\" }. Write to a temp file then rename, under a auth.lock taken with the same exclusive lock as src/session/local.zig:31. Reads reject a file with group or world bits set and print chmod 600 <path>.",
+        "Add SecretRef.auth: []const u8. The store resolver returns api_key or bearer by entry type and returns error.Authentication for a missing entry.",
+        "Add foo auth login <provider-id> [--api-key], foo auth list, and foo auth logout <provider-id>. --api-key reads the key from the terminal without echo and stores it. Without --api-key, login runs the OAuth flow registered for that provider in src/auth/root.zig. U05 ships the registry empty, so login without --api-key prints no browser login for <id>; use --api-key. list prints <id>  <type>  <expires in Nh | no expiry> and never a value.",
+        "Add Adapter.credentials: CredentialSource. Call it inside the attempt loop at src/providers/root.zig:30 so a refreshed token is used on a retry. On a 401 with a bearer credential whose entry has a refresh token, refresh once through the registry and retry once. A second 401 surfaces Authentication. This is the one retry that Delivery.possibly_sent permits, because the request was rejected before the model ran.",
+        "missingCredential asks the CredentialSource whether the reference resolves. The U02 line ends Set <VAR> for environment and Run foo auth login <id> for auth."
+      ],
+      "acceptance": [
+        "foo auth login litellm --api-key prompts litellm API key:, stores it, and foo auth list prints litellm  api_key  no expiry.",
+        "stat -c %a ~/.config/foo/auth.json prints 600.",
+        "A provider with \"credential\": {\"auth\": \"litellm\"} completes a run with no environment variable set.",
+        "Tests alone are not sufficient verification. The unit, live, and perf boxes in docs/plan/usability.md are all checked."
+      ],
+      "handoff": [
+        "Checked plan section in docs/plan/usability.md with evidence per box.",
+        "Swarm verdict at the exact head SHA, base and head SHAs recorded."
+      ],
+      "status": "planned",
+      "linear": {
+        "id": "ENG-1546",
+        "uuid": "32117f20-de95-4839-9ef6-df0d294d0e4b",
+        "url": "https://linear.app/retsu-ai/issue/ENG-1546/u05-add-foo-auth-and-a-private-token-store"
+      }
+    },
+    {
+      "id": "U06",
+      "title": "Log in with a ChatGPT subscription for Codex",
+      "owner": "auth-agent",
+      "dependencies": [
+        "U05"
+      ],
+      "paths": [
+        "src/auth/openai_codex.zig",
+        "src/auth/oauth.zig",
+        "src/providers/request.zig"
+      ],
+      "contracts_consumed": [
+        "src/contracts/**"
+      ],
+      "deliverables": [
+        "Add the openai-codex flow to the registry with the values in Appendix E. PKCE against https://auth.openai.com/oauth/authorize and /oauth/token, client id app_EMoamEEZ73f0CkXaXp7hrann, redirect http://localhost:1455/auth/callback, scope openid profile email offline_access, and the extra parameters id_token_add_organizations=true, codex_cli_simplified_flow=true, and originator=foo. Print the URL for the user to open. Fall back to --device on request or when no callback arrives in 120 seconds. The device flow posts to /api/accounts/deviceauth/usercode, shows https://auth.openai.com/codex/device and the user code, and polls /api/accounts/deviceauth/token. Store access, refresh, expires_ms, and account from the id token claim https://api.openai.com/auth.chatgpt_account_id.",
+        "Add a built-in provider openai-codex in src/config/defaults.zig with family openai_responses, base_url https://chatgpt.com/backend-api/codex, credential {\"auth\": \"openai-codex\"}, and no models. The user lists models under it. The adapter sends authorization: Bearer <access> and chatgpt-account-id: <account> when the credential is bearer with an account, and originator: foo.",
+        "In request.zig, the Responses codec already sends store: false and include: [\"reasoning.encrypted_content\"], which Pi sends to the same backend. Lane 2 confirms the backend accepts the body. Record any field the backend rejects in src/providers/routes.md and strip it for this provider only.",
+        "Refresh through /oauth/token with grant_type=refresh_token when expires_ms is within 60 seconds of now, before the request, and once more on 401 per U05."
+      ],
+      "acceptance": [
+        "foo auth login openai-codex prints an https://auth.openai.com/oauth/authorize?... URL, the browser returns to localhost:1455, and foo auth list shows openai-codex  oauth  expires in 9h.",
+        "foo run --model openai-codex/gpt-5.5-codex --prompt \"say ok\" prints ok with no API key in the environment.",
+        "Tests alone are not sufficient verification. The unit, live, and perf boxes in docs/plan/usability.md are all checked."
+      ],
+      "handoff": [
+        "Checked plan section in docs/plan/usability.md with evidence per box.",
+        "Swarm verdict at the exact head SHA, base and head SHAs recorded."
+      ],
+      "status": "planned",
+      "linear": {
+        "id": "ENG-1547",
+        "uuid": "a7c47573-6912-4cec-8c33-29f4b6901b53",
+        "url": "https://linear.app/retsu-ai/issue/ENG-1547/u06-log-in-with-a-chatgpt-subscription-for-codex"
+      }
+    },
+    {
+      "id": "U07",
+      "title": "Log in with a SuperGrok subscription and add OpenCode Go",
+      "owner": "auth-agent",
+      "dependencies": [
+        "U05"
+      ],
+      "paths": [
+        "src/auth/xai.zig",
+        "src/config/defaults.zig",
+        "tests/providers/**"
+      ],
+      "contracts_consumed": [
+        "src/contracts/**"
+      ],
+      "deliverables": [
+        "Add the xai device-code flow to the registry with the values in Appendix E. Client id b1a00492-073a-47ea-816f-4c329264a828, device endpoint https://auth.x.ai/oauth2/device/code, token endpoint https://auth.x.ai/oauth2/token, scope openid profile email offline_access grok-cli:access api:access, grant urn:ietf:params:oauth:grant-type:device_code, and referrer=foo. Pi and OpenCode label this \"Sign in with SuperGrok or X Premium\". Store the result as an oauth entry.",
+        "Add built-in providers in src/config/defaults.zig. xai with family openai_responses, base_url https://api.x.ai/v1, credential {\"auth\": \"xai\"}. opencode with family openai_responses, base_url https://opencode.ai/inference/openai/v1, credential {\"auth\": \"opencode\"}. opencode-go with the same family, base_url https://opencode.ai/inference/go/openai/v1, and credential {\"auth\": \"opencode-go\"}. openai with https://api.openai.com/v1 and {\"environment\": \"OPENAI_API_KEY\"}. anthropic with family anthropic_messages, https://api.anthropic.com/v1, and {\"environment\": \"ANTHROPIC_API_KEY\"}. A user layer can override any field or set a provider to null.",
+        "OpenCode Go and Console sell API keys. There is no OAuth flow. foo auth login opencode --api-key and foo auth login opencode-go --api-key store the key. The adapter sends the x-opencode-session header with the session id when the provider id starts with opencode, because the Go documentation asks clients to send it.",
+        "xAI subscription bearers may be rejected by api.x.ai for some tiers. Appendix E records this as unconfirmed. Lane 2 settles it. If api.x.ai returns 402 or 403 for a subscription bearer, record the finding in src/providers/routes.md, keep --api-key as the supported path for xAI, and leave the device flow in the registry behind a documented xai-subscription provider id.",
+        "Add route fixtures for xai, opencode, and opencode-go in tests/providers/root.zig following the table at line 381."
+      ],
+      "acceptance": [
+        "foo auth login xai prints https://auth.x.ai/... and a user code, and foo auth list shows xai  oauth  expires in ....",
+        "foo auth login opencode-go --api-key, then foo run --model opencode-go/<id> --prompt \"say ok\" prints ok.",
+        "Tests alone are not sufficient verification. The unit, live, and perf boxes in docs/plan/usability.md are all checked."
+      ],
+      "handoff": [
+        "Checked plan section in docs/plan/usability.md with evidence per box.",
+        "Swarm verdict at the exact head SHA, base and head SHAs recorded."
+      ],
+      "status": "planned",
+      "linear": {
+        "id": "ENG-1548",
+        "uuid": "38b64c93-fb51-4907-b1d5-57f56282b832",
+        "url": "https://linear.app/retsu-ai/issue/ENG-1548/u07-log-in-with-a-supergrok-subscription-and-add-opencode-go"
+      }
+    },
+    {
+      "id": "U08",
+      "title": "List models and switch them in the TUI",
+      "owner": "tui-agent",
+      "dependencies": [
+        "U07"
+      ],
+      "paths": [
+        "src/tui/**",
+        "tests/tui/**"
+      ],
+      "contracts_consumed": [
+        "src/contracts/**"
+      ],
+      "deliverables": [
+        "Add foo models. It prints every provider/id from providers, with a readiness column ready, needs <VAR>, or needs login, and marks the configured model with *. Readiness asks the CredentialSource without making a request.",
+        "Add /model <provider/id> to the TUI input. When idle, it resolves the selection, rebuilds Session.provider with the new Model, and shows model: <provider/id> in the status row. When busy, it returns busy like a second prompt does. /model with no argument lists the models in the transcript pane with the same readiness column.",
+        "Record the switch in the journal as a configuration identity record so --resume restores it."
+      ],
+      "acceptance": [
+        "foo models prints one line per model with a readiness column.",
+        "In the TUI, /model openai/gpt-5.5-mini changes the status row and the next reply's usage record names gpt-5.5-mini.",
+        "Tests alone are not sufficient verification. The unit, live, and perf boxes in docs/plan/usability.md are all checked."
+      ],
+      "handoff": [
+        "Checked plan section in docs/plan/usability.md with evidence per box.",
+        "Swarm verdict at the exact head SHA, base and head SHAs recorded."
+      ],
+      "status": "planned",
+      "linear": {
+        "id": "ENG-1549",
+        "uuid": "9f612151-6764-4f02-8448-d989dc30b52e",
+        "url": "https://linear.app/retsu-ai/issue/ENG-1549/u08-list-models-and-switch-them-in-the-tui"
+      }
     }
   ],
   "linear_project": {
