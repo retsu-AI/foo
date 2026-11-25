@@ -1,21 +1,25 @@
 {
   "version": 1,
-  "model": {
-    "family": "openai_chat",
-    "endpoint": "https://api.deepseek.com/chat/completions",
-    "id": "deepseek-v4-pro",
-    "credential": {"environment": "DEEPSEEK_API_KEY"},
-    "headers": [
-      {"name": "X-Account", "value": "fixture-header-secret"},
-      {"name": "X-Workspace", "value": {"environment": "FOO_WORKSPACE"}}
-    ],
-    "options": {
-      "chat_token_limit": "max_tokens",
-      "chat_reasoning_content": true,
-      "thinking": {"type": "enabled"}
-    },
-    "max_output_tokens": 8192
+  "providers": {
+    "deepseek": {
+      "family": "openai_chat",
+      "base_url": "https://api.deepseek.com",
+      "credential": {"environment": "DEEPSEEK_API_KEY"},
+      "headers": [
+        {"name": "X-Account", "value": "fixture-header-secret"},
+        {"name": "X-Workspace", "value": {"environment": "FOO_WORKSPACE"}}
+      ],
+      "options": {
+        "chat_token_limit": "max_tokens",
+        "chat_reasoning_content": true,
+        "thinking": {"type": "enabled"}
+      },
+      "models": {
+        "deepseek-v4-pro": {"max_output_tokens": 8192}
+      }
+    }
   },
+  "model": "deepseek/deepseek-v4-pro",
   "system_prompt": {"text": "Use the text supplied by the operator.", "append_files": []},
   "process": {
     "environment": [{"name": "DEMO_SECRET", "value": "fixture-process-secret"}]
