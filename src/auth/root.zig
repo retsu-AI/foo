@@ -5,6 +5,7 @@ const storage = @import("store.zig");
 pub const oauth = @import("oauth.zig");
 const openai_codex = @import("openai_codex.zig");
 const xai = @import("xai.zig");
+const meta = @import("meta.zig");
 
 pub const Store = storage.Store;
 pub const Entry = storage.Entry;
@@ -87,7 +88,7 @@ pub const Flow = struct {
     account_header: ?[]const u8 = null,
 };
 
-pub const flows: []const Flow = &.{ openai_codex.flow, xai.flow };
+pub const flows: []const Flow = &.{ openai_codex.flow, xai.flow, meta.flow };
 
 comptime {
     for (flows) |flow| if (builtins.find(flow.provider) == null) @compileError("auth flow " ++ flow.provider ++ " has no built-in record");

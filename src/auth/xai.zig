@@ -34,11 +34,11 @@ fn device(login: root.Login) Error!OAuth {
         expires_in: u64,
     };
     const info = std.json.parseFromSliceLeaky(Started, login.a, started.body, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch return error.Authentication;
-    if (info.device_code.len == 0 or !printable(info.user_code) or info.expires_in == 0) return error.Authentication;
-    if (!https(info.verification_uri)) return error.Authentication;
+    if (info.device_code.len == 0 or !oauth.printable(info.user_code) or info.expires_in == 0) return error.Authentication;
+    if (!oauth.https(info.verification_uri)) return error.Authentication;
     const complete = info.verification_uri_complete orelse "";
     const page = if (complete.len == 0) info.verification_uri else complete;
-    if (!https(page)) return error.Authentication;
+    if (!oauth.https(page)) return error.Authentication;
     try login.prompt.show(login.operation, .{ .device_code = .{ .uri = page, .code = info.user_code } });
 
     const Poller = struct {
@@ -75,19 +75,4 @@ fn refresh(request: root.Refresh) Error!OAuth {
 
 fn client(login: root.Login) oauth.Client {
     return .{ .a = login.a, .operation = login.operation, .http = login.http };
-}
-
-/// The user opens this page in a browser, so an issuer response cannot point it at another scheme.
-fn https(uri: []const u8) bool {
-    if (!printable(uri)) return false;
-    const parsed = std.Uri.parse(uri) catch return false;
-    const host = parsed.host orelse return false;
-    return std.ascii.eqlIgnoreCase(parsed.scheme, "https") and !host.isEmpty();
-}
-
-/// Both values are printed to the terminal, so control bytes could inject escape sequences.
-fn printable(text: []const u8) bool {
-    if (text.len == 0) return false;
-    for (text) |byte| if (byte <= ' ' or byte >= 0x7f) return false;
-    return true;
 }

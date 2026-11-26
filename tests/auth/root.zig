@@ -243,10 +243,16 @@ const Fixture = struct {
     replies: []const Reply,
     calls: usize = 0,
     bodies: std.ArrayList([]const u8) = .empty,
+    headers: std.ArrayList([]const foo.io.Header) = .empty,
     times: std.ArrayList(u64) = .empty,
 
     fn transport(self: *Fixture) foo.io.HttpTransport {
         return .{ .context = self, .exchange_fn = exchange };
+    }
+
+    fn header(self: *const Fixture, call: usize, name: []const u8) ?[]const u8 {
+        for (self.headers.items[call]) |entry| if (std.ascii.eqlIgnoreCase(entry.name, name)) return entry.value;
+        return null;
     }
 
     fn exchange(context: *anyopaque, operation_: foo.io.Context, request: foo.io.HttpRequest, sink: foo.io.HttpSink, delivery: *foo.io.Delivery) foo.io.Error!void {
@@ -257,6 +263,9 @@ const Fixture = struct {
         delivery.* = .possibly_sent;
         if (!std.mem.eql(u8, reply.url, request.url)) return error.InvalidInput;
         try self.bodies.append(self.a, try self.a.dupe(u8, request.body.bytes));
+        const copied = try self.a.alloc(foo.io.Header, request.headers.len);
+        for (request.headers, copied) |entry, *copy| copy.* = .{ .name = try self.a.dupe(u8, entry.name), .value = try self.a.dupe(u8, entry.value) };
+        try self.headers.append(self.a, copied);
         try self.times.append(self.a, operation_.clock.now());
         try sink.head_fn(sink.context, operation_, .{ .status = reply.status, .headers = &.{} });
         try sink.body.write(operation_, reply.body);
@@ -740,6 +749,95 @@ test "xAI refresh keeps the current refresh token when the issuer omits it" {
     try same("grant_type=refresh_token&client_id=b1a00492-073a-47ea-816f-4c329264a828&refresh_token=old-refresh", fixture.bodies.items[0]);
     const rotated = try flow.refresh.?(request);
     try same("xai-next", rotated.refresh.?);
+}
+
+const meta_device = "https://auth.meta.com/oidc/device/authorization/";
+const meta_token = "https://auth.meta.com/oidc/device/token/";
+const meta_mint = "https://api.meta.ai/muse-code/key";
+const meta_poll_form = "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=dev-1&client_id=1031625952748946";
+const meta_started = "{\"device_code\":\"dev-1\",\"user_code\":\"MUSE-1234\",\"verification_uri\":\"https://auth.meta.com/device\",\"verification_uri_complete\":\"https://auth.meta.com/device?user_code=MUSE-1234\",\"interval\":2,\"expires_in\":600}";
+
+test "Meta device login mints a Model API key and keeps the identity token for re-minting" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fixture: Fixture = .{ .a = a, .replies = &.{
+        .{ .url = meta_device, .body = meta_started },
+        .{ .url = meta_token, .status = 400, .body = "{\"error\":\"authorization_pending\"}" },
+        .{ .url = meta_token, .body = "{\"access_token\":\"identity-1\",\"token_type\":\"Bearer\"}" },
+        .{ .url = meta_mint, .body = "{\"api_key\":\"muse-key-1\",\"expires_at\":null}" },
+    } };
+    var shown: Shown = .{};
+    defer shown.notices.deinit(allocator);
+    const flow = auth.findFlow(auth.flows, "meta").?;
+    try equal(null, flow.browser);
+    try equal(null, flow.account_header);
+    const before = std.Io.Timestamp.now(io, .real).toMilliseconds();
+    const result = try flow.device.?(.{ .a = a, .operation = FakeSleep.context(), .http = fixture.transport(), .prompt = shown.prompt() });
+    try same("muse-key-1", result.access);
+    try same("identity-1", result.refresh.?);
+    try equal(null, result.account);
+    try expect(result.expires_ms >= before + 24 * 3_600_000);
+    try expect(result.expires_ms < before + 25 * 3_600_000);
+    try equal(1, shown.notices.items.len);
+    try same("https://auth.meta.com/device?user_code=MUSE-1234", shown.notices.items[0].device_code.uri);
+    try same("MUSE-1234", shown.notices.items[0].device_code.code);
+    try same("client_id=1031625952748946", fixture.bodies.items[0]);
+    try same(meta_poll_form, fixture.bodies.items[1]);
+    try same(meta_poll_form, fixture.bodies.items[2]);
+    try same("{}", fixture.bodies.items[3]);
+    try same("Bearer identity-1", fixture.header(3, "authorization").?);
+    try same("1.0.0", fixture.header(3, "x-api-version").?);
+    try same("application/json", fixture.header(3, "content-type").?);
+    try testing.expectEqualSlices(u64, &.{ 0, 2_000, 4_000, 4_000 }, fixture.times.items);
+}
+
+test "Meta refresh re-mints with the identity token and a rejected mint means log in again" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fixture: Fixture = .{ .a = a, .replies = &.{
+        .{ .url = meta_mint, .body = "{\"api_key\":\"muse-key-2\"}" },
+        .{ .url = meta_mint, .status = 401, .body = "{\"error\":\"unauthorized\"}" },
+        .{ .url = meta_mint, .status = 503, .body = "" },
+        .{ .url = meta_mint, .body = "{\"action_url\":\"https://dev.meta.ai/billing\"}" },
+    } };
+    const flow = auth.findFlow(auth.flows, "meta").?;
+    const current: auth.OAuth = .{ .access = "muse-key-1", .refresh = "identity-1", .expires_ms = 1 };
+    const request: auth.Refresh = .{ .a = a, .operation = operation(), .http = fixture.transport(), .current = current };
+    const renewed = try flow.refresh.?(request);
+    try same("muse-key-2", renewed.access);
+    try same("identity-1", renewed.refresh.?);
+    try same("Bearer identity-1", fixture.header(0, "authorization").?);
+    try testing.expectError(error.Authentication, flow.refresh.?(request));
+    try testing.expectError(error.Unavailable, flow.refresh.?(request));
+    try testing.expectError(error.Authentication, flow.refresh.?(request));
+    try testing.expectError(error.Authentication, flow.refresh.?(.{ .a = a, .operation = operation(), .http = fixture.transport(), .current = .{ .access = "k", .expires_ms = 1 } }));
+    try equal(4, fixture.calls);
+}
+
+test "Meta device login rejects denial, missing keys, and unsafe verification pages" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const flow = auth.findFlow(auth.flows, "meta").?;
+    for ([_][]const Fixture.Reply{
+        &.{ .{ .url = meta_device, .body = meta_started }, .{ .url = meta_token, .status = 400, .body = "{\"error\":\"access_denied\"}" } },
+        &.{ .{ .url = meta_device, .body = meta_started }, .{ .url = meta_token, .body = "{\"access_token\":\"\"}" } },
+        &.{ .{ .url = meta_device, .body = meta_started }, .{ .url = meta_token, .body = "{\"access_token\":\"identity-1\"}" }, .{ .url = meta_mint, .body = "{\"action_url\":\"https://dev.meta.ai/billing\"}" } },
+        &.{ .{ .url = meta_device, .body = meta_started }, .{ .url = meta_token, .body = "{\"access_token\":\"identity-1\"}" }, .{ .url = meta_mint, .status = 403, .body = "{}" } },
+        &.{.{ .url = meta_device, .body = "{\"device_code\":\"dev-1\",\"user_code\":\"C\",\"verification_uri\":\"http://auth.meta.com/device\"}" }},
+        &.{.{ .url = meta_device, .body = "{\"device_code\":\"dev-1\",\"user_code\":\"C\\u001b[2J\",\"verification_uri\":\"https://auth.meta.com/device\"}" }},
+        &.{.{ .url = meta_device, .status = 500, .body = "" }},
+    }, 0..) |replies, i| {
+        var fixture: Fixture = .{ .a = a, .replies = replies };
+        var shown: Shown = .{};
+        defer shown.notices.deinit(allocator);
+        const result = flow.device.?(.{ .a = a, .operation = FakeSleep.context(), .http = fixture.transport(), .prompt = shown.prompt() });
+        try testing.expectError(if (i == 6) error.Unavailable else error.Authentication, result);
+        try equal(replies.len, fixture.calls);
+        try equal(@as(usize, if (i < 4) 1 else 0), shown.notices.items.len);
+    }
 }
 
 test "token responses without a lifetime last one hour" {

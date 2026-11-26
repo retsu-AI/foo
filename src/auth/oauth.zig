@@ -141,11 +141,19 @@ pub const Client = struct {
     pub const request_timeout_ms = 30_000;
 
     pub fn post(self: Client, url: []const u8, body: Body) Error!Response {
+        return self.postWith(url, body, &.{});
+    }
+
+    /// `extra` headers follow content-type and accept. The caller must not repeat those two.
+    pub fn postWith(self: Client, url: []const u8, body: Body, extra: []const foo.io.Header) Error!Response {
         try self.operation.check();
         const bytes, const content_type = switch (body) {
             .form => |params| .{ try form(self.a, params), "application/x-www-form-urlencoded" },
             .json => |json| .{ json, "application/json" },
         };
+        var headers: std.ArrayList(foo.io.Header) = .empty;
+        try headers.appendSlice(self.a, &.{ .{ .name = "content-type", .value = content_type }, .{ .name = "accept", .value = "application/json" } });
+        try headers.appendSlice(self.a, extra);
         var collector: Collector = .{ .a = self.a };
         var delivery: foo.io.Delivery = .unsent;
         var bounded = self.operation;
@@ -154,7 +162,7 @@ pub const Client = struct {
         try self.http.exchange_fn(self.http.context, bounded, .{
             .method = .post,
             .url = url,
-            .headers = &.{ .{ .name = "content-type", .value = content_type }, .{ .name = "accept", .value = "application/json" } },
+            .headers = headers.items,
             .body = .{ .bytes = bytes },
             .max_response_bytes = max_response_bytes,
         }, .{ .context = &collector, .head_fn = Collector.head, .body = .{ .context = &collector, .write_fn = Collector.write } }, &delivery);
@@ -248,6 +256,21 @@ fn sleep(operation: foo.io.Context, ms: u64) Error!void {
         remaining -= step;
     }
     try operation.check();
+}
+
+/// The user opens this page in a browser, so an issuer response cannot point it at another scheme.
+pub fn https(uri: []const u8) bool {
+    if (!printable(uri)) return false;
+    const parsed = std.Uri.parse(uri) catch return false;
+    const host = parsed.host orelse return false;
+    return std.ascii.eqlIgnoreCase(parsed.scheme, "https") and !host.isEmpty();
+}
+
+/// Both values are printed to the terminal, so control bytes could inject escape sequences.
+pub fn printable(text: []const u8) bool {
+    if (text.len == 0) return false;
+    for (text) |byte| if (byte <= ' ' or byte >= 0x7f) return false;
+    return true;
 }
 
 pub const Redirect = union(enum) { unrelated, rejected, code: []const u8 };
