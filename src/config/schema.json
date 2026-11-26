@@ -21,7 +21,7 @@
       "additionalProperties": {"$ref": "#/definitions/provider"}
     },
     "model": {
-      "description": "Selected model as provider/id. The model ID may contain additional slashes.",
+      "description": "Selected model as provider/id. The model ID may contain additional slashes. A built-in provider accepts any model ID; a user provider needs one listed under its models. Without this setting, foo uses the default model of the first built-in provider that has a credential.",
       "type": "string",
       "pattern": "^[^/]+/[^\\u0000-\\u001f\\u007f]",
       "not": {"pattern": "[\\u0000-\\u001f\\u007f]"}
@@ -374,7 +374,7 @@
           "not": {"pattern": "[\\u0000-\\u0008\\u000a-\\u001f\\u007f]"}
         },
         "auth": {
-          "description": "Provider ID reserved for token store authentication.",
+          "description": "Provider ID in the token store. For a built-in provider, foo falls back to the provider's environment variable when nothing is stored.",
           "allOf": [{"$ref": "#/definitions/providerId"}]
         }
       }
