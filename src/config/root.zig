@@ -1,8 +1,8 @@
 const std = @import("std");
 const foo = @import("foo");
+const builtins = @import("builtins");
 const wire = foo.wire;
 const Parse = @import("parse.zig");
-const builtin_providers = @import("defaults.zig");
 const cfg = foo.config;
 
 pub const max_config_bytes = 1024 * 1024;
@@ -27,15 +27,27 @@ pub const Layer = struct {
 pub const ModelPatch = struct {
     selection: ?[]const u8 = null,
     provider: ?[]const u8 = null,
+    /// The bare PROVIDER of `foo models`. Selects like `provider` and must agree with it.
+    filter: ?[]const u8 = null,
     endpoint: ?[]const u8 = null,
     family: ?cfg.Family = null,
     credential_env: ?[]const u8 = null,
+};
+/// Lets the resolver ask whether a provider has a credential without importing auth. It is
+/// consulted only when nothing selects a model. An error ends resolution; the caller reports it.
+pub const Readiness = struct {
+    context: *anyopaque,
+    ready_fn: *const fn (*anyopaque, cfg.SecretRef) foo.io.Error!bool,
 };
 pub const Input = struct {
     cwd: []const u8,
     preset: enum { none, coding } = .none,
     layers: []const Layer = &.{},
     model_patch: ModelPatch = .{},
+    readiness: ?Readiness = null,
+    /// `foo models` lists providers whether or not anything selects a model. With this set,
+    /// a missing selection leaves `runtime.model` empty and `selected` blank instead of failing.
+    model_optional: bool = false,
 };
 pub const Process = struct {
     file_bytes: usize = 8 * 1024 * 1024,
@@ -69,14 +81,32 @@ pub const CustomTool = struct {
 };
 pub const Launch = struct { process: Process = .{}, session: Session = .{}, tui: Tui = .{}, custom_tools: []const CustomTool = &.{} };
 pub const ProviderMap = std.StringArrayHashMapUnmanaged(cfg.Provider);
+pub const Selected = struct { provider: []const u8, model: []const u8 };
 pub const Effective = struct {
     providers: ProviderMap = .empty,
     runtime: cfg.Resolved,
+    /// The provider and model id behind `runtime.model`.
+    selected: Selected = .{ .provider = "", .model = "" },
     launch: Launch = .{},
     prompt_files: []const []const u8 = &.{},
 };
 pub const coding_prompt = "Help with the requested coding task. Inspect relevant files before editing, keep changes focused, and report what you verified.";
 pub const coding_tools: []const []const u8 = &.{ "read", "edit", "write", "exec" };
+
+/// Whether a request for `model_id` carries the provider's credential and headers: yes unless the
+/// model has its own endpoint on another origin. The one rule behind `runtime.model` and a listing.
+pub fn inheritsAuth(provider: cfg.Provider, model_id: []const u8) bool {
+    for (provider.models) |model| {
+        if (!std.mem.eql(u8, model.id, model_id)) continue;
+        const endpoint = model.endpoint orelse break;
+        return Parse.sameOrigin(provider.base_url, endpoint);
+    }
+    return true;
+}
+
+pub fn modelCredential(provider: cfg.Provider, model_id: []const u8) cfg.SecretRef {
+    return if (inheritsAuth(provider, model_id)) provider.credential else .none;
+}
 
 pub fn resolve(a: std.mem.Allocator, operation: foo.io.Context, input: Input, diagnostic: *?Diagnostic) Error!Effective {
     diagnostic.* = null;
@@ -89,11 +119,7 @@ pub fn resolve(a: std.mem.Allocator, operation: foo.io.Context, input: Input, di
     state.base = state.settings.runtime.cwd;
     if (input.layers.len > max_layers) return state.limit("layers");
     try state.defaults();
-    const builtins = std.json.parseFromSliceLeaky(std.json.Value, a, builtin_providers.json, .{ .parse_numbers = false }) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => unreachable,
-    };
-    try state.apply(builtins);
+    try state.catalog.seed(&state, builtins.all);
     if (input.preset == .coding) {
         state.source = .preset;
         state.settings.runtime.system_prompt = coding_prompt;
@@ -158,7 +184,7 @@ pub fn resolve(a: std.mem.Allocator, operation: foo.io.Context, input: Input, di
             try state.apply(tree);
         }
     }
-    try state.finish(input.model_patch);
+    try state.finish(input);
     try operation.check();
     return state.settings;
 }
@@ -187,6 +213,7 @@ pub fn effectiveJson(a: std.mem.Allocator, settings: Effective) Error![]const u8
     safe.launch.custom_tools = custom_tools;
     const output = .{
         .providers = ProviderObject{ .providers = try redactedProviders(scratch, settings.providers) },
+        .selected = settings.selected,
         .runtime = safe.runtime,
         .launch = safe.launch,
         .prompt_files = safe.prompt_files,
@@ -217,6 +244,8 @@ const ProviderObject = struct {
                 .headers = provider.headers,
                 .options_json = provider.options_json,
                 .models = ModelObject{ .models = provider.models },
+                .catalog = provider.catalog.len,
+                .default_model = provider.default_model,
             });
         }
         try json.endObject();

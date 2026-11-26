@@ -419,8 +419,8 @@ pub fn fileError(self: *Self, path_name: []const u8, err: anyerror) Error {
     return error.IoFailure;
 }
 
-pub fn finish(self: *Self, patch: root.ModelPatch) Error!void {
-    try self.catalog.finish(self, patch);
+pub fn finish(self: *Self, input: root.Input) Error!void {
+    try self.catalog.finish(self, input);
     const runtime = &self.settings.runtime;
     const keys = self.settings.launch.tui.keys;
     const names = @typeInfo(@TypeOf(keys)).@"struct".field_names;

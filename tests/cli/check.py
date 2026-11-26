@@ -226,7 +226,7 @@ class Cli(unittest.TestCase):
             self.assertEqual((result.returncode, result.stderr), (0, b""))
             return json.loads(result.stdout)["runtime"]
 
-        settings = show("--model", "openai/mini", "--provider", "gateway")
+        settings = show("--model", "openai/mini", "--provider", "openai")
         self.assertEqual(settings["model"]["id"], "mini")
         self.assertEqual(settings["model"]["max_output_tokens"], 2048)
         provenance = {entry["key"]: entry for entry in settings["provenance"]}

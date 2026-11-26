@@ -144,9 +144,11 @@ fn options(j: c.Json, request: p.Request) p.Error!c.Value {
                     try oneOf(option.value_ptr.*, &.{ "auto", "concise", "detailed" });
                 } else return error.Rejected;
             }
-        } else if (c.eq(key, "chat_token_limit") and request.model.family == .openai_chat) {
+        } else if (c.eq(key, "chat_token_limit")) {
+            // chat_* keys tune openai_chat only. Other families accept and strip them, so one
+            // provider options block can serve routed models of several protocols.
             try oneOf(value, &.{ "max_completion_tokens", "max_tokens" });
-        } else if ((c.eq(key, "chat_include_usage") or c.eq(key, "chat_reasoning_content") or c.eq(key, "chat_litellm")) and request.model.family == .openai_chat) {
+        } else if (c.eq(key, "chat_include_usage") or c.eq(key, "chat_reasoning_content") or c.eq(key, "chat_litellm")) {
             if (value != .bool) return error.InvalidInput;
         } else if (c.eq(key, "thinking") and request.model.family == .openai_chat) {
             if (value != .object or value.object.count() != 1) return error.InvalidInput;
