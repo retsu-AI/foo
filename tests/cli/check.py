@@ -28,9 +28,10 @@ def build(exe, optimize):
     for module, source, dependencies in (
         ("root", "tests/cli/probe.zig", ("foo", "cli", "configuration", "core", "journal")),
         ("foo", "src/lib.zig", ()),
-        ("cli", "src/cli/root.zig", ("foo", "configuration", "auth")),
-        ("auth", "src/auth/root.zig", ("foo",)),
-        ("configuration", "src/config/root.zig", ("foo",)),
+        ("cli", "src/cli/root.zig", ("foo", "configuration", "auth", "builtins")),
+        ("auth", "src/auth/root.zig", ("foo", "builtins")),
+        ("builtins", "src/builtins/root.zig", ("foo",)),
+        ("configuration", "src/config/root.zig", ("foo", "builtins")),
         ("core", "src/core/root.zig", ("foo",)),
         ("journal", "src/session/root.zig", ("foo",)),
     ):

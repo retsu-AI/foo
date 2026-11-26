@@ -42,10 +42,12 @@ def main():
         args.artifacts = args.artifacts.resolve()
         args.artifacts.mkdir(parents=True, exist_ok=True)
 
+    terminal = ("terminal", "src/platform/terminal/root.zig", ())
     modules = [
         ("foo", "src/lib.zig", ()),
-        ("configuration", "src/config/root.zig", ("foo",)),
-        ("terminal", "src/platform/terminal/root.zig", ()),
+        ("builtins", "src/builtins/root.zig", ("foo",)),
+        ("configuration", "src/config/root.zig", ("foo", "builtins")),
+        terminal,
         ("core", "src/core/root.zig", ("foo",)),
         ("tui", "src/tui/root.zig", ("foo", "configuration", "terminal")),
     ]
@@ -55,7 +57,7 @@ def main():
             print(f"{mode} on {platform.system()} {platform.release()} {platform.machine()}", flush=True)
             native = Path(directory) / f"terminal-probe-{mode}{suffix}"
             tui = Path(directory) / f"tui-probe-{mode}{suffix}"
-            build(native, mode, "tests/platform-terminal/probe.zig", ("terminal",), [modules[2]])
+            build(native, mode, "tests/platform-terminal/probe.zig", ("terminal",), [terminal])
             build(tui, mode, "tests/tui/probe.zig", ("foo", "tui", "core"), modules)
             command = [sys.executable, str(ROOT / "tests/tui/test_terminal.py"), str(native), str(tui)]
             if args.artifacts:

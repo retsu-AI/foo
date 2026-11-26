@@ -57,7 +57,12 @@ pub fn build(b: *std.Build) void {
     const selected = b.option([]const u8, "module", "Test module") orelse "contracts";
     const include_codemode = b.option(bool, "codemode", "Build the optional Code Mode module and include it in check") orelse false;
     const native = addProcessSuites(b, foo, support, target, optimize, include_codemode or std.mem.eql(u8, selected, "codemode"));
-    const auth = leaf(b, target, optimize, "src/auth/root.zig", &.{.{ .name = "foo", .module = foo }});
+    const builtins = leaf(b, target, optimize, "src/builtins/root.zig", &.{.{ .name = "foo", .module = foo }});
+    addCatalogStep(b, foo);
+    const auth = leaf(b, target, optimize, "src/auth/root.zig", &.{
+        .{ .name = "foo", .module = foo },
+        .{ .name = "builtins", .module = builtins },
+    });
     const mcp_test = addMcpSuite(b, foo, auth, native.spawner, native.guardian, target, optimize, transport_prefix);
     const core = leaf(b, target, optimize, "src/core/root.zig", &.{.{ .name = "foo", .module = foo }});
     const providers = leaf(b, target, optimize, "src/providers/root.zig", &.{
@@ -65,13 +70,17 @@ pub fn build(b: *std.Build) void {
         .{ .name = "auth", .module = auth },
     });
     const journal = leaf(b, target, optimize, "src/session/root.zig", &.{.{ .name = "foo", .module = foo }});
-    const configuration = leaf(b, target, optimize, "src/config/root.zig", &.{.{ .name = "foo", .module = foo }});
+    const configuration = leaf(b, target, optimize, "src/config/root.zig", &.{
+        .{ .name = "foo", .module = foo },
+        .{ .name = "builtins", .module = builtins },
+    });
     const terminal = leaf(b, target, optimize, "src/platform/terminal/root.zig", &.{});
     terminal.link_libc = target.result.os.tag != .windows;
     const cli = leaf(b, target, optimize, "src/cli/root.zig", &.{
         .{ .name = "foo", .module = foo },
         .{ .name = "auth", .module = auth },
         .{ .name = "configuration", .module = configuration },
+        .{ .name = "builtins", .module = builtins },
     });
     const tui = leaf(b, target, optimize, "src/tui/root.zig", &.{
         .{ .name = "foo", .module = foo },
@@ -173,7 +182,12 @@ pub fn build(b: *std.Build) void {
         .{ .name = "config", .step = addZigSuite(b, target, optimize, "tests/config/root.zig", &.{
             .{ .name = "foo", .module = foo },
             .{ .name = "configuration", .module = configuration },
+            .{ .name = "builtins", .module = builtins },
             .{ .name = "support", .module = support },
+        }) },
+        .{ .name = "builtins", .step = addZigSuite(b, target, optimize, "tests/builtins/root.zig", &.{
+            .{ .name = "foo", .module = foo },
+            .{ .name = "builtins", .module = builtins },
         }) },
         .{ .name = "cli", .step = pythonSuite(b, "tests/cli/check.py", optimize) },
         .{ .name = "tui", .step = tui_tests },
@@ -217,6 +231,30 @@ pub fn build(b: *std.Build) void {
         command.addPassthruArgs();
         b.step(qualification.name, qualification.description).dependOn(&command.step);
     }
+}
+
+/// `zig build catalog -Dmodels-dev=PATH` regenerates src/builtins/catalog.zig. The build never
+/// fetches; the weekly workflow downloads api.json and passes it here.
+fn addCatalogStep(b: *std.Build, foo: *std.Build.Module) void {
+    const step = b.step("catalog", "Regenerate src/builtins/catalog.zig from a models.dev api.json");
+    const models_dev = b.option([]const u8, "models-dev", "Path to a models.dev api.json for zig build catalog") orelse {
+        step.dependOn(&b.addFail("zig build catalog needs -Dmodels-dev=PATH; download https://models.dev/api.json first").step);
+        return;
+    };
+    const generator = b.addExecutable(.{
+        .name = "catalog-gen",
+        .root_module = leaf(b, b.graph.host, .debug, "src/builtins/generate.zig", &.{.{ .name = "foo", .module = foo }}),
+    });
+    const run = b.addRunArtifact(generator);
+    run.addFileArg(b.graph.cwdRelativePath(models_dev));
+    // Skipped models and per-provider counts go to stderr. Captured, so a normal refresh with
+    // skips is not read as a failed command; a non-zero exit still fails the step.
+    run.expectExitCode(0);
+    const update = b.addUpdateSourceFiles();
+    update.addCopyFileToSource(run.captureStdOut(.{}), "src/builtins/catalog.zig");
+    const log = b.addInstallFile(run.captureStdErr(.{ .basename = "catalog-gen.log" }), "catalog-gen.log");
+    step.dependOn(&update.step);
+    step.dependOn(&log.step);
 }
 
 fn leaf(
