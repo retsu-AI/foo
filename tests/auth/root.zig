@@ -144,6 +144,73 @@ test "environment and store resolve only the requested credentials" {
     try equal(null, bearer.account);
 }
 
+test "a built-in falls back to its environment variables only when nothing is stored" {
+    var tmp = testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const store = try in(tmp.dir);
+    defer allocator.free(store.directory);
+    var variables = std.process.Environ.Map.init(allocator);
+    defer variables.deinit();
+    try variables.put("ZAI_API_KEY", "");
+    try variables.put("ZHIPU_API_KEY", "zhipu-key");
+    try variables.put("ANTHROPIC_API_KEY", "env-anthropic");
+    const resolver = auth.Resolver{ .environment = &variables, .store = store };
+    const source = resolver.interface();
+    try same("zhipu-key", (try source.resolve(allocator, operation(), .{ .auth = "zai" })).api_key);
+    try same("env-anthropic", (try source.resolve(allocator, operation(), .{ .auth = "anthropic" })).api_key);
+    try testing.expectError(error.Authentication, source.resolve(allocator, operation(), .{ .auth = "openai" }));
+    try testing.expectError(error.Authentication, source.resolve(allocator, operation(), .{ .auth = "openai-codex" }));
+    try same("ZHIPU_API_KEY", (try resolver.availability(allocator, operation(), .{ .auth = "zai" })).environment);
+    try equal(.missing, try resolver.availability(allocator, operation(), .{ .auth = "openai" }));
+    try equal(.missing, try resolver.availability(allocator, operation(), .none));
+    try equal(.missing, try (auth.Resolver{ .environment = &variables }).availability(allocator, operation(), .{ .auth = "mygateway" }));
+    try equal(.missing, try resolver.availability(allocator, operation(), .{ .environment = "FOO_KEY" }));
+    try variables.put("FOO_KEY", "x");
+    try same("FOO_KEY", (try resolver.availability(allocator, operation(), .{ .environment = "FOO_KEY" })).environment);
+
+    // A blank-looking or padded variable is unset everywhere the fallback reads it, so the
+    // zero-config pick moves on to a lab that has a real key instead of sending spaces.
+    for ([_][]const u8{ "   ", "\t", "\n", " padded-key", "key\n" }) |blank| {
+        try variables.put("DEEPSEEK_API_KEY", blank);
+        try testing.expectError(error.Authentication, source.resolve(allocator, operation(), .{ .auth = "deepseek" }));
+        try equal(.missing, try resolver.availability(allocator, operation(), .{ .auth = "deepseek" }));
+        try variables.put("FOO_KEY", blank);
+        try equal(.missing, try resolver.availability(allocator, operation(), .{ .environment = "FOO_KEY" }));
+    }
+    try variables.put("MOONSHOT_API_KEY", "   ");
+    try variables.put("KIMI_API_KEY", "   ");
+    try equal(null, auth.availableVariable(&variables, "moonshotai"));
+    try variables.put("DEEPSEEK_API_KEY", "real");
+    try same("DEEPSEEK_API_KEY", auth.availableVariable(&variables, "deepseek").?);
+
+    const without_store = auth.Resolver{ .environment = &variables };
+    try same("env-anthropic", (try without_store.interface().resolve(allocator, operation(), .{ .auth = "anthropic" })).api_key);
+
+    try store.put(allocator, operation(), "anthropic", .{ .api_key = "stored-anthropic" });
+    const stored = try source.resolve(allocator, operation(), .{ .auth = "anthropic" });
+    defer allocator.free(stored.api_key);
+    try same("stored-anthropic", stored.api_key);
+    try equal(.stored_key, try resolver.availability(allocator, operation(), .{ .auth = "anthropic" }));
+
+    const now = std.Io.Timestamp.now(io, .real).toMilliseconds();
+    try store.put(allocator, operation(), "anthropic", .{ .oauth = .{ .access = "stale", .expires_ms = now - 1000 } });
+    const stale = try source.resolve(allocator, operation(), .{ .auth = "anthropic" });
+    defer allocator.free(stale.bearer.token);
+    try same("stale", stale.bearer.token);
+    try equal(.missing, try resolver.availability(allocator, operation(), .{ .auth = "anthropic" }));
+    try store.put(allocator, operation(), "anthropic", .{ .oauth = .{ .access = "stale", .refresh = "r", .expires_ms = now - 1000 } });
+    try equal(now - 1000, (try resolver.availability(allocator, operation(), .{ .auth = "anthropic" })).oauth);
+    try store.put(allocator, operation(), "anthropic", .{ .oauth = .{ .access = "live", .expires_ms = now + 3_600_000 } });
+    try equal(now + 3_600_000, (try resolver.availability(allocator, operation(), .{ .auth = "anthropic" })).oauth);
+
+    try variables.put("XAI_API_KEY", "env-xai");
+    try same("env-xai", (try source.resolve(allocator, operation(), .{ .auth = "xai" })).api_key);
+    try store.put(allocator, operation(), "xai", .{ .oauth = .{ .access = "expired", .expires_ms = now - 1000 } });
+    const expired = try source.resolve(allocator, operation(), .{ .auth = "xai" });
+    defer allocator.free(expired.bearer.token);
+    try same("expired", expired.bearer.token);
+}
+
 test "a refresh cannot overwrite a newer entry or reinstate a logged out provider" {
     var tmp = testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();

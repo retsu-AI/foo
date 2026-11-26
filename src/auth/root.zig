@@ -1,5 +1,6 @@
 const std = @import("std");
 const foo = @import("foo");
+const builtins = @import("builtins");
 const storage = @import("store.zig");
 pub const oauth = @import("oauth.zig");
 const openai_codex = @import("openai_codex.zig");
@@ -88,10 +89,39 @@ pub const Flow = struct {
 
 pub const flows: []const Flow = &.{ openai_codex.flow, xai.flow };
 
+comptime {
+    for (flows) |flow| if (builtins.find(flow.provider) == null) @compileError("auth flow " ++ flow.provider ++ " has no built-in record");
+}
+
 pub fn findFlow(registry: []const Flow, provider: []const u8) ?Flow {
     for (registry) |flow| if (std.mem.eql(u8, flow.provider, provider)) return flow;
     return null;
 }
+
+/// The variables a built-in reads when nothing is stored for it, in lookup order.
+pub fn fallbackVariables(provider: []const u8) []const []const u8 {
+    const builtin = builtins.find(provider) orelse return &.{};
+    return builtin.record.env;
+}
+
+/// The first of a built-in's variables that holds a usable key, for `auth list` and the
+/// resolver. The same predicate as `foo auth login` uses, so a padded or blank-looking
+/// value counts as unset and never wins the zero-config pick.
+pub fn availableVariable(environment: ?*const std.process.Environ.Map, provider: []const u8) ?[]const u8 {
+    for (fallbackVariables(provider)) |name| {
+        if (environmentValue(environment, name) != null) return name;
+    }
+    return null;
+}
+
+/// What `foo models`, `auth list`, and the zero-config pick see: one store read, no network,
+/// no refresh. An OAuth entry counts when it is unexpired or carries a refresh token.
+pub const Availability = union(enum) {
+    stored_key,
+    oauth: i64,
+    environment: []const u8,
+    missing,
+};
 
 const refresh_window_ms = 60_000;
 
@@ -106,21 +136,50 @@ pub const Resolver = struct {
         return .{ .context = self, .resolve_fn = resolve, .refresh_fn = refresh };
     }
 
+    pub fn availability(self: *const Resolver, a: std.mem.Allocator, operation: foo.io.Context, reference: foo.config.SecretRef) Error!Availability {
+        try operation.check();
+        switch (reference) {
+            .none => return .missing,
+            .literal => return .stored_key,
+            .environment => |name| return if (environmentValue(self.environment, name) != null) .{ .environment = name } else .missing,
+            .auth => |provider| {
+                if (self.store) |store| {
+                    var snapshot = try store.read(a, operation);
+                    defer snapshot.deinit();
+                    if (snapshot.entries.get(provider)) |entry| switch (entry) {
+                        .api_key => return .stored_key,
+                        .oauth => |token| {
+                            const now_ms = std.Io.Timestamp.now(operation.io, .real).toMilliseconds();
+                            return if (token.expires_ms > now_ms or token.refresh != null) .{ .oauth = token.expires_ms } else .missing;
+                        },
+                    };
+                }
+                if (availableVariable(self.environment, provider)) |name| return .{ .environment = name };
+                return .missing;
+            },
+        }
+    }
+
+    /// A stored entry owns the slot, including an expired one that cannot be renewed. Only an
+    /// absent entry falls through to the built-in's environment variables.
     fn resolve(raw: *const anyopaque, a: std.mem.Allocator, operation: foo.io.Context, reference: foo.config.SecretRef) Error!Credential {
         const self: *const Resolver = @ptrCast(@alignCast(raw));
         if (reference != .auth) return direct(self.environment, reference);
         const provider = reference.auth;
-        const store = self.store orelse return error.Authentication;
-        var snapshot = try store.read(a, operation);
-        defer snapshot.deinit();
-        const entry = snapshot.entries.get(provider) orelse return error.Authentication;
+        var scratch = std.heap.ArenaAllocator.init(a);
+        defer scratch.deinit();
+        const stored: ?Entry = if (self.store) |store| (try store.read(scratch.allocator(), operation)).entries.get(provider) else null;
+        const entry = stored orelse {
+            for (fallbackVariables(provider)) |name| {
+                if (environmentValue(self.environment, name)) |value| return .{ .api_key = value };
+            }
+            return error.Authentication;
+        };
         var current = switch (entry) {
             .api_key => |key| return .{ .api_key = try a.dupe(u8, key) },
             .oauth => |value| value,
         };
         const flow = findFlow(self.registry, provider);
-        var scratch = std.heap.ArenaAllocator.init(a);
-        defer scratch.deinit();
         if (flow) |registered| {
             const now_ms = std.Io.Timestamp.now(operation.io, .real).toMilliseconds();
             if (current.expires_ms -| now_ms < refresh_window_ms) {
@@ -196,6 +255,13 @@ pub fn resolveValue(environment: ?*const std.process.Environ.Map, value: foo.con
         .literal => |text| text,
         .environment => |name| (environment orelse return error.Unavailable).get(name) orelse error.Unavailable,
     };
+}
+
+/// A set variable counts as unset when it holds nothing `foo auth login` would store: empty,
+/// padded with spaces, or carrying control bytes. `FOO_API_KEY= foo run` falls through.
+fn environmentValue(environment: ?*const std.process.Environ.Map, name: []const u8) ?[]const u8 {
+    const value = (environment orelse return null).get(name) orelse return null;
+    return if (storage.validSecret(value)) value else null;
 }
 
 pub fn validHeaderValue(bytes: []const u8) bool {
