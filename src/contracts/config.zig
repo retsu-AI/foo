@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const Family = enum { openai_responses, openai_chat, anthropic_messages };
 pub const McpRevision = enum { @"2026-07-28", @"2025-11-25" };
 pub const acp_version: u32 = 1;
@@ -26,6 +28,15 @@ pub const Provenance = struct {
     input_key: ?[]const u8 = null,
 };
 pub const SecretRef = union(enum) { none, environment: []const u8, literal: []const u8, auth: []const u8 };
+pub const IdKind = enum { provider, model };
+/// Provider and model ids are nonempty UTF-8 without control bytes. A provider id has no '/'.
+pub fn validId(id: []const u8, kind: IdKind) bool {
+    if (id.len == 0 or !std.unicode.utf8ValidateSlice(id)) return false;
+    for (id) |c| {
+        if (c < 32 or c == 127 or (kind == .provider and c == '/')) return false;
+    }
+    return true;
+}
 pub const Value = union(enum) { literal: []const u8, environment: []const u8 };
 pub const Header = struct { name: []const u8, value: Value };
 pub const Provider = struct {
@@ -35,6 +46,20 @@ pub const Provider = struct {
     headers: []const Header = &.{},
     options_json: []const u8 = "{}",
     models: []const ModelEntry = &.{},
+    /// Built-in models sorted by id. User `models` entries shadow catalog ids.
+    catalog: []const CatalogModel = &.{},
+    default_model: ?[]const u8 = null,
+};
+/// A built-in model. Comptime data that lives in rodata and is never copied.
+pub const CatalogModel = struct {
+    id: []const u8,
+    name: []const u8,
+    output_limit: u32,
+    context_limit: u32,
+    /// Set only when the model speaks another protocol than its provider. The path is joined
+    /// to the provider's current origin, so a route can never point at another host.
+    route: ?Route = null,
+    pub const Route = struct { family: Family, base_path: []const u8 };
 };
 pub const default_max_output_tokens = 4096;
 pub const ModelEntry = struct {

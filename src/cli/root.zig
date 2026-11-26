@@ -2,9 +2,12 @@ const std = @import("std");
 const foo = @import("foo");
 const builtin = @import("builtin");
 const auth = @import("auth");
+const builtins = @import("builtins");
 const secret_input = @import("secret_input.zig");
 const config = @import("configuration");
 pub const arguments = @import("arguments.zig");
+pub const login = @import("login.zig");
+pub const models = @import("models.zig");
 const rpc = @import("rpc.zig");
 
 const process = @import("process.zig");
@@ -99,7 +102,8 @@ pub const help =
     \\  foo mcp get KIND SERVER ID [--arguments JSON] [OPTIONS]
     \\  KIND is resource, resource_template, or prompt.
     \\  foo config (check | show) [OPTIONS]
-    \\  foo auth login PROVIDER [--api-key | --device]
+    \\  foo models [PROVIDER] [--all] [OPTIONS]
+    \\  foo auth login [PROVIDER [--browser | --device | --api-key]]
     \\  foo auth list
     \\  foo auth logout PROVIDER
     \\  foo --help | --version
@@ -108,13 +112,14 @@ pub const help =
     \\  --approve              Load .foo/config.json from the directory where foo starts.
     \\  --config PATH          Load an explicit JSON config. Repeat in precedence order.
     \\  --preset coding        Select the built-in coding preset.
-    \\  --provider ID          Select the first model of a configured provider.
-    \\  --model PROVIDER/ID    Select a model from a provider.
+    \\  --provider ID          Select a provider's default model.
+    \\  --model [PROVIDER/]ID  Select a model. Without PROVIDER, keep the selected provider.
     \\  --family FAMILY        Set openai_responses, openai_chat, or anthropic_messages.
     \\  --endpoint URL         Override the complete POST URL of the selected model.
     \\  --credential-env NAME  Read the provider credential from a named environment variable.
     \\  --cwd PATH             Override the configured working directory.
     \\  --resume               Open the existing journal in the configured session directory.
+    \\  --all                  List every provider in foo models, not only the ready ones.
     \\
 ;
 
@@ -148,9 +153,21 @@ pub fn execute(
         else => {},
     }
 
+    var resolver = options.authentication;
+    resolver.environment = options.environ;
+    var readiness: ReadinessCheck = .{ .a = a, .operation = operation, .resolver = &resolver };
+    var input = command.config;
+    input.readiness = readiness.interface();
+    input.model_optional = command.action == .models;
     var diagnostic: ?config.Diagnostic = null;
-    const effective = config.resolve(a, operation, command.config, &diagnostic) catch |err| {
+    const effective = config.resolve(a, operation, input, &diagnostic) catch |err| {
+        if (readiness.failure) |failure| return authFailure(a, operation, streams, resolver.store, failure);
         if (diagnostic) |detail| {
+            if (unknownFilter(command, detail)) {
+                const message = login.unknownProvider(a, command.action.models.provider.?, "Run foo models --all") catch return failed(streams, operation, error.OutOfMemory);
+                report(streams, operation.io, "{s}", .{message});
+                return .usage;
+            }
             report(streams, operation.io, "config {s} from {s} at {s}{s}{s}", .{
                 @tagName(detail.reason),                  @tagName(detail.source),  detail.path,
                 if (detail.message != null) ": " else "", detail.message orelse "",
@@ -172,6 +189,7 @@ pub fn execute(
             writeAll(streams.output, operation, json) catch |err| return failed(streams, operation, err);
             return print(streams, operation, "\n");
         },
+        .models => |filter| return listModels(a, operation, streams, effective, &resolver, filter),
         .run, .rpc => {},
         .tui, .acp, .mcp => {
             report(streams, operation.io, "frontend is unavailable", .{});
@@ -187,8 +205,6 @@ pub fn execute(
     {
         var scratch = std.heap.ArenaAllocator.init(allocator);
         defer scratch.deinit();
-        var resolver = options.authentication;
-        resolver.environment = options.environ;
         if (checkCredentials(scratch.allocator(), operation, streams, effective.runtime.model, &resolver)) |exit| return exit;
     }
     const runtime = options.runtime orelse {
@@ -335,6 +351,68 @@ fn runPlain(
     return .success;
 }
 
+/// Adapts `auth.Resolver.availability` to the callback config uses for the zero-config pick.
+/// A store error is kept in `failure` and ends resolution as `error.Unavailable`, so the caller
+/// reports it the same way as an explicit selection would, and never falls through to env.
+pub const ReadinessCheck = struct {
+    a: std.mem.Allocator,
+    operation: foo.io.Context,
+    resolver: *const auth.Resolver,
+    failure: ?auth.Error = null,
+
+    pub fn interface(self: *ReadinessCheck) config.Readiness {
+        return .{ .context = self, .ready_fn = ready };
+    }
+
+    fn ready(context: *anyopaque, credential: foo.config.SecretRef) foo.io.Error!bool {
+        const self: *ReadinessCheck = @ptrCast(@alignCast(context));
+        const availability = self.resolver.availability(self.a, self.operation, credential) catch |err| switch (err) {
+            error.InvalidStore, error.UnsafeStore, error.InsecurePermissions, error.Authentication => {
+                self.failure = err;
+                return error.Unavailable;
+            },
+            else => |e| return e,
+        };
+        return availability != .missing;
+    }
+};
+
+/// `foo models nope`: the PROVIDER is unknown, which config reports as an invalid `provider`
+/// from the PROVIDER argument with no further message. Conflicts carry a message and stay as is.
+fn unknownFilter(command: arguments.Command, detail: config.Diagnostic) bool {
+    if (command.action != .models or command.action.models.provider == null or detail.message != null) return false;
+    const location = detail.location orelse return false;
+    return detail.reason == .invalid_value and std.mem.eql(u8, detail.path, "provider") and std.mem.eql(u8, location, "PROVIDER");
+}
+
+fn listModels(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, effective: config.Effective, resolver: *const auth.Resolver, filter: arguments.ModelsCommand) Exit {
+    const listing = models.list(a, operation, effective, resolver, .{ .provider = filter.provider, .all = filter.all }) catch |err|
+        return authFailure(a, operation, streams, resolver.store, err);
+    var widths: [2]usize = .{ 0, 0 };
+    for (listing.rows) |row| {
+        widths[0] = @max(widths[0], row.provider.len + 1 + row.id.len);
+        widths[1] = @max(widths[1], row.name.len);
+    }
+    var out: std.Io.Writer.Allocating = .init(a);
+    for (listing.rows) |row| {
+        var context: [16]u8 = undefined;
+        const window = if (row.context) |tokens| models.humanize(&context, tokens) else "";
+        out.writer.print("{s} {s}/{s}", .{ if (row.selected) "*" else " ", row.provider, row.id }) catch return failed(streams, operation, error.OutOfMemory);
+        out.writer.splatByteAll(' ', widths[0] - row.provider.len - row.id.len + 1) catch return failed(streams, operation, error.OutOfMemory);
+        out.writer.print("{s}", .{row.name}) catch return failed(streams, operation, error.OutOfMemory);
+        out.writer.splatByteAll(' ', widths[1] - row.name.len + 2) catch return failed(streams, operation, error.OutOfMemory);
+        out.writer.print("{s:<6} {f}\n", .{ window, row.status }) catch return failed(streams, operation, error.OutOfMemory);
+    }
+    writeAll(streams.output, operation, out.written()) catch |err| return failed(streams, operation, err);
+    if (listing.hidden_providers != 0) {
+        const plural = listing.hidden_providers != 1;
+        report(streams, operation.io, "{d} more provider{s} need{s} a credential. Run foo models --all or foo auth login PROVIDER", .{
+            listing.hidden_providers, if (plural) "s" else "", if (plural) "" else "s",
+        });
+    }
+    return .success;
+}
+
 pub fn missingCredential(a: std.mem.Allocator, operation: foo.io.Context, model: foo.config.Model, resolver: *const auth.Resolver) auth.Error!?foo.config.SecretRef {
     if (model.credential != .none) {
         _ = resolver.interface().resolve(a, operation, model.credential) catch |err| switch (err) {
@@ -369,7 +447,12 @@ fn missingEnvironment(streams: Streams, operation: foo.io.Context, name: []const
 
 fn missingLogin(a: std.mem.Allocator, streams: Streams, operation: foo.io.Context, id: []const u8) Exit {
     const argument = shellArgument(a, id) catch return failed(streams, operation, error.OutOfMemory);
-    report(streams, operation.io, "missing or invalid stored credential. Run foo auth login {s}", .{argument});
+    const variables = auth.fallbackVariables(id);
+    if (variables.len != 0) {
+        report(streams, operation.io, "no credential for {s}. Run foo auth login {s} or set {s}", .{ id, argument, variables[0] });
+    } else {
+        report(streams, operation.io, "missing or invalid stored credential. Run foo auth login {s}", .{argument});
+    }
     return .provider;
 }
 
@@ -388,7 +471,7 @@ fn shellArgument(a: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error
     return text;
 }
 
-fn authFailure(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, store: ?auth.Store, err: auth.Error) Exit {
+pub fn authFailure(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, store: ?auth.Store, err: auth.Error) Exit {
     switch (err) {
         error.InsecurePermissions => {
             const directory = store.?.directory;
@@ -414,18 +497,20 @@ fn authFailure(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams
 }
 
 fn runAuth(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, options: Options, command: arguments.AuthCommand) Exit {
-    const resolver = options.authentication;
-    const login_fn = if (command == .login and command.login.method != .api_key) login: {
-        const flow = auth.findFlow(resolver.registry, command.login.provider);
-        const selected = if (flow) |found| switch (command.login.method) {
-            .auto => found.browser orelse found.device,
-            .device => found.device,
-            .api_key => unreachable,
-        } else null;
-        break :login selected orelse {
-            const kind = if (flow != null) "device" else "browser";
-            report(streams, operation.io, "no {s} login for {s}; use --api-key", .{ kind, command.login.provider });
-            return .usage;
+    var resolver = options.authentication;
+    resolver.environment = options.environ;
+    if (command == .providers) return listProviders(a, operation, streams, resolver.registry);
+    const login_fn = if (command == .login) choice: {
+        const id = command.login.provider;
+        const chosen = login.plan(a, id, command.login.method, auth.findFlow(resolver.registry, id), builtins.find(id) != null) catch
+            return failed(streams, operation, error.OutOfMemory);
+        break :choice switch (chosen) {
+            .oauth => |flow_login| flow_login,
+            .api_key => null,
+            .refuse => |message| {
+                report(streams, operation.io, "{s}", .{message});
+                return .usage;
+            },
         };
     } else null;
     const store = resolver.store orelse {
@@ -433,7 +518,8 @@ fn runAuth(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, op
         return .usage;
     };
     return switch (command) {
-        .login => |login| login_entry: {
+        .providers => unreachable,
+        .login => |request| login_entry: {
             var buffer: [auth.max_secret_bytes]u8 = undefined;
             defer std.crypto.secureZero(u8, &buffer);
             const entry: auth.Entry = if (login_fn) |flow_login| oauth: {
@@ -450,17 +536,17 @@ fn runAuth(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, op
                     .prompt = .{ .context = &prompt, .show_fn = LoginPrompt.show },
                 }) catch |err| switch (err) {
                     error.Authentication => {
-                        report(streams, operation.io, "login for {s} was not completed", .{login.provider});
+                        report(streams, operation.io, "login for {s} was not completed", .{request.provider});
                         return .provider;
                     },
                     error.DeadlineExceeded => {
-                        report(streams, operation.io, "login for {s} timed out", .{login.provider});
+                        report(streams, operation.io, "login for {s} timed out", .{request.provider});
                         return .limit;
                     },
                     else => |e| return authFailure(a, operation, streams, store, e),
                 } };
             } else key: {
-                const prompt = std.fmt.allocPrint(a, "{s} API key: ", .{login.provider}) catch return failed(streams, operation, error.OutOfMemory);
+                const prompt = std.fmt.allocPrint(a, "{s} API key: ", .{request.provider}) catch return failed(streams, operation, error.OutOfMemory);
                 const key = process.fileOperation(operation, secret_input.read, .{ operation, streams.input, streams.diagnostic, prompt, &buffer }) catch |err| switch (err) {
                     error.TerminalRequired => {
                         report(streams, operation.io, "--api-key requires an interactive terminal", .{});
@@ -470,13 +556,14 @@ fn runAuth(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, op
                 };
                 break :key .{ .api_key = key };
             };
-            store.put(a, operation, login.provider, entry) catch |err| return authFailure(a, operation, streams, store, err);
+            store.put(a, operation, request.provider, entry) catch |err| return authFailure(a, operation, streams, store, err);
             break :login_entry .success;
         },
         .list => list: {
             var snapshot = store.read(a, operation) catch |err| return authFailure(a, operation, streams, store, err);
             defer snapshot.deinit();
             const now_ms = std.Io.Timestamp.now(operation.io, .real).toMilliseconds();
+            var out: std.Io.Writer.Allocating = .init(a);
             for (snapshot.entries.keys(), snapshot.entries.values()) |provider, entry| {
                 const expiry = switch (entry) {
                     .api_key => "no expiry",
@@ -484,9 +571,15 @@ fn runAuth(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, op
                         std.math.divCeil(i64, @max(0, oauth.expires_ms -| @as(i64, @intCast(now_ms))), 3_600_000) catch unreachable,
                     }) catch return failed(streams, operation, error.OutOfMemory),
                 };
-                const line = std.fmt.allocPrint(a, "{s}  {s}  {s}\n", .{ provider, @tagName(entry), expiry }) catch return failed(streams, operation, error.OutOfMemory);
-                writeAll(streams.output, operation, line) catch |err| return failed(streams, operation, err);
+                out.writer.print("{s}  {s}  {s}\n", .{ provider, @tagName(entry), expiry }) catch return failed(streams, operation, error.OutOfMemory);
             }
+            // Built-ins with a variable set and nothing stored are credentials too.
+            for (builtins.all) |entry| {
+                if (snapshot.entries.contains(entry.record.id)) continue;
+                const name = auth.availableVariable(options.environ, entry.record.id) orelse continue;
+                out.writer.print("{s}  env  {s}\n", .{ entry.record.id, name }) catch return failed(streams, operation, error.OutOfMemory);
+            }
+            writeAll(streams.output, operation, out.written()) catch |err| return failed(streams, operation, err);
             break :list .success;
         },
         .logout => |provider| logout: {
@@ -494,6 +587,42 @@ fn runAuth(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, op
             break :logout .success;
         },
     };
+}
+
+/// The `foo auth login` table. Derived from the registry and the flows, never hand-written.
+fn listProviders(a: std.mem.Allocator, operation: foo.io.Context, streams: Streams, registry: []const auth.Flow) Exit {
+    var out: std.Io.Writer.Allocating = .init(a);
+    var widths: [3]usize = .{ "PROVIDER".len, "NAME".len, "LOGIN".len };
+    for (builtins.all) |entry| {
+        widths[0] = @max(widths[0], entry.record.id.len);
+        widths[1] = @max(widths[1], entry.record.name.len);
+        widths[2] = @max(widths[2], loginMethods(auth.findFlow(registry, entry.record.id)).len);
+    }
+    const Line = struct {
+        fn write(writer: *std.Io.Writer, cols: [3]usize, cells: [3][]const u8, env: []const []const u8) std.Io.Writer.Error!void {
+            for (cells, cols) |cell, width| {
+                try writer.writeAll(cell);
+                try writer.splatByteAll(' ', width - cell.len + 2);
+            }
+            for (env, 0..) |name, i| {
+                if (i != 0) try writer.writeByte(' ');
+                try writer.writeAll(name);
+            }
+            try writer.writeByte('\n');
+        }
+    };
+    Line.write(&out.writer, widths, .{ "PROVIDER", "NAME", "LOGIN" }, &.{"ENVIRONMENT"}) catch return failed(streams, operation, error.OutOfMemory);
+    for (builtins.all) |entry| {
+        const methods = loginMethods(auth.findFlow(registry, entry.record.id));
+        Line.write(&out.writer, widths, .{ entry.record.id, entry.record.name, methods }, entry.record.env) catch return failed(streams, operation, error.OutOfMemory);
+    }
+    return print(streams, operation, out.written());
+}
+
+fn loginMethods(flow: ?auth.Flow) []const u8 {
+    const f = flow orelse return "api-key";
+    if (f.browser != null and f.device != null) return "browser, device, api-key";
+    return if (f.browser != null) "browser, api-key" else "device, api-key";
 }
 
 const LoginPrompt = struct {
@@ -577,4 +706,10 @@ fn report(streams: Streams, io: std.Io, comptime format: []const u8, args: anyty
     var buffer: [1024]u8 = undefined;
     const bytes = std.fmt.bufPrint(&buffer, "foo: " ++ format ++ "\n", args) catch "foo: command failed\n";
     streams.diagnostic.writeStreamingAll(io, bytes) catch {};
+}
+
+test {
+    _ = arguments;
+    _ = login;
+    _ = models;
 }

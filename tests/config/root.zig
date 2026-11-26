@@ -1,6 +1,7 @@
 const std = @import("std");
 const foo = @import("foo");
 const config = @import("configuration");
+const builtins = @import("builtins");
 const support = @import("support");
 const expect = std.testing.expect;
 const equal = std.testing.expectEqual;
@@ -368,9 +369,9 @@ test "model credentials and headers follow the endpoint origin" {
         },
         .{
             .patch = .{ .family = .openai_responses },
-            .credential = null,
+            .credential = "DEEPSEEK_API_KEY",
             .endpoint = "https://api.deepseek.com/responses",
-            .headers = 0,
+            .headers = 2,
         },
         .{
             .patch = .{ .endpoint = "https://other.invalid/responses", .credential_env = "EXPLICIT_REPLACEMENT" },
@@ -591,7 +592,8 @@ test "typed CLI selects existing or ad hoc models and prefers qualified selectio
     for ([_]struct { patch: config.ModelPatch, id: []const u8, location: []const u8 }{
         .{ .patch = .{ .provider = "demo" }, .id = "explicit-model", .location = "--provider" },
         .{ .patch = .{ .provider = "demo", .selection = "another" }, .id = "another", .location = "--model" },
-        .{ .patch = .{ .provider = "ignored", .selection = "demo/vendor/custom" }, .id = "vendor/custom", .location = "--model" },
+        .{ .patch = .{ .selection = "another" }, .id = "another", .location = "--model" },
+        .{ .patch = .{ .provider = "demo", .selection = "demo/vendor/custom" }, .id = "vendor/custom", .location = "--model" },
     }) |case| {
         const settings = try call.resolve(arena.allocator(), .{
             .cwd = invocation_cwd,
@@ -605,6 +607,21 @@ test "typed CLI selects existing or ad hoc models and prefers qualified selectio
         try equal(foo.config.Source.command_line, origin.source);
         try same(case.location, origin.location.?);
     }
+}
+
+test "--provider and a qualified --model must name the same provider" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var call: Request = .{};
+    try std.testing.expectError(error.InvalidConfiguration, call.resolve(arena.allocator(), .{
+        .cwd = invocation_cwd,
+        .layers = &.{.{ .source = .file, .data = .{ .json = minimal_model } }},
+        .model_patch = .{ .provider = "other", .selection = "demo/explicit-model" },
+    }));
+    const diagnostic = call.diagnostic.?;
+    try same("provider", diagnostic.path);
+    try equal(foo.config.Source.command_line, diagnostic.source);
+    try same("--provider other conflicts with --model demo/explicit-model", diagnostic.message.?);
 }
 
 test "changing the provider origin requires an explicit replacement credential" {
@@ -664,6 +681,11 @@ test "model endpoint preserves its path and receives only same-origin inherited 
     const origin = try sourceOf(settings, "model.endpoint");
     try same("gateway.json", origin.location.?);
     try same("providers.deepseek.models.deepseek-v4-pro.endpoint", origin.input_key.?);
+    // The same rule answers for any model of the provider, so a listing agrees with a run.
+    const provider = settings.providers.get("deepseek").?;
+    try expect(config.modelCredential(provider, "deepseek-v4-pro") == .none);
+    try same("DEEPSEEK_API_KEY", config.modelCredential(provider, "deepseek-v4-flash").environment);
+    try same("DEEPSEEK_API_KEY", config.modelCredential(provider, "unlisted").environment);
 }
 
 test "show redacts literals and queries in every provider and model" {
@@ -784,53 +806,239 @@ test "built-in providers resolve from defaults and user layers can replace or re
     try expect(removed.providers.get("openai-codex") == null);
 }
 
-test "API and subscription providers are built in and follow the same override rules" {
+test "every built-in resolves from the registry with defaults provenance and takes any model id" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
     var call: Request = .{};
-    for ([_]struct { id: []const u8, family: foo.config.Family, endpoint: []const u8, credential: foo.config.SecretRef, user_agent: bool = false }{
-        .{ .id = "anthropic", .family = .anthropic_messages, .endpoint = "https://api.anthropic.com/v1/messages", .credential = .{ .environment = "ANTHROPIC_API_KEY" } },
-        .{ .id = "openai", .family = .openai_responses, .endpoint = "https://api.openai.com/v1/responses", .credential = .{ .environment = "OPENAI_API_KEY" } },
-        .{ .id = "opencode", .family = .openai_responses, .endpoint = "https://opencode.ai/inference/openai/v1/responses", .credential = .{ .auth = "opencode" }, .user_agent = true },
-        .{ .id = "opencode-go", .family = .openai_responses, .endpoint = "https://opencode.ai/inference/go/openai/v1/responses", .credential = .{ .auth = "opencode-go" }, .user_agent = true },
-        .{ .id = "xai", .family = .openai_responses, .endpoint = "https://api.x.ai/v1/responses", .credential = .{ .auth = "xai" } },
-    }) |case| {
-        const select = try std.fmt.allocPrint(allocator, "{{\"providers\":{{\"{s}\":{{\"models\":{{\"m\":{{}}}}}}}},\"model\":\"{s}/m\"}}", .{ case.id, case.id });
-        const builtin = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json = select } }} });
-        const model = builtin.runtime.model;
-        try equal(case.family, model.family);
-        try same(case.endpoint, model.endpoint);
-        try std.testing.expectEqualDeep(case.credential, model.credential);
-        if (case.user_agent) {
-            try equal(1, model.headers.len);
-            try same("user-agent", model.headers[0].name);
-            try same("foo", model.headers[0].value.literal);
-        } else try equal(0, model.headers.len);
-        try equal(1, builtin.providers.get(case.id).?.models.len);
-        const base_key = try std.fmt.allocPrint(allocator, "providers.{s}.base_url", .{case.id});
-        try equal(foo.config.Source.defaults, (try sourceOf(builtin, base_key)).source);
-        try equal(foo.config.Source.defaults, (try sourceOf(builtin, "model.credential")).source);
+    try expect(builtins.all.len >= 14);
+    for (builtins.all) |entry| {
+        const record = entry.record;
+        const select = try std.fmt.allocPrint(allocator, "{{\"model\":\"{s}/unlisted-model\"}}", .{record.id});
+        const settings = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json = select } }} });
+        const model = settings.runtime.model;
+        try equal(record.family, model.family);
+        try same("unlisted-model", model.id);
+        try expect(std.mem.startsWith(u8, model.endpoint, record.base_url));
+        try same(record.id, model.credential.auth);
+        try equal(record.headers.len, model.headers.len);
+        try same(record.options_json, model.options_json);
+        try equal(@as(u32, 4096), model.max_output_tokens);
+        const provider = settings.providers.get(record.id).?;
+        try equal(entry.catalog.len, provider.catalog.len);
+        try same(record.default_model, provider.default_model.?);
+        try expect(builtins.model(provider.catalog, record.default_model) != null);
+        const base_key = try std.fmt.allocPrint(allocator, "providers.{s}.base_url", .{record.id});
+        try equal(foo.config.Source.defaults, (try sourceOf(settings, base_key)).source);
+        try equal(foo.config.Source.defaults, (try sourceOf(settings, "model.credential")).source);
     }
+    for ([_][]const u8{ "anthropic", "openai", "openai-codex", "xai", "opencode", "opencode-go" }) |id| try expect(builtins.find(id) != null);
+}
 
+test "catalog models resolve with their limits, names, and same-origin routes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var call: Request = .{};
+    const direct = try call.resolve(allocator, .{ .cwd = invocation_cwd, .model_patch = .{ .selection = "anthropic/claude-sonnet-5-5" } });
+    try same("https://api.anthropic.com/v1/messages", direct.runtime.model.endpoint);
+    try equal(builtins.output_cap, direct.runtime.model.max_output_tokens);
+    try same("Claude Sonnet 5.5", direct.providers.get("anthropic").?.models[0].name.?);
+    try equal(foo.config.Source.defaults, (try sourceOf(direct, "model.max_output_tokens")).source);
+
+    const routed = try call.resolve(allocator, .{ .cwd = invocation_cwd, .model_patch = .{ .selection = "opencode/claude-sonnet-5-5" } });
+    const model = routed.runtime.model;
+    try equal(foo.config.Family.anthropic_messages, model.family);
+    try same("https://opencode.ai/inference/anthropic/v1/messages", model.endpoint);
+    try same("opencode", model.credential.auth);
+    try same("user-agent", model.headers[0].name);
+    try expect(has(model.options_json, "chat_reasoning_content"));
+
+    const chat = try call.resolve(allocator, .{ .cwd = invocation_cwd, .model_patch = .{ .selection = "opencode/kimi-k3" } });
+    try equal(foo.config.Family.openai_chat, chat.runtime.model.family);
+    try same("https://opencode.ai/inference/openai/v1/chat/completions", chat.runtime.model.endpoint);
+
+    const forced = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
+        \\{"providers":{"opencode":{"family":"openai_chat"}},"model":"opencode/claude-sonnet-5-5"}
+    } }} });
+    try equal(foo.config.Family.openai_chat, forced.runtime.model.family);
+    try same("https://opencode.ai/inference/openai/v1/chat/completions", forced.runtime.model.endpoint);
+
+    const capped = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
+        \\{"providers":{"anthropic":{"models":{"claude-sonnet-5-5":{"max_output_tokens":64000,"name":"Mine"}}}},"model":"anthropic/claude-sonnet-5-5"}
+    } }} });
+    try equal(@as(u32, 64000), capped.runtime.model.max_output_tokens);
+    try same("Mine", capped.providers.get("anthropic").?.models[0].name.?);
+}
+
+test "a built-in moved to another origin keeps nothing from the old server" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var call: Request = .{};
     const moved = [_]config.Layer{.{ .source = .file, .location = "user.json", .data = .{ .json =
         \\{"providers":{"opencode":{"base_url":"http://127.0.0.1:9/v1","models":{"m":{}}}},"model":"opencode/m"}
     } }};
     try std.testing.expectError(error.InvalidConfiguration, call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &moved }));
     try same("providers.opencode.credential", call.diagnostic.?.path);
 
+    const local = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
+        \\{"providers":{"openai":{"family":"openai_chat","base_url":"http://127.0.0.1:8080/v1","credential":null,"models":{"local":{}}}},"model":"openai/local"}
+    } }} });
+    const openai = local.providers.get("openai").?;
+    try expect(openai.credential == .none);
+    try equal(0, openai.catalog.len);
+    try equal(null, openai.default_model);
+    try std.testing.expectError(error.InvalidConfiguration, call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
+        \\{"providers":{"openai":{"family":"openai_chat","base_url":"http://127.0.0.1:8080/v1","credential":null,"models":{"local":{}}}},"model":"openai/gpt-6.2-sol"}
+    } }} }));
+    try same("model", call.diagnostic.?.path);
+
     const unused = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
         \\{"providers":{"openai":{"family":"openai_chat","base_url":"http://127.0.0.1:8080/v1","models":{"local":{}}},"gw":{"family":"openai_chat","base_url":"http://127.0.0.1:9/v1","models":{"m":{}}}},"model":"gw/m"}
     } }} });
     try expect(unused.providers.get("openai").?.credential == .none);
-    try std.testing.expectError(error.InvalidConfiguration, call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
-        \\{"providers":{"openai":{"family":"openai_chat","base_url":"http://127.0.0.1:8080/v1","models":{"local":{}}}},"model":"openai/local"}
-    } }} }));
-    try same("providers.openai.credential", call.diagnostic.?.path);
 
     const removed = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
-        \\{"providers":{"xai":null,"opencode-go":{"models":{"kimi-k3":{}}}},"model":"opencode-go/kimi-k3"}
+        \\{"providers":{"xai":null},"model":"opencode-go/kimi-k3"}
     } }} });
     try expect(removed.providers.get("xai") == null);
     try expect(removed.providers.get("opencode") != null);
+}
+
+test "a family change keeps the credential and headers because a secret belongs to an origin" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var call: Request = .{};
+    // An OpenCode config written before the default family flipped to openai_chat.
+    const legacy = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .location = "user.json", .data = .{ .json =
+        \\{"model":"opencode/gpt-6.2-sol","providers":{"opencode":{"family":"openai_responses","base_url":"https://opencode.ai/inference/openai/v1","models":{"gpt-6.2-sol":{}}}}}
+    } }} });
+    try same("opencode", legacy.runtime.model.credential.auth);
+    try same("user-agent", legacy.runtime.model.headers[0].name);
+    try same("https://opencode.ai/inference/openai/v1/responses", legacy.runtime.model.endpoint);
+    try equal(foo.config.Source.defaults, (try sourceOf(legacy, "model.credential")).source);
+    // The user asked for one protocol, so the per-model anthropic route no longer applies.
+    const unrouted = try call.resolve(allocator, .{ .cwd = invocation_cwd, .layers = &.{.{ .source = .file, .data = .{ .json =
+        \\{"model":"opencode/claude-sonnet-5-5","providers":{"opencode":{"family":"openai_responses"}}}
+    } }} });
+    try same("https://opencode.ai/inference/openai/v1/responses", unrouted.runtime.model.endpoint);
+    try same("opencode", unrouted.runtime.model.credential.auth);
+    try expect(unrouted.providers.get("opencode").?.catalog.len != 0);
+
+    const flagged = try call.resolve(allocator, .{ .cwd = invocation_cwd, .model_patch = .{ .selection = "anthropic/claude-sonnet-5-5", .family = .openai_chat } });
+    try same("anthropic", flagged.runtime.model.credential.auth);
+    try same("https://api.anthropic.com/v1/chat/completions", flagged.runtime.model.endpoint);
+}
+
+test "--provider picks the default model of a built-in and the configured model when it names that provider" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var call: Request = .{};
+    const default = try call.resolve(allocator, .{ .cwd = invocation_cwd, .model_patch = .{ .provider = "deepseek" } });
+    try same("deepseek-v4-pro", default.runtime.model.id);
+    try same("https://api.deepseek.com/chat/completions", default.runtime.model.endpoint);
+    try same("--provider", (try sourceOf(default, "model.id")).location.?);
+    const configured = try call.resolve(allocator, .{
+        .cwd = invocation_cwd,
+        .layers = &.{.{ .source = .file, .data = .{ .json = "{\"model\":\"deepseek/deepseek-v4-flash\"}" } }},
+        .model_patch = .{ .provider = "deepseek" },
+    });
+    try same("deepseek-v4-flash", configured.runtime.model.id);
+    const other = try call.resolve(allocator, .{
+        .cwd = invocation_cwd,
+        .layers = &.{.{ .source = .file, .data = .{ .json = "{\"model\":\"deepseek/deepseek-v4-flash\"}" } }},
+        .model_patch = .{ .provider = "zai" },
+    });
+    try same("glm-5.3", other.runtime.model.id);
+    const bare = try call.resolve(allocator, .{
+        .cwd = invocation_cwd,
+        .layers = &.{.{ .source = .file, .data = .{ .json = "{\"model\":\"deepseek/deepseek-v4-flash\"}" } }},
+        .model_patch = .{ .selection = "deepseek-v4-pro" },
+    });
+    try same("deepseek/deepseek-v4-pro", try std.mem.concat(allocator, u8, &.{ "deepseek/", bare.runtime.model.id }));
+    try same("https://api.deepseek.com/chat/completions", bare.runtime.model.endpoint);
+}
+
+const Readiness = struct {
+    ready: []const []const u8,
+
+    fn interface(self: *Readiness) config.Readiness {
+        return .{ .context = self, .ready_fn = check };
+    }
+
+    fn check(context: *anyopaque, credential: foo.config.SecretRef) foo.io.Error!bool {
+        const self: *Readiness = @ptrCast(@alignCast(context));
+        if (credential != .auth) return false;
+        for (self.ready) |id| if (std.mem.eql(u8, id, credential.auth)) return true;
+        return false;
+    }
+};
+
+const BrokenStore = struct {
+    asked: usize = 0,
+
+    fn interface(self: *BrokenStore) config.Readiness {
+        return .{ .context = self, .ready_fn = check };
+    }
+
+    fn check(context: *anyopaque, _: foo.config.SecretRef) foo.io.Error!bool {
+        const self: *BrokenStore = @ptrCast(@alignCast(context));
+        self.asked += 1;
+        return error.Unavailable;
+    }
+};
+
+test "a readiness error ends the zero-config pick instead of reading as no credential" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var call: Request = .{};
+    var broken: BrokenStore = .{};
+    try std.testing.expectError(error.Unavailable, call.resolve(arena.allocator(), .{ .cwd = invocation_cwd, .readiness = broken.interface() }));
+    try equal(1, broken.asked);
+    try expect(call.diagnostic == null);
+    // An explicit selection never asks.
+    _ = try call.resolve(arena.allocator(), .{ .cwd = invocation_cwd, .readiness = broken.interface(), .model_patch = .{ .provider = "zai" } });
+    try equal(1, broken.asked);
+}
+
+test "with nothing selected the first ready built-in in registry order is used" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var call: Request = .{};
+    var ready: Readiness = .{ .ready = &.{ "zai", "deepseek" } };
+    const picked = try call.resolve(allocator, .{ .cwd = invocation_cwd, .readiness = ready.interface() });
+    try same("deepseek-v4-pro", picked.runtime.model.id);
+    try same("https://api.deepseek.com/chat/completions", picked.runtime.model.endpoint);
+    try equal(foo.config.Source.defaults, (try sourceOf(picked, "model.id")).source);
+
+    const bare = try call.resolve(allocator, .{ .cwd = invocation_cwd, .readiness = ready.interface(), .model_patch = .{ .selection = "deepseek-v4-flash" } });
+    try same("deepseek-v4-flash", bare.runtime.model.id);
+    try same("https://api.deepseek.com/chat/completions", bare.runtime.model.endpoint);
+
+    const configured = try call.resolve(allocator, .{
+        .cwd = invocation_cwd,
+        .readiness = ready.interface(),
+        .layers = &.{.{ .source = .file, .data = .{ .json = minimal_model } }},
+    });
+    try same("explicit-model", configured.runtime.model.id);
+
+    const removed = try call.resolve(allocator, .{
+        .cwd = invocation_cwd,
+        .readiness = ready.interface(),
+        .layers = &.{.{ .source = .file, .data = .{ .json = "{\"providers\":{\"deepseek\":null}}" } }},
+    });
+    try same("glm-5.3", removed.runtime.model.id);
+
+    var none: Readiness = .{ .ready = &.{} };
+    try std.testing.expectError(error.InvalidConfiguration, call.resolve(allocator, .{ .cwd = invocation_cwd, .readiness = none.interface() }));
+    const diagnostic = call.diagnostic.?;
+    try same("model", diagnostic.path);
+    try expect(diagnostic.reason == .missing_value);
+    try same("no model selected and no provider has a credential. Run foo auth login PROVIDER or set \"model\" in config", diagnostic.message.?);
+    try std.testing.expectError(error.InvalidConfiguration, call.resolve(allocator, .{ .cwd = invocation_cwd }));
+    try same("model", call.diagnostic.?.path);
 }

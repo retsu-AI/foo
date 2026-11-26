@@ -542,6 +542,8 @@ ReleaseSafe, `foo config check --model openai-codex/x`, 300 interleaved runs, tr
 
 **Depends on.** U07.
 
+**Note.** `foo models` landed with the built-in providers work (ENG-1553): `src/cli/models.zig` builds the rows and `src/cli/root.zig` prints them, with statuses `ready`, `needs login`, `needs VAR`, and `needs login or VAR`. U08 keeps the TUI `/model` switch and reuses `cli.models.list` for the picker. `src/config/defaults.zig` no longer exists; built-ins come from `src/builtins/`.
+
 **Files.**
 
 - [ ] Edit `src/cli/arguments.zig` and `src/cli/root.zig` for `foo models`.

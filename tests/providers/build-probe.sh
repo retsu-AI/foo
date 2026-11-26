@@ -13,4 +13,5 @@ zig build-exe -lc -L "$FOO_TRANSPORT_PREFIX/lib" -lcurl \
     --dep foo --dep providers -Mroot=tests/providers/probe.zig \
     --dep curl -Mfoo=src/lib.zig \
     --dep foo --dep auth -Mproviders=src/providers/root.zig \
-    --dep foo -Mauth=src/auth/root.zig -Mcurl="$scratch/curl.zig"
+    --dep foo --dep builtins -Mauth=src/auth/root.zig \
+    --dep foo -Mbuiltins=src/builtins/root.zig -Mcurl="$scratch/curl.zig"

@@ -14,16 +14,24 @@ printf 'Summarize the input\n' | foo run --config profile.json --stdin
 foo run --config profile.json --resume --prompt 'Continue'
 foo config check --config profile.json
 foo config show --config profile.json --model example
+foo models
+foo models zai --all
+foo auth login
+foo auth login anthropic
 foo rpc --config profile.json
 ```
+
+Nothing needs configuring for a built-in provider. `foo auth login` lists them. After `foo auth login anthropic` or with `ANTHROPIC_API_KEY` set, `foo run --prompt hi` uses that provider's default model; `foo models` shows what would run with a `*`.
 
 `foo` and `zig build run` open the TUI with the user config when run without arguments. Use `foo --approve` or `zig build run -- --approve` to include the project's `.foo/config.json`. [Configuration paths and precedence](../config/README.md#configuration-files)
 
 `run` requires exactly one prompt source. `--stdin` reads UTF-8 until EOF and retains the bytes, including trailing newlines. Plain stdout contains committed assistant text. A successful nonempty output ends with a newline. Diagnostics go to stderr. A provider failure prints one reason line, such as `foo: authentication failed for <endpoint> (HTTP 401). Set <VARIABLE>`, `foo: rate limited by <endpoint>, retry after 2 s`, `foo: <endpoint> rejected the request (HTTP 400)`, `foo: could not reach <endpoint>: certificate not trusted`, or `foo: <endpoint> sent an invalid response`. The same output rules apply to terminals and pipes.
 
-Repeat `--config` to apply explicit files in command order. Set `--preset coding` to select the coding preset. Use `--provider`, `--model`, `--endpoint`, `--credential-env`, or `--cwd` to override values. See `foo --help` and the [configuration reference](../config/README.md).
+Repeat `--config` to apply explicit files in command order. Set `--preset coding` to select the coding preset. `--provider ID` selects a provider's default model. `--model PROVIDER/ID` selects a model and `--model ID` keeps the selected provider; `--provider` and a qualified `--model` must agree. Use `--endpoint`, `--credential-env`, or `--cwd` to override values. See `foo --help` and the [configuration reference](../config/README.md).
 
-Use `foo auth login PROVIDER --api-key` to save a key from an interactive terminal. Use `foo auth login openai-codex` to log in with a ChatGPT subscription, or add `--device` on a host without a browser. Use `foo auth list` to see saved provider IDs and `foo auth logout PROVIDER` to remove one. [Credential commands](../auth/README.md)
+`foo models [PROVIDER] [--all]` lists models of the providers that have a credential, one per line as `provider/id`, display name, context window, and status. `*` marks the model `foo run` would use with the same flags. `PROVIDER` filters the rows and selects that provider like `--provider` does, so `foo models zai` stars `zai/glm-5.3`, `foo models zai --model glm-5.3` stars that model, and `foo models zai --provider deepseek` is a conflict; it may stand anywhere among the flags. A trailing stderr line counts the providers hidden for lack of a credential; `--all` shows them, and a `PROVIDER` filter prints no count. Status is `ready`, `needs login`, `needs VAR`, or `needs login or VAR`, judged per model: a model whose `endpoint` is on another origin is sent without the provider credential and shows `no credential`. Before a run, a missing built-in credential prints `foo: no credential for zai. Run foo auth login zai or set ZAI_API_KEY`. `--help` anywhere prints usage.
+
+`foo auth login` with no provider prints the built-in providers with their login methods and environment variables. `foo auth login PROVIDER` picks the provider's best method: the browser, then a device code, then a hidden API key prompt. `--browser`, `--device`, and `--api-key` force one; `--api-key` also stores a key under any name for a user-configured provider. Use `foo auth list` to see saved and environment credentials and `foo auth logout PROVIDER` to remove a saved one. [Credential commands](../auth/README.md)
 
 `config check` validates the resolved configuration and exits silently on success. `config show` writes redacted effective JSON with provenance. Both commands can run before credentials are available. `run` and `rpc` check declared model credentials and header environment references before opening runtime adapters.
 

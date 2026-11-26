@@ -4,10 +4,13 @@ Use Zig 0.17.1 through the repository Nix shell.
 
 ```sh
 nix develop .#ci -c zig test \
-  --dep foo --dep configuration --dep support -Mroot=tests/config/root.zig \
-  -Mfoo=src/lib.zig --dep foo -Mconfiguration=src/config/root.zig \
+  --dep foo --dep configuration --dep builtins --dep support -Mroot=tests/config/root.zig \
+  -Mfoo=src/lib.zig --dep foo --dep builtins -Mconfiguration=src/config/root.zig \
+  --dep foo -Mbuiltins=src/builtins/root.zig \
   --dep foo -Msupport=tests/support/root.zig
 ```
+
+Or run `nix develop .#ci -c zig build test -Dmodule=config`.
 
 For ReleaseSafe, add `-O ReleaseSafe` before each `-M` argument. The integrator owns root registration for `zig build test -Dmodule=config`.
 

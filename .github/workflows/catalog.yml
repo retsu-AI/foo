@@ -1,0 +1,102 @@
+name: Refresh models.dev catalog
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: catalog-refresh
+  cancel-in-progress: true
+jobs:
+  refresh:
+    name: Regenerate src/builtins/catalog.zig
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-zig
+      - name: Download the models.dev snapshot
+        run: curl -fsSL --retry 3 https://models.dev/api.json -o "$RUNNER_TEMP/api.json"
+      # The generator logs skipped models to stderr; build.zig captures that into
+      # zig-out/catalog-gen.log, so this step fails only when the generator itself fails.
+      - name: Regenerate the catalog
+        id: generate
+        run: |
+          zig build catalog -Dmodels-dev="$RUNNER_TEMP/api.json"
+          grep -v ' skip ' zig-out/catalog-gen.log > "$RUNNER_TEMP/summary.log" || true
+          cat "$RUNNER_TEMP/summary.log"
+          if git diff --quiet -- src/builtins/catalog.zig; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      # A dropped default_model fails the comptime check. The PR still opens; its title and body
+      # carry the result, so the failure is visible where the human decides, not only in this log.
+      - name: Check the regenerated catalog
+        id: check
+        if: steps.generate.outputs.changed == 'true'
+        shell: bash {0}
+        run: |
+          {
+            zig build check-bootstrap &&
+            zig build test -Dmodule=builtins &&
+            zig build test -Dmodule=config &&
+            zig build test -Dmodule=cli
+          } > "$RUNNER_TEMP/check.log" 2>&1
+          if [ $? -eq 0 ]; then status=passed; else status=failed; fi
+          cat "$RUNNER_TEMP/check.log"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "Check $status"
+      - name: Write the PR body
+        if: steps.generate.outputs.changed == 'true'
+        env:
+          CHECK: ${{ steps.check.outputs.status }}
+          HAS_TOKEN: ${{ secrets.CATALOG_PR_TOKEN != '' }}
+        run: |
+          {
+            echo 'Weekly refresh of `src/builtins/catalog.zig` from https://models.dev/api.json.'
+            echo
+            if [ "$CHECK" = passed ]; then
+              echo '**Check: passed.** `zig build check-bootstrap` and the builtins, config, and cli suites pass on the new catalog.'
+            else
+              echo '**Check: FAILED.** A `default_model` in `src/builtins/records.zig` is probably no longer in the catalog. Pick a new default or keep the old model as an `extra_models` entry before merging. Last lines:'
+              echo
+              echo '```'
+              tail -n 40 "$RUNNER_TEMP/check.log"
+              echo '```'
+            fi
+            echo
+            echo 'Generator summary:'
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/summary.log"
+            echo '```'
+            echo
+            echo 'Skipped models are listed in the `catalog-gen.log` artifact of the refresh run.'
+            if [ "$HAS_TOKEN" != true ]; then
+              echo
+              echo '> This PR was opened with `GITHUB_TOKEN`, which does not trigger the Check workflow. Close and reopen it, or push an empty commit, to run CI; or set the `CATALOG_PR_TOKEN` secret so future refreshes trigger it on their own.'
+            fi
+          } > "$RUNNER_TEMP/body.md"
+      - name: Upload the generator log
+        if: steps.generate.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-gen.log
+          path: zig-out/catalog-gen.log
+      # Pull requests opened with GITHUB_TOKEN do not start other workflows, so Check would not
+      # run on the refresh PR. A fine-grained PAT in CATALOG_PR_TOKEN (contents and pull-requests
+      # write) fixes that; without it the PR body tells the reviewer how to start CI by hand.
+      - name: Open or update the refresh PR
+        if: steps.generate.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.CATALOG_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: chore/refresh-models-dev-catalog
+          title: "chore(builtins): refresh models.dev catalog (check ${{ steps.check.outputs.status }})"
+          commit-message: "chore(builtins): refresh models.dev catalog"
+          body-path: ${{ runner.temp }}/body.md
+          add-paths: src/builtins/catalog.zig
+          delete-branch: true

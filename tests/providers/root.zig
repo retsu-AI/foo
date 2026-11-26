@@ -580,12 +580,36 @@ test "credentials, managed options and managed headers are checked before sendin
         try std.testing.expectError(error.InvalidInput, run.stream(&adapter, invalid));
         invalid.model.options_json = "{\"credential_mode\":\"subscription\"}";
         try std.testing.expectError(error.InvalidInput, run.stream(&adapter, invalid));
+        invalid.model.options_json = "{\"chat_reasoning_content\":\"yes\"}";
+        try std.testing.expectError(error.InvalidInput, run.stream(&adapter, invalid));
 
         invalid = request;
         invalid.model.headers = &.{.{ .name = "AUTHORIZATION", .value = .{ .literal = "fixture" } }};
         try std.testing.expectError(error.InvalidInput, run.stream(&adapter, invalid));
         try equal(0, wire.calls);
         try equal(io.Delivery.unsent, run.delivery);
+    }
+}
+
+test "chat_* options are accepted and stripped for every family so one provider block serves routed models" {
+    for (profiles) |profile| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const allocator = arena.allocator();
+        var wire: Wire = .{ .allocator = allocator, .body = profile.body };
+        var adapter: providers.Adapter = .{ .transport = wire.transport() };
+        var run: Run = .{ .allocator = allocator };
+        var request = requestFor(profile.family, profile.url);
+        request.model.options_json = "{\"chat_reasoning_content\":true,\"chat_token_limit\":\"max_tokens\",\"chat_include_usage\":false}";
+        _ = try run.stream(&adapter, request);
+        const sent = try parse(allocator, wire.request_body);
+        for ([_][]const u8{ "chat_reasoning_content", "chat_token_limit", "chat_include_usage" }) |key| try expect(!sent.object.contains(key));
+        try expect(!sent.object.contains("stream_options"));
+        const tokens = switch (profile.family) {
+            .openai_responses => "max_output_tokens",
+            .openai_chat, .anthropic_messages => "max_tokens",
+        };
+        try expect(sent.object.contains(tokens));
     }
 }
 
