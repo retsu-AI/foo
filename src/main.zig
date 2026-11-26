@@ -110,12 +110,19 @@ fn otherFrontend(operation: foo.io.Context, app: *runtime.App, cwd: []const u8, 
     }
     if (command.action == .acp) return runAcp(app, operation, command.config);
 
+    var readiness: cli.ReadinessCheck = .{ .a = allocator, .operation = operation, .resolver = &app.authentication };
+    var input = command.config;
+    input.readiness = readiness.interface();
     var diagnostic: ?configuration.Diagnostic = null;
-    const settings = configuration.resolve(allocator, operation, command.config, &diagnostic) catch |err| {
+    const settings = configuration.resolve(allocator, operation, input, &diagnostic) catch |err| {
+        if (readiness.failure) |failure| {
+            return cli.authFailure(allocator, operation, .{ .input = .stdin(), .output = .stdout(), .diagnostic = .stderr() }, app.authentication.store, failure);
+        }
         if (diagnostic) |detail| {
             var message: [1024]u8 = undefined;
-            report(operation.io, std.fmt.bufPrint(&message, "config {s} from {s} at {s}", .{
-                @tagName(detail.reason), @tagName(detail.source), detail.path,
+            report(operation.io, std.fmt.bufPrint(&message, "config {s} from {s} at {s}{s}{s}", .{
+                @tagName(detail.reason),                  @tagName(detail.source),  detail.path,
+                if (detail.message != null) ": " else "", detail.message orelse "",
             }) catch "configuration is invalid");
         } else report(operation.io, @errorName(err));
         return switch (err) {
@@ -243,10 +250,16 @@ const AcpFactory = struct {
 
     fn open(raw: *anyopaque, allocator: std.mem.Allocator, operation: foo.io.Context, input: acp.OpenInput) acp.OpenError!acp.Runtime {
         const self: *AcpFactory = @ptrCast(@alignCast(raw));
+        var readiness: cli.ReadinessCheck = .{ .a = allocator, .operation = operation, .resolver = &self.app.authentication };
+        var resolve_input = self.input;
+        resolve_input.readiness = readiness.interface();
         var diagnostic: ?configuration.Diagnostic = null;
-        var settings = configuration.resolve(allocator, operation, self.input, &diagnostic) catch |err| return switch (err) {
-            error.InvalidConfiguration, error.InvalidJson, error.UnsupportedVersion => error.InvalidInput,
-            else => |shared| shared,
+        var settings = configuration.resolve(allocator, operation, resolve_input, &diagnostic) catch |err| {
+            if (readiness.failure != null) return error.AuthenticationRequired;
+            return switch (err) {
+                error.InvalidConfiguration, error.InvalidJson, error.UnsupportedVersion => error.InvalidInput,
+                else => |shared| shared,
+            };
         };
         {
             var check = std.heap.ArenaAllocator.init(allocator);

@@ -23,10 +23,16 @@ pub fn main(init: std.process.Init) !void {
     };
     var engine: core.Engine = .{};
     var fixture: Fixture = .{ .marker = init.environ_map.get("FOO_CLI_TEST_MARKER") };
+    const config_directory = try cli.arguments.userConfigDirectory(init.gpa, init.environ_map);
+    defer if (config_directory) |directory| init.gpa.free(directory);
     const exit = cli.executeProcess(init.gpa, operation, values.items, .{
         .cwd = cwd,
         .environ = init.environ_map,
         .runtime = .{ .context = &fixture, .runner = engine.runner(), .bind_fn = Fixture.bind },
+        .authentication = .{
+            .environment = init.environ_map,
+            .store = if (config_directory) |directory| .{ .directory = directory } else null,
+        },
     });
     std.process.exit(@backingInt(exit));
 }

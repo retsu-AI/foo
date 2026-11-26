@@ -153,6 +153,9 @@ pub fn build(b: *std.Build) void {
         integration.dependOn(transport_test);
     }
 
+    const cli_unit = &b.addRunArtifact(b.addTest(.{ .root_module = cli })).step;
+    const cli_suite = pythonSuite(b, "tests/cli/check.py", optimize);
+    cli_suite.dependOn(cli_unit);
     const tui_tests = pythonSuite(b, "tests/tui/run.py", optimize);
     const modules = [_]struct { name: []const u8, step: *std.Build.Step }{
         .{ .name = "contracts", .step = &run_tests.step },
@@ -189,7 +192,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "foo", .module = foo },
             .{ .name = "builtins", .module = builtins },
         }) },
-        .{ .name = "cli", .step = pythonSuite(b, "tests/cli/check.py", optimize) },
+        .{ .name = "cli", .step = cli_suite },
         .{ .name = "tui", .step = tui_tests },
         .{ .name = "platform-terminal", .step = tui_tests },
         .{ .name = "integration", .step = integration },

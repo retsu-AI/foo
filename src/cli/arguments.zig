@@ -18,10 +18,15 @@ pub const McpCommand = struct {
 };
 pub const AuthCommand = union(enum) {
     list,
+    /// `foo auth login` with no PROVIDER lists the built-in providers.
+    providers,
     login: struct { provider: []const u8, method: LoginMethod = .auto },
     logout: []const u8,
 };
-pub const LoginMethod = enum { auto, device, api_key };
+pub const LoginMethod = enum { auto, browser, device, api_key };
+/// A PROVIDER positional filters the rows and selects like `--provider`, so `*` marks what
+/// `foo run` would use with the same flags.
+pub const ModelsCommand = struct { provider: ?[]const u8 = null, all: bool = false };
 pub const Action = union(enum) {
     help,
     version,
@@ -31,6 +36,7 @@ pub const Action = union(enum) {
     acp,
     mcp: McpCommand,
     auth: AuthCommand,
+    models: ModelsCommand,
     check,
     show,
 };
@@ -40,7 +46,7 @@ pub const Command = struct {
     config: config.Input,
 };
 
-const Mode = enum { run, rpc, tui, acp, mcp, config, auth };
+const Mode = enum { run, rpc, tui, acp, mcp, config, auth, models };
 const ConfigMode = enum { check, show };
 const McpMode = enum { list, get };
 const Flag = enum {
@@ -57,6 +63,7 @@ const Flag = enum {
     @"--stdin",
     @"--resume",
     @"--arguments",
+    @"--all",
 };
 
 const Error = error{ InvalidArguments, LimitExceeded, OutOfMemory };
@@ -74,34 +81,47 @@ pub fn parseWithDiscovery(
 ) Error!Command {
     var input: config.Input = .{ .cwd = cwd };
     if (argv.len == 0) return .{ .action = .help, .config = input };
-    if (argv.len == 1) {
-        if (isHelp(argv[0])) return .{ .action = .help, .config = input };
-        if (std.mem.eql(u8, argv[0], "--version")) return .{ .action = .version, .config = input };
-    }
+    if (argv.len == 1 and std.mem.eql(u8, argv[0], "--version")) return .{ .action = .version, .config = input };
+    // Help is recognized where a flag may stand, never inside a value such as `--prompt --help`.
+    if (isHelp(argv[0]) or (argv.len >= 2 and isHelp(argv[1]))) return .{ .action = .help, .config = input };
     const mode = std.meta.stringToEnum(Mode, argv[0]) orelse return error.InvalidArguments;
     var offset: usize = 1;
-    if (argv.len == 2 and isHelp(argv[1])) return .{ .action = .help, .config = input };
-    if (mode == .auth) return .{ .action = .{ .auth = try parseAuth(argv[1..]) }, .config = input };
+    if (mode == .auth) {
+        // `auth` takes no option values, so any help token is a flag.
+        for (argv[1..]) |arg| if (isHelp(arg)) return .{ .action = .help, .config = input };
+        return .{ .action = .{ .auth = try parseAuth(argv[1..]) }, .config = input };
+    }
     const config_mode: ?ConfigMode = if (mode == .config) blk: {
         if (offset == argv.len) return error.InvalidArguments;
         offset += 1;
         break :blk std.meta.stringToEnum(ConfigMode, argv[1]) orelse return error.InvalidArguments;
     } else null;
-    if (argv.len == offset + 1 and isHelp(argv[offset])) return .{ .action = .help, .config = input };
 
     var mcp_command = if (mode == .mcp) try parseMcp(argv, &offset) else null;
+    var models_command: ModelsCommand = .{};
     var layers: std.ArrayList(config.Layer) = .empty;
     var used: std.EnumSet(Flag) = .empty;
     var cwd_override: ?[]const u8 = null;
     var prompt: ?Prompt = null;
     var session: SessionMode = .fresh;
     while (offset < argv.len) {
-        const flag = std.meta.stringToEnum(Flag, argv[offset]) orelse return error.InvalidArguments;
+        if (isHelp(argv[offset])) return .{ .action = .help, .config = input };
+        const flag = std.meta.stringToEnum(Flag, argv[offset]) orelse {
+            // `foo models` takes one PROVIDER positional anywhere among its flags.
+            if (mode != .models or models_command.provider != null or isOption(argv[offset])) return error.InvalidArguments;
+            models_command.provider = try value(argv, &offset, config.max_config_bytes);
+            if (!foo.config.validId(models_command.provider.?, .provider)) return error.InvalidArguments;
+            continue;
+        };
         offset += 1;
         if (flag != .@"--config" and used.contains(flag)) return error.InvalidArguments;
         used.insert(flag);
         switch (flag) {
             .@"--approve" => if (environ == null) return error.InvalidArguments,
+            .@"--all" => {
+                if (mode != .models) return error.InvalidArguments;
+                models_command.all = true;
+            },
             .@"--stdin", .@"--prompt" => {
                 if (mode != .run or prompt != null) return error.InvalidArguments;
                 prompt = if (flag == .@"--stdin")
@@ -142,6 +162,7 @@ pub fn parseWithDiscovery(
         .source = .environment,
         .data = .{ .json = json },
     });
+    input.model_patch.filter = models_command.provider;
     if (cwd_override) |path| {
         const patch_json = try std.json.Stringify.valueAlloc(a, .{ .cwd = path }, .{});
         if (patch_json.len > config.max_config_bytes) return error.LimitExceeded;
@@ -167,6 +188,7 @@ pub fn parseWithDiscovery(
             .tui => .tui,
             .acp => .acp,
             .mcp => .{ .mcp = mcp_command.? },
+            .models => .{ .models = models_command },
             .auth => unreachable,
             .config => switch (config_mode.?) {
                 .check => .check,
@@ -210,9 +232,11 @@ fn prependFile(a: std.mem.Allocator, layers: *std.ArrayList(config.Layer), path:
 
 fn parseAuth(args: []const []const u8) Error!AuthCommand {
     if (args.len == 0) return error.InvalidArguments;
-    const action = std.meta.stringToEnum(std.meta.Tag(AuthCommand), args[0]) orelse return error.InvalidArguments;
+    const action = std.meta.stringToEnum(enum { list, login, logout }, args[0]) orelse return error.InvalidArguments;
     if (action == .list) return if (args.len == 1) .list else error.InvalidArguments;
-    if (args.len < 2 or !auth.validProviderId(args[1])) return error.InvalidArguments;
+    if (action == .login and args.len == 1) return .providers;
+    // A PROVIDER never starts with `-`, so `auth login --api-key` is a missing PROVIDER, not a name.
+    if (args.len < 2 or isOption(args[1]) or !auth.validProviderId(args[1])) return error.InvalidArguments;
     return switch (action) {
         .list => unreachable,
         .logout => if (args.len == 2) .{ .logout = args[1] } else error.InvalidArguments,
@@ -220,7 +244,11 @@ fn parseAuth(args: []const []const u8) Error!AuthCommand {
             .provider = args[1],
             .method = switch (args.len) {
                 2 => .auto,
-                3 => if (std.mem.eql(u8, args[2], "--api-key")) .api_key else if (std.mem.eql(u8, args[2], "--device")) .device else return error.InvalidArguments,
+                3 => switch (std.meta.stringToEnum(enum { @"--browser", @"--device", @"--api-key" }, args[2]) orelse return error.InvalidArguments) {
+                    .@"--browser" => .browser,
+                    .@"--device" => .device,
+                    .@"--api-key" => .api_key,
+                },
                 else => return error.InvalidArguments,
             },
         } },
@@ -244,6 +272,10 @@ fn isHelp(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
 }
 
+fn isOption(arg: []const u8) bool {
+    return std.mem.startsWith(u8, arg, "-");
+}
+
 fn value(argv: []const []const u8, offset: *usize, max: usize) Error![]const u8 {
     if (offset.* == argv.len) return error.InvalidArguments;
     const arg = argv[offset.*];
@@ -256,4 +288,74 @@ fn value(argv: []const []const u8, offset: *usize, max: usize) Error![]const u8 
 fn addLayer(a: std.mem.Allocator, layers: *std.ArrayList(config.Layer), layer: config.Layer) Error!void {
     if (layers.items.len == config.max_layers) return error.LimitExceeded;
     try layers.append(a, layer);
+}
+
+test "help wins before any subcommand validation" {
+    const cases = [_][]const []const u8{
+        &.{ "auth", "login", "--help" },
+        &.{ "auth", "login", "-h" },
+        &.{ "auth", "login", "anthropic", "--help" },
+        &.{ "auth", "logout", "--help" },
+        &.{ "auth", "logout", "-h" },
+        &.{ "auth", "list", "--help" },
+        &.{ "models", "--help" },
+        &.{ "models", "zai", "--help" },
+        &.{ "models", "--all", "--help" },
+        &.{ "config", "show", "--help" },
+        &.{ "run", "--prompt", "x", "--help" },
+    };
+    for (cases) |argv| {
+        const command = try parse(std.testing.allocator, argv, "/cwd", null);
+        try std.testing.expectEqual(Action.help, command.action);
+    }
+}
+
+test "a help token inside an option value is the value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "--help", "-h" }) |text| {
+        const run = try parse(a, &.{ "run", "--prompt", text }, "/cwd", null);
+        try std.testing.expectEqualStrings(text, run.action.run.argument);
+        const mcp = try parse(a, &.{ "mcp", "get", "prompt", "server", "id", "--arguments", text }, "/cwd", null);
+        try std.testing.expectEqualStrings(text, mcp.action.mcp.selection.get.arguments_json);
+    }
+}
+
+test "a provider id never starts with a dash" {
+    const usage = [_][]const []const u8{
+        &.{ "auth", "login", "--api-key" },
+        &.{ "auth", "login", "--bogus" },
+        &.{ "auth", "login", "-x" },
+        &.{ "auth", "logout", "-x" },
+        &.{ "auth", "logout", "--api-key" },
+        &.{ "auth", "login", "zai", "--bogus" },
+        &.{ "models", "-x" },
+        &.{ "models", "zai", "deepseek" },
+        &.{ "models", "zai", "--all", "--all" },
+        &.{ "models", "--all", "--all" },
+    };
+    for (usage) |argv| try std.testing.expectError(error.InvalidArguments, parse(std.testing.allocator, argv, "/cwd", null));
+    const key = try parse(std.testing.allocator, &.{ "auth", "login", "mygateway", "--api-key" }, "/cwd", null);
+    try std.testing.expectEqualStrings("mygateway", key.action.auth.login.provider);
+    try std.testing.expectEqual(LoginMethod.api_key, key.action.auth.login.method);
+}
+
+test "foo models takes PROVIDER anywhere among its flags" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const []const u8{
+        &.{ "models", "zai", "--all" },
+        &.{ "models", "--all", "zai" },
+        &.{ "models", "--config", "/x.json", "zai", "--all" },
+        &.{ "models", "--all", "--config", "/x.json", "zai" },
+    }) |argv| {
+        const command = try parse(a, argv, "/cwd", null);
+        try std.testing.expectEqualStrings("zai", command.action.models.provider.?);
+        try std.testing.expect(command.action.models.all);
+    }
+    const bare = try parse(a, &.{"models"}, "/cwd", null);
+    try std.testing.expectEqual(null, bare.action.models.provider);
+    try std.testing.expect(!bare.action.models.all);
 }

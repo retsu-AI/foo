@@ -384,7 +384,7 @@ class Production(unittest.TestCase):
         self.assertIn(b"requires an interactive terminal", piped.stderr)
         rejected = self.invoke("auth", "login", account)
         self.assertEqual(rejected.returncode, 2, rejected.stderr)
-        self.assertIn(b"no browser login for local; use --api-key", rejected.stderr)
+        self.assertIn(b"unknown provider local. Run foo auth login to list providers, or add --api-key", rejected.stderr)
 
         peer = TerminalPeer(launch, environment=self.env, cwd=self.directory)
         try:
